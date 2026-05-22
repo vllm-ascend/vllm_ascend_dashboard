@@ -32,7 +32,6 @@ import {
   ReloadOutlined,
   MergeOutlined,
   SwapOutlined,
-  CalendarOutlined,
   FileTextOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -40,7 +39,6 @@ import {
   getReleases,
   getMainVersions,
   getModelSupportMatrix,
-  getBiWeeklyMeeting,
   compareTags,
   rerunPRCI,
   forceMergePR,
@@ -49,7 +47,6 @@ import {
   type WorkflowRun,
   type VllmVersionInfo,
   type ModelSupportEntry,
-  type BiWeeklyMeeting,
   type CommitInfo,
   type TagComparisonResult,
 } from '../services/projectDashboard'
@@ -85,10 +82,6 @@ function ProjectBoard() {
   const [modelSearchText, setModelSearchText] = useState('')
   const [modelSeriesFilter, setModelSeriesFilter] = useState<string[]>([])
   const [modelStatusFilter, setStatusFilter] = useState<string[]>([])
-
-  // 双周例会状态
-  const [meeting, setMeeting] = useState<BiWeeklyMeeting | null>(null)
-  const [meetingLoading, setMeetingLoading] = useState(false)
 
   // Tag 对比状态
   const [compareModalVisible, setCompareModalVisible] = useState(false)
@@ -163,22 +156,6 @@ function ProjectBoard() {
       }
     }
     loadMatrix()
-  }, [])
-
-  // 加载例会信息
-  useEffect(() => {
-    const loadMeeting = async () => {
-      setMeetingLoading(true)
-      try {
-        const data = await getBiWeeklyMeeting()
-        setMeeting(data)
-      } catch (error: any) {
-        message.error('加载例会信息失败：' + (error.response?.data?.detail || error.message))
-      } finally {
-        setMeetingLoading(false)
-      }
-    }
-    loadMeeting()
   }, [])
 
   // 复制到剪贴板
@@ -906,46 +883,6 @@ function ProjectBoard() {
                   </div>
                 )}
               </Card>
-            ),
-          },
-          {
-            key: 'meeting',
-            label: (
-              <Space>
-                <CalendarOutlined />
-                双周例会
-              </Space>
-            ),
-            children: (
-              <Row gutter={[16, 16]}>
-                <Col span={24}>
-                  <Card
-                    title="下次会议"
-                    loading={meetingLoading}
-                  >
-                    {meeting && (
-                      <Descriptions column={2} bordered>
-                        <Descriptions.Item label="日期">
-                          {dayjs(meeting.next_meeting_date).format('YYYY-MM-DD')}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="时间（北京时间）">
-                          {meeting.next_meeting_time}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Zoom 会议链接">
-                          <a href={meeting.zoom_link} target="_blank" rel="noopener noreferrer">
-                            加入会议 <LinkOutlined />
-                          </a>
-                        </Descriptions.Item>
-                        <Descriptions.Item label="会议纪要">
-                          <a href={meeting.meeting_notes_link} target="_blank" rel="noopener noreferrer">
-                            查看纪要 <LinkOutlined />
-                          </a>
-                        </Descriptions.Item>
-                      </Descriptions>
-                    )}
-                  </Card>
-                </Col>
-              </Row>
             ),
           },
           ...(isAdmin ? [{

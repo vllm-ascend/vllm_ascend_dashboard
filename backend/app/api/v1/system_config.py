@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.api.deps import get_current_active_super_admin_user, get_current_user, get_db
 from app.core.config import settings
@@ -300,14 +301,16 @@ async def update_sync_config(
         # 重新配置调度器
         try:
             scheduler = get_scheduler()
-            # 使用 add_job 并设置 replace_existing=True，无需先 remove_job
+            # 显式移除旧任务再添加，确保 Trigger 完全更新
+            try:
+                scheduler.scheduler.remove_job('ci_data_sync')
+            except Exception:
+                pass
             scheduler.scheduler.add_job(
                 scheduler._sync_ci_data_job,
-                trigger='interval',
-                minutes=ci_sync_interval_minutes,
+                trigger=IntervalTrigger(minutes=ci_sync_interval_minutes),
                 id='ci_data_sync',
                 name='CI Data Sync',
-                replace_existing=True,
             )
             updates.append("调度器已重新配置")
         except Exception as e:
@@ -344,14 +347,15 @@ async def update_sync_config(
         # 重新配置调度器
         try:
             scheduler = get_scheduler()
-            # 使用 add_job 并设置 replace_existing=True，无需先 remove_job
+            try:
+                scheduler.scheduler.remove_job('project_dashboard_cache_update')
+            except Exception:
+                pass
             scheduler.scheduler.add_job(
                 scheduler._update_project_dashboard_cache_job,
-                trigger='interval',
-                minutes=project_dashboard_cache_interval_minutes,
+                trigger=IntervalTrigger(minutes=project_dashboard_cache_interval_minutes),
                 id='project_dashboard_cache_update',
                 name='Project Dashboard Cache Update',
-                replace_existing=True,
             )
             updates.append("Project Dashboard 调度器已重新配置")
         except Exception as e:
@@ -369,14 +373,15 @@ async def update_sync_config(
         # 重新配置调度器
         try:
             scheduler = get_scheduler()
-            # 使用 add_job 并设置 replace_existing=True，无需先 remove_job
+            try:
+                scheduler.scheduler.remove_job('model_report_sync')
+            except Exception:
+                pass
             scheduler.scheduler.add_job(
                 scheduler._sync_model_reports_job,
-                trigger='interval',
-                minutes=model_sync_interval_minutes,
+                trigger=IntervalTrigger(minutes=model_sync_interval_minutes),
                 id='model_report_sync',
                 name='Model Report Sync',
-                replace_existing=True,
             )
             updates.append("模型同步调度器已重新配置")
         except Exception as e:

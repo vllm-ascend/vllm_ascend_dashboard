@@ -31,7 +31,7 @@ __all__ = [
     # Project Dashboard
     "ProjectDashboardConfigResponse", "ProjectDashboardConfigUpdate",
     "ReleaseInfo", "VllmVersionInfo", "ModelSupportMatrix", "ModelSupportEntry",
-    "StaleIssue", "BiWeeklyMeeting", "PRActionRequest", "TagComparisonRequest", "TagComparisonResult", "CommitInfo",
+    "StaleIssue", "PRActionRequest", "TagComparisonRequest", "TagComparisonResult", "CommitInfo",
     # Daily Summary
     "GenerateSummaryRequest", "FetchDataRequest", "DailySummaryResponse", "DailySummaryListResponse",
     "DailySummaryListItem", "FetchDataResponse", "GenerateSummaryResponse",
@@ -639,15 +639,6 @@ class StaleIssue(BaseModel):
     days_stale: int
     author: str | None = None
     labels: List[str] = []
-
-
-class BiWeeklyMeeting(BaseModel):
-    """双周例会信息"""
-    next_meeting_date: str  # ISO format date
-    next_meeting_time: str  # Beijing time
-    zoom_link: str
-    meeting_notes_link: str
-    is_holiday_delay: bool = False
 
 
 class PRActionRequest(BaseModel):

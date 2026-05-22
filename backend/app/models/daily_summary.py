@@ -1,5 +1,10 @@
 """
 每日总结数据模型
+
+注意：
+    DailyPR, DailyIssue, DailyCommit, DailySummary 表已迁移到文件存储。
+    这些模型已弃用，将在未来版本中移除。
+    新的每日数据存储在 data/daily-data/{project}/ 目录下。
 """
 from datetime import datetime, UTC
 from sqlalchemy import Column, Integer, String, Text, Date, Boolean, TIMESTAMP, UniqueConstraint
@@ -9,9 +14,17 @@ from sqlalchemy.types import JSON
 from . import Base
 
 
+# ============ 已弃用的模型（数据已迁移到文件存储） ============
+
 class DailyPR(Base):
-    """每日 PR 数据表"""
+    """
+    每日 PR 数据表（已弃用）
+    
+    此表已迁移到文件存储：data/daily-data/{project}/{date}.json
+    该模型保留仅用于向后兼容，将在未来版本中移除。
+    """
     __tablename__ = "daily_prs"
+    __table_args__ = {'extend_existing': True}  # 允许重新定义
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     project = Column(String(100), nullable=False)
@@ -19,7 +32,7 @@ class DailyPR(Base):
     title = Column(String(500), nullable=False)
     state = Column(String(20), nullable=False)
     author = Column(String(100), nullable=False)
-    created_at = Column(TIMESTAMP, nullable=False)
+    created_at = Column(TIMESTAMP)
     merged_at = Column(TIMESTAMP)
     html_url = Column(String(500), nullable=False)
     labels = Column(JSON)
@@ -28,72 +41,76 @@ class DailyPR(Base):
     data_date = Column(Date, nullable=False)
     fetched_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
-    __table_args__ = (
-        UniqueConstraint('project', 'pr_number', 'data_date', name='uq_daily_pr_project_number_date'),
-        # Composite index for queries filtering by project/data_date and sorting by created_at
-        # Fixes MySQL "Out of sort memory" error
-    )
-
 
 class DailyIssue(Base):
-    """每日 Issue 数据表"""
+    """
+    每日 Issue 数据表（已弃用）
+    
+    此表已迁移到文件存储：data/daily-data/{project}/{date}.json
+    该模型保留仅用于向后兼容，将在未来版本中移除。
+    """
     __tablename__ = "daily_issues"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    project = Column(String(100), nullable=False, index=True)
+    project = Column(String(100), nullable=False)
     issue_number = Column(Integer, nullable=False)
     title = Column(String(500), nullable=False)
     state = Column(String(20), nullable=False)
     author = Column(String(100), nullable=False)
-    created_at = Column(TIMESTAMP, nullable=False)
+    created_at = Column(TIMESTAMP)
     closed_at = Column(TIMESTAMP)
     html_url = Column(String(500), nullable=False)
     labels = Column(JSON)
     body = Column(Text)
     comments_count = Column(Integer, default=0)
-    data_date = Column(Date, nullable=False, index=True)
+    data_date = Column(Date, nullable=False)
     fetched_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
-
-    __table_args__ = (
-        UniqueConstraint('project', 'issue_number', 'data_date', name='uq_daily_issue_project_number_date'),
-    )
 
 
 class DailyCommit(Base):
-    """每日 Commit 数据表"""
+    """
+    每日 Commit 数据表（已弃用）
+    
+    此表已迁移到文件存储：data/daily-data/{project}/{date}.json
+    该模型保留仅用于向后兼容，将在未来版本中移除。
+    """
     __tablename__ = "daily_commits"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    project = Column(String(100), nullable=False, index=True)
+    project = Column(String(100), nullable=False)
     sha = Column(String(40), nullable=False)
     short_sha = Column(String(7), nullable=False)
     message = Column(String(1000), nullable=False)
     full_message = Column(Text)
     author = Column(String(100), nullable=False)
     author_email = Column(String(200))
-    committed_at = Column(TIMESTAMP, nullable=False)
+    committed_at = Column(TIMESTAMP)
     html_url = Column(String(500), nullable=False)
-    pr_number = Column(Integer, index=True)
+    pr_number = Column(Integer)
     pr_title = Column(String(500))
     pr_description = Column(Text)
     files_changed = Column(JSON)
     additions = Column(Integer, default=0)
     deletions = Column(Integer, default=0)
-    data_date = Column(Date, nullable=False, index=True)
+    data_date = Column(Date, nullable=False)
     fetched_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
-
-    __table_args__ = (
-        UniqueConstraint('project', 'sha', 'data_date', name='uq_daily_commit_project_sha_date'),
-    )
 
 
 class DailySummary(Base):
-    """每日 AI 总结表"""
+    """
+    每日 AI 总结表（已弃用）
+    
+    此表已迁移到文件存储：data/daily-data/{project}/summaries/{date}.md
+    该模型保留仅用于向后兼容，将在未来版本中移除。
+    """
     __tablename__ = "daily_summaries"
+    __table_args__ = {'extend_existing': True}
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    project = Column(String(100), nullable=False, index=True)
-    data_date = Column(Date, nullable=False, index=True)
+    project = Column(String(100), nullable=False)
+    data_date = Column(Date, nullable=False)
     summary_markdown = Column(Text, nullable=False)
     has_data = Column(Boolean, default=True)
     pr_count = Column(Integer, default=0)
@@ -109,10 +126,8 @@ class DailySummary(Base):
     generated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     regenerated_at = Column(TIMESTAMP)
 
-    __table_args__ = (
-        UniqueConstraint('project', 'data_date', name='uq_daily_summary_project_date'),
-    )
 
+# ============ 仍然使用的模型 ============
 
 class LLMProviderConfig(Base):
     """LLM 提供商配置表"""

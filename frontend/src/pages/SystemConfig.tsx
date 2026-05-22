@@ -320,7 +320,7 @@ function SystemConfig() {
   
   const updateCISyncMutation = useMutation({
     mutationFn: (data: Record<string, number | boolean>) =>
-      api.put('/system/config/sync', data),
+      api.put('/system/config/sync', null, { params: data }),
     onSuccess: () => {
       message.success('更新成功')
       setIsSyncConfigModalOpen(false)
@@ -360,8 +360,13 @@ function SystemConfig() {
           params.append(key, value.toString())
         }
       })
-      const res = await fetch(`/api/v1/system/sync?${params}`, {
+      const token = localStorage.getItem('access_token')
+      const res = await fetch(`/api/v1/system/config/sync?${params}`, {
         method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       })
       if (!res.ok) {
         const error = await res.json()

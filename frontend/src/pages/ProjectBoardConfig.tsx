@@ -22,13 +22,10 @@ import {
   Divider,
   Popconfirm,
   Spin,
-  Calendar,
   Badge,
 } from 'antd'
 import {
   SettingOutlined,
-  CalendarOutlined,
-  EditOutlined,
   SaveOutlined,
   SyncOutlined,
   MergeOutlined,
@@ -38,25 +35,17 @@ import {
   DeleteOutlined,
   LinkOutlined,
   SwapOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
 } from '@ant-design/icons'
 import {
   getDashboardConfig,
   updateDashboardConfig,
   updateModelSupportMatrix,
-  updateBiWeeklyMeeting,
   updateLocalCache,
   rebuildLocalCache,
   fixLocalCache,
   getForceMergeRecords,
-  getMeetingCalendar,
-  cancelMeeting,
-  restoreMeeting,
   type ModelSupportEntry,
   type ProjectDashboardConfig,
-  type MeetingCalendarItem,
-  type MeetingCalendar,
 } from '../services/projectDashboard'
 import { getGitCacheStatus, syncGitCache, type GitCacheStatus, type GitRepoStatus } from '../services/systemConfig'
 import dayjs from 'dayjs'
@@ -131,13 +120,11 @@ interface ForceMergeRecord {
 }
 
 function ProjectBoardConfig() {
-  const [meetingForm] = Form.useForm()
   const [modelForm] = Form.useForm()
 
   const [configs, setConfigs] = useState<ProjectDashboardConfig[]>([])
   const [configsLoading, setConfigsLoading] = useState(false)
 
-  const [isMeetingModalOpen, setIsMeetingModalOpen] = useState(false)
   const [isCacheUpdating, setIsCacheUpdating] = useState(false)
 
   const [modelEntries, setModelEntries] = useState<ModelSupportEntryWithKey[]>([])
@@ -153,10 +140,6 @@ function ProjectBoardConfig() {
 
   const [forceMergeRecords, setForceMergeRecords] = useState<ForceMergeRecord[]>([])
   const [forceMergeRecordsLoading, setForceMergeRecordsLoading] = useState(false)
-
-  // 会议日历状态
-  const [meetingCalendar, setMeetingCalendar] = useState<MeetingCalendar | null>(null)
-  const [calendarLoading, setCalendarLoading] = useState(false)
 
   const [activeTabKey, setActiveTabKey] = useState('model')
   const [cacheDirForm] = Form.useForm()
@@ -385,81 +368,6 @@ function ProjectBoardConfig() {
       message.success('缓存更新间隔已更新')
     } catch (error: any) {
       message.error('更新失败：' + (error.response?.data?.detail || error.message))
-    }
-  }
-
-  // 加载会议日历
-  const loadMeetingCalendar = async () => {
-    setCalendarLoading(true)
-    try {
-      const calendar = await getMeetingCalendar(3)
-      setMeetingCalendar(calendar)
-    } catch (error: any) {
-      console.error('Failed to load meeting calendar:', error)
-      message.error('加载日历失败：' + (error.response?.data?.detail || error.message))
-    } finally {
-      setCalendarLoading(false)
-    }
-  }
-
-  // 取消会议
-  const handleCancelMeeting = async (date: string) => {
-    try {
-      const result = await cancelMeeting(date)
-      message.success('会议已取消，下次会议自动顺延')
-      // 重新加载日历 - 使用空参数强制刷新
-      await loadMeetingCalendar()
-    } catch (error: any) {
-      console.error('Failed to cancel meeting:', error)
-      message.error('取消失败：' + (error.response?.data?.detail || error.message))
-    }
-  }
-
-  // 恢复会议
-  const handleRestoreMeeting = async (date: string) => {
-    try {
-      const result = await restoreMeeting(date)
-      message.success('会议已恢复')
-      // 重新加载日历 - 使用空参数强制刷新
-      await loadMeetingCalendar()
-    } catch (error: any) {
-      console.error('Failed to restore meeting:', error)
-      message.error('恢复失败：' + (error.response?.data?.detail || error.message))
-    }
-  }
-
-  // 打开会议配置弹窗时自动加载日历
-  const handleOpenMeetingModal = async () => {
-    const meetingConfig = configs.find(c => c.config_key === 'biweekly_meeting')
-    if (meetingConfig) {
-      meetingForm.setFieldsValue({
-        zoom_link: meetingConfig.config_value.zoom_link,
-        meeting_notes_link: meetingConfig.config_value.meeting_notes_link,
-        meeting_time: meetingConfig.config_value.meeting_time || '15:00',
-        base_date: meetingConfig.config_value.base_date || '2026-03-25',
-      })
-    } else {
-      meetingForm.setFieldsValue({
-        zoom_link: 'https://us06web.zoom.us/j/86916644616?pwd=ceuPEOHE38Qv4jLoVQlmuVxrD5kmP9.1',
-        meeting_notes_link: 'https://docs.google.com/document/d/1hCSzRTMZhIB8vRq1_qOOjx4c9uYxvdQvDsMV2JcSrw/edit?tab=t.0',
-        meeting_time: '15:00',
-        base_date: '2026-03-25',
-      })
-    }
-    setIsMeetingModalOpen(true)
-    // 自动加载日历
-    await loadMeetingCalendar()
-  }
-
-  // 保存会议配置
-  const handleSaveMeeting = async (values: any) => {
-    try {
-      await updateBiWeeklyMeeting(values)
-      message.success('会议配置已保存')
-      setIsMeetingModalOpen(false)
-      loadConfigs()
-    } catch (error: any) {
-      message.error('保存失败：' + (error.response?.data?.detail || error.message))
     }
   }
 
@@ -962,57 +870,6 @@ function ProjectBoardConfig() {
     </div>
   )
 
-  const meetingTabContent = (
-    <Card
-      title="双周例会配置"
-      extra={
-        <Button icon={<EditOutlined />} onClick={handleOpenMeetingModal}>
-          编辑配置
-        </Button>
-      }
-    >
-      {configsLoading ? (
-        <Text>加载中...</Text>
-      ) : (
-        <Descriptions column={2} bordered>
-          {(() => {
-            const meetingConfig = configs.find(c => c.config_key === 'biweekly_meeting')
-            if (meetingConfig) {
-              return (
-                <>
-                  <Descriptions.Item label="会议时间">
-                    {meetingConfig.config_value.meeting_time || '15:00'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="参考日期">
-                    {meetingConfig.config_value.base_date || '2025-03-25'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Zoom 链接" span={2}>
-                    <a href={meetingConfig.config_value.zoom_link} target="_blank" rel="noopener noreferrer">
-                      {meetingConfig.config_value.zoom_link}
-                    </a>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="会议纪要" span={2}>
-                    <a href={meetingConfig.config_value.meeting_notes_link} target="_blank" rel="noopener noreferrer">
-                      {meetingConfig.config_value.meeting_notes_link}
-                    </a>
-                  </Descriptions.Item>
-                  <Descriptions.Item label="最后更新">
-                    {meetingConfig.updated_at ? new Date(meetingConfig.updated_at).toLocaleString() : '暂无'}
-                  </Descriptions.Item>
-                </>
-              )
-            }
-            return (
-              <Descriptions.Item label="状态" span={3}>
-                <Tag color="orange">未配置</Tag>
-              </Descriptions.Item>
-            )
-          })()}
-        </Descriptions>
-      )}
-    </Card>
-  )
-
   const forceMergeTabContent = (
     <Card title="强行合入 PR 记录">
       {forceMergeRecordsLoading ? (
@@ -1066,16 +923,6 @@ function ProjectBoardConfig() {
         </Space>
       ),
       children: modelTabContent,
-    },
-    {
-      key: 'meeting',
-      label: (
-        <Space>
-          <CalendarOutlined />
-          双周例会配置
-        </Space>
-      ),
-      children: meetingTabContent,
     },
     {
       key: 'forcemerge',
@@ -1162,212 +1009,6 @@ function ProjectBoardConfig() {
             </Space>
           </Form.Item>
         </Form>
-      </Modal>
-
-      {/* 会议配置弹窗 */}
-      <Modal
-        title="编辑双周例会配置"
-        open={isMeetingModalOpen}
-        onCancel={() => {
-          setIsMeetingModalOpen(false)
-          setMeetingCalendar(null)
-        }}
-        footer={null}
-        width={800}
-      >
-        <Alert
-          message="提示"
-          description="配置更改将保存到数据库并立即生效"
-          type="success"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
-        
-        <Tabs
-          defaultActiveKey="form"
-          items={[
-            {
-              key: 'form',
-              label: (
-                <Space>
-                  <SettingOutlined />
-                  基本配置
-                </Space>
-              ),
-              children: (
-                <Form
-                  form={meetingForm}
-                  layout="vertical"
-                  onFinish={handleSaveMeeting}
-                  initialValues={{
-                    zoom_link: 'https://us06web.zoom.us/j/86916644616?pwd=ceuPEOHE38Qv4jLoVQlmuVxrD5kmP9.1',
-                    meeting_notes_link: 'https://docs.google.com/document/d/1hCSzRTMZhIB8vRq1_qOOjx4c9uYxvdQvDsMV2JcSrw/edit?tab=t.0',
-                    meeting_time: '15:00',
-                    base_date: '2025-03-25',
-                  }}
-                >
-                  <Form.Item
-                    name="meeting_time"
-                    label="会议时间（北京时间）"
-                    rules={[{ required: true, message: '请输入会议时间' }]}
-                    extra="格式：HH:MM（24 小时制）"
-                  >
-                    <Input placeholder="15:00" />
-                  </Form.Item>
-
-                  <Form.Item
-                    name="base_date"
-                    label="参考日期"
-                    rules={[{ required: true, message: '请输入参考日期' }]}
-                    extra="双周例会计算的基准日期（格式：YYYY-MM-DD）。系统将以此日期为起点，每 14 天递增计算下次会议时间。只需设置一次，之后会自动推算。"
-                  >
-                    <Input placeholder="2025-03-25" />
-                  </Form.Item>
-
-                  <Form.Item
-                    name="zoom_link"
-                    label="Zoom 会议链接"
-                    rules={[{ required: true, message: '请输入 Zoom 链接' }]}
-                  >
-                    <TextArea rows={2} />
-                  </Form.Item>
-
-                  <Form.Item
-                    name="meeting_notes_link"
-                    label="会议纪要链接"
-                    rules={[{ required: true, message: '请输入会议纪要链接' }]}
-                  >
-                    <TextArea rows={2} />
-                  </Form.Item>
-
-                  <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
-                    <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-                      <Button onClick={() => setIsMeetingModalOpen(false)}>取消</Button>
-                      <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>保存</Button>
-                    </Space>
-                  </Form.Item>
-                </Form>
-              ),
-            },
-            {
-              key: 'calendar',
-              label: (
-                <Space>
-                  <CalendarOutlined />
-                  会议日历
-                </Space>
-              ),
-              children: (
-                <div>
-                  <Alert
-                    message="会议日历说明"
-                    description="系统自动计算并显示未来 3 个月的双周例会时间。点击'取消会议'可取消某次例会（下次会议自动顺延），已取消的会议可以点击'恢复会议'重新启用。"
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                  />
-
-                  {meetingCalendar && meetingCalendar.meetings.length > 0 ? (
-                    <Table
-                      columns={[
-                        {
-                          title: '会议日期',
-                          dataIndex: 'actual_date',
-                          key: 'actual_date',
-                          render: (date: string, record: MeetingCalendarItem) => {
-                            if (record.is_cancelled) {
-                              return <Text type="warning">{dayjs(date).format('YYYY-MM-DD (ddd)')}（已取消）</Text>
-                            }
-                            if (record.is_makeup) {
-                              return <Text style={{ color: '#fa8c16' }}>{dayjs(date).format('YYYY-MM-DD (ddd)')}（顺延）</Text>
-                            }
-                            return dayjs(date).format('YYYY-MM-DD (ddd)')
-                          },
-                        },
-                        {
-                          title: '状态',
-                          dataIndex: 'is_cancelled',
-                          key: 'is_cancelled',
-                          render: (cancelled: boolean, record: MeetingCalendarItem) => {
-                            if (cancelled) {
-                              return <Tag icon={<CloseCircleOutlined />} color="red">已取消</Tag>
-                            }
-                            if (record.is_makeup) {
-                              return <Tag icon={<CheckCircleOutlined />} color="orange">顺延</Tag>
-                            }
-                            return <Tag icon={<CheckCircleOutlined />} color="green">正常</Tag>
-                          },
-                        },
-                        {
-                          title: '会议时间',
-                          dataIndex: 'meeting_time',
-                          key: 'meeting_time',
-                          render: (time: string) => `${time} (北京时间)`,
-                        },
-                        {
-                          title: '操作',
-                          key: 'action',
-                          render: (_: any, record: MeetingCalendarItem) => {
-                            if (record.is_cancelled) {
-                              return (
-                                <Popconfirm
-                                  title="恢复会议"
-                                  description="确定要恢复这次会议吗？恢复后将删除顺延的会议，后续会议恢复正常时间。"
-                                  onConfirm={() => handleRestoreMeeting(record.scheduled_date)}
-                                  okText="确定"
-                                  cancelText="取消"
-                                >
-                                  <Button
-                                    type="link"
-                                    disabled={calendarLoading}
-                                    icon={<CheckCircleOutlined />}
-                                    style={{ color: '#52c41a' }}
-                                  >
-                                    恢复会议
-                                  </Button>
-                                </Popconfirm>
-                              )
-                            }
-                            // 顺延的会议不显示操作按钮
-                            if (record.is_makeup) {
-                              return <Text style={{ color: '#999' }}>顺延会议</Text>
-                            }
-                            return (
-                              <Popconfirm
-                                title="取消会议"
-                                description="确定要取消这次会议吗？取消后将新增一行顺延的会议，后续会议日期自动调整。"
-                                onConfirm={() => handleCancelMeeting(record.scheduled_date)}
-                                okText="确定"
-                                cancelText="取消"
-                              >
-                                <Button
-                                  type="link"
-                                  danger
-                                  icon={<CloseCircleOutlined />}
-                                >
-                                  取消会议
-                                </Button>
-                              </Popconfirm>
-                            )
-                          },
-                        },
-                      ]}
-                      dataSource={meetingCalendar.meetings}
-                      rowKey={(record) => record.scheduled_date + (record.is_makeup ? '_makeup' : '')}
-                      pagination={false}
-                      loading={calendarLoading}
-                      size="small"
-                    />
-                  ) : (
-                    !calendarLoading && (
-                      <Empty description="暂无未来会议安排" />
-                    )
-                  )}
-                </div>
-              ),
-            },
-          ]}
-        />
       </Modal>
 
       {/* 特性列管理弹窗 */}

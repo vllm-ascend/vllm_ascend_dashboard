@@ -72,28 +72,6 @@ export interface StaleIssue {
   pr_state?: string
 }
 
-export interface BiWeeklyMeeting {
-  next_meeting_date: string
-  next_meeting_time: string
-  zoom_link: string
-  meeting_notes_link: string
-  is_cancelled: boolean
-}
-
-export interface MeetingCalendarItem {
-  scheduled_date: string
-  actual_date: string
-  is_cancelled: boolean
-  is_makeup?: boolean  // Make-up meeting after cancellation
-  meeting_time: string
-}
-
-export interface MeetingCalendar {
-  meetings: MeetingCalendarItem[]
-  base_date: string
-  meeting_time: string
-}
-
 export interface CommitInfo {
   sha: string
   title: string
@@ -175,22 +153,6 @@ export const getStaleIssues = async (days: number = 7) => {
     '/project-dashboard/stale-issues',
     { params: { days } }
   )
-  return response.data
-}
-
-/**
- * Get biweekly meeting info
- */
-export const getBiWeeklyMeeting = async () => {
-  const response = await api.get<BiWeeklyMeeting>('/project-dashboard/biweekly-meeting')
-  return response.data
-}
-
-/**
- * Update biweekly meeting config (admin only)
- */
-export const updateBiWeeklyMeeting = async (configData: Record<string, any>) => {
-  const response = await api.put<{ success: boolean; message: string }>('/project-dashboard/biweekly-meeting', configData)
   return response.data
 }
 
@@ -295,36 +257,6 @@ export const updateLocalCache = async () => {
  */
 export const rebuildLocalCache = async () => {
   const response = await api.post<{ success: boolean; message: string }>('/project-dashboard/cache/rebuild')
-  return response.data
-}
-
-/**
- * Get biweekly meeting calendar
- */
-export const getMeetingCalendar = async (months: number = 3) => {
-  const response = await api.get<MeetingCalendar>(`/project-dashboard/biweekly-meeting/calendar?months=${months}`)
-  return response.data
-}
-
-/**
- * Cancel a biweekly meeting
- */
-export const cancelMeeting = async (date: string) => {
-  const response = await api.post<{ success: boolean; message: string; config: Record<string, any> }>(
-    '/project-dashboard/biweekly-meeting/cancel',
-    { date }
-  )
-  return response.data
-}
-
-/**
- * Restore a cancelled biweekly meeting
- */
-export const restoreMeeting = async (date: string) => {
-  const response = await api.post<{ success: boolean; message: string; config: Record<string, any> }>(
-    '/project-dashboard/biweekly-meeting/restore',
-    { date }
-  )
   return response.data
 }
 

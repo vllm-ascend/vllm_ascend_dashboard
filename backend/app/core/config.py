@@ -37,6 +37,9 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
 
+    # 数据目录
+    DATA_DIR: str = "data"  # 数据文件存储目录
+
     # 数据同步配置
     CI_SYNC_INTERVAL_MINUTES: int = 720  # CI 数据同步间隔（分钟），默认 12 小时
     CI_SYNC_DAYS_BACK: int = 7  # 自动同步时采集最近 N 天的数据

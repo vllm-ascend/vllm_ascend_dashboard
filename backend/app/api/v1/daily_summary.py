@@ -6,18 +6,17 @@ from datetime import datetime, timedelta, date as DateType, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_current_active_super_admin_user, get_db
 from app.models import User
-from app.models.daily_summary import DailySummary
 from app.schemas.daily_summary import (
     GenerateSummaryRequest, FetchDataRequest,
     DailySummaryResponse, DailySummaryListResponse, DailySummaryListItem,
     FetchDataResponse, GenerateSummaryResponse,
 )
 from app.services.daily_summary import DailySummaryService
+from app.services.daily_data_file_store import DailyDataFileStore
 
 logger = logging.getLogger(__name__)
 
@@ -220,35 +219,35 @@ async def list_daily_summaries(
     所有登录用户可访问
     """
     try:
-        # 获取总数
-        count_stmt = select(func.count(DailySummary.id)).where(
-            DailySummary.project == project
-        )
-        total_result = await db.execute(count_stmt)
-        total = total_result.scalar() or 0
+        file_store = DailyDataFileStore()
+        # 从文件存储获取可用日期列表
+        dates = await file_store.list_available_dates(project, limit=limit + offset)
 
-        # 获取数据
-        stmt = select(DailySummary).where(
-            DailySummary.project == project
-        ).order_by(DailySummary.data_date.desc()).offset(offset).limit(limit)
+        # 分页
+        paginated_dates = dates[offset:offset + limit]
 
-        result = await db.execute(stmt)
-        summaries = result.scalars().all()
+        # 获取每个日期的元数据
+        data_list = []
+        for date_str in paginated_dates:
+            data_date = DateType.fromisoformat(date_str)
+            summary_data = await file_store.load_summary(project, data_date)
+
+            if summary_data:
+                data_list.append(
+                    DailySummaryListItem(
+                        date=summary_data['data_date'],
+                        project=summary_data['project'],
+                        pr_count=summary_data.get('pr_count', 0),
+                        issue_count=summary_data.get('issue_count', 0),
+                        commit_count=summary_data.get('commit_count', 0),
+                        has_data=summary_data.get('has_data', False),
+                        generated_at=summary_data.get('generated_at'),
+                    )
+                )
 
         return {
-            "total": total,
-            "data": [
-                DailySummaryListItem(
-                    date=s.data_date.isoformat(),
-                    project=s.project,
-                    pr_count=s.pr_count,
-                    issue_count=s.issue_count,
-                    commit_count=s.commit_count,
-                    has_data=s.has_data,
-                    generated_at=format_datetime_utc(s.generated_at),
-                )
-                for s in summaries
-            ],
+            "total": len(dates),
+            "data": data_list,
         }
     except Exception as e:
         logger.error(f"Failed to list daily summaries: {e}")
@@ -318,104 +317,54 @@ async def get_daily_data(
 
     所有登录用户可访问
 
-    返回数据库中存储的指定日期的项目动态数据
+    从文件存储中读取指定日期的项目动态数据
     """
-    from app.models.daily_summary import DailyPR, DailyIssue, DailyCommit
-
     try:
         data_date = DateType.fromisoformat(date)
+        file_store = DailyDataFileStore()
 
-        # 获取 PRs - 使用索引提示避免 MySQL filesort
-        pr_stmt = select(DailyPR).with_hint(
-            DailyPR, 
-            "USE INDEX (idx_daily_prs_project_date_created)"
-        ).where(
-            DailyPR.project == project,
-            DailyPR.data_date == data_date
-        ).order_by(DailyPR.created_at.desc())
-        pr_result = await db.execute(pr_stmt)
-        prs = pr_result.scalars().all()
+        # 从文件加载数据
+        data = await file_store.load_daily_data(project, data_date)
 
-        # 获取 Issues - 使用索引提示避免 MySQL filesort
-        issue_stmt = select(DailyIssue).with_hint(
-            DailyIssue, 
-            "USE INDEX (idx_daily_issues_project_date_created)"
-        ).where(
-            DailyIssue.project == project,
-            DailyIssue.data_date == data_date
-        ).order_by(DailyIssue.created_at.desc())
-        issue_result = await db.execute(issue_stmt)
-        issues = issue_result.scalars().all()
+        if not data:
+            return {
+                "project": project,
+                "date": date,
+                "pull_requests": [],
+                "issues": [],
+                "commits": [],
+                "releases": {
+                    "latest": None,
+                    "prerelease": None,
+                },
+                "counts": {
+                    "prs": 0,
+                    "issues": 0,
+                    "commits": 0,
+                },
+                "has_data": False,
+                "fetched_at": None,
+            }
 
-        # 获取 Commits - 使用索引提示避免 MySQL filesort
-        commit_stmt = select(DailyCommit).with_hint(
-            DailyCommit, 
-            "USE INDEX (idx_daily_commits_project_date_created)"
-        ).where(
-            DailyCommit.project == project,
-            DailyCommit.data_date == data_date
-        ).order_by(DailyCommit.committed_at.desc())
-        commit_result = await db.execute(commit_stmt)
-        commits = commit_result.scalars().all()
-
-        # 格式化返回数据
         return {
             "project": project,
             "date": date,
-            "pull_requests": [
-                {
-                    "number": pr.pr_number,
-                    "title": pr.title,
-                    "state": pr.state,
-                    "user": pr.author,
-                    "html_url": pr.html_url,
-                    "created_at": format_datetime_utc(pr.created_at),
-                    "merged_at": format_datetime_utc(pr.merged_at),
-                    "labels": pr.labels or [],
-                    "body": pr.body,
-                }
-                for pr in prs
-            ],
-            "issues": [
-                {
-                    "number": issue.issue_number,
-                    "title": issue.title,
-                    "state": issue.state,
-                    "user": issue.author,
-                    "html_url": issue.html_url,
-                    "created_at": format_datetime_utc(issue.created_at),
-                    "closed_at": format_datetime_utc(issue.closed_at),
-                    "labels": issue.labels or [],
-                    "body": issue.body,
-                    "comments": issue.comments_count,
-                }
-                for issue in issues
-            ],
-            "commits": [
-                {
-                    "sha": commit.short_sha,
-                    "message": commit.message,
-                    "author": commit.author,
-                    "html_url": commit.html_url,
-                    "committed_at": format_datetime_utc(commit.committed_at),
-                    "pr_number": commit.pr_number,
-                    "pr_title": commit.pr_title,
-                    "additions": commit.additions,
-                    "deletions": commit.deletions,
-                }
-                for commit in commits
-            ],
+            "pull_requests": data.get("pull_requests", []),
+            "issues": data.get("issues", []),
+            "commits": data.get("commits", []),
             "releases": {
-                "latest": None,  # 版本信息从其他 API 获取
+                "latest": None,
                 "prerelease": None,
             },
-            "counts": {
-                "prs": len(prs),
-                "issues": len(issues),
-                "commits": len(commits),
-            },
-            "has_data": len(prs) > 0 or len(issues) > 0 or len(commits) > 0,
-            "fetched_at": format_datetime_utc(prs[0].fetched_at) if prs else None,
+            "counts": data.get("counts", {
+                "prs": len(data.get("pull_requests", [])),
+                "issues": len(data.get("issues", [])),
+                "commits": len(data.get("commits", [])),
+            }),
+            "has_data": data.get("counts", {}).get("prs", 0) > 0 or
+                       data.get("counts", {}).get("issues", 0) > 0 or
+                       data.get("counts", {}).get("commits", 0) > 0,
+            "fetched_at": data.get("fetched_at"),
         }
     except ValueError as e:
         raise HTTPException(
@@ -440,23 +389,15 @@ async def get_available_dates(
     """
     获取项目可用日期列表
 
-    返回数据库中有数据的日期列表
+    返回文件存储中有数据的日期列表
     """
-    from sqlalchemy import distinct
-    from app.models.daily_summary import DailyPR
-
     try:
-        # 查询有数据的日期
-        stmt = select(distinct(DailyPR.data_date)).where(
-            DailyPR.project == project
-        ).order_by(DailyPR.data_date.desc()).limit(limit)
-
-        result = await db.execute(stmt)
-        dates = result.scalars().all()
+        file_store = DailyDataFileStore()
+        dates = await file_store.list_available_dates(project, limit=limit)
 
         return {
             "project": project,
-            "dates": [d.isoformat() for d in dates if d],
+            "dates": dates,
             "total": len(dates),
         }
     except Exception as e:
@@ -483,16 +424,13 @@ async def get_daily_summary(
     """
     try:
         summary_date = DateType.fromisoformat(date)
+        file_store = DailyDataFileStore()
 
-        stmt = select(DailySummary).where(
-            DailySummary.project == project,
-            DailySummary.data_date == summary_date,
-        )
-        result = await db.execute(stmt)
-        summary = result.scalar_one_or_none()
+        # 从文件加载总结
+        summary_data = await file_store.load_summary(project, summary_date)
 
         # 如果总结尚未生成，返回空状态响应
-        if not summary:
+        if not summary_data:
             return {
                 "project": project,
                 "date": date,
@@ -506,15 +444,15 @@ async def get_daily_summary(
             }
 
         return {
-            "project": summary.project,
-            "date": summary.data_date.isoformat(),
-            "summary_markdown": summary.summary_markdown,
-            "has_data": summary.has_data,
-            "pr_count": summary.pr_count,
-            "issue_count": summary.issue_count,
-            "commit_count": summary.commit_count,
-            "generated_at": format_datetime_utc(summary.generated_at),
-            "status": summary.status,
+            "project": summary_data['project'],
+            "date": summary_data['data_date'],
+            "summary_markdown": summary_data['summary_markdown'],
+            "has_data": summary_data.get('has_data', False),
+            "pr_count": summary_data.get('pr_count', 0),
+            "issue_count": summary_data.get('issue_count', 0),
+            "commit_count": summary_data.get('commit_count', 0),
+            "generated_at": summary_data.get('generated_at'),
+            "status": summary_data.get('status', 'success'),
         }
     except ValueError as e:
         raise HTTPException(

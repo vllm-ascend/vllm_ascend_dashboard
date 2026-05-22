@@ -7,17 +7,16 @@ from datetime import datetime, date, time, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, Tuple
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.daily_summary import (
-    DailyPR, DailyIssue, DailyCommit, DailySummary, LLMProviderConfig,
-)
+from app.models.daily_summary import DailySummary, DailyPR, DailyIssue, DailyCommit, LLMProviderConfig
 from app.models import ProjectDashboardConfig
 from app.services.github_client import GitHubClient
 from app.services.llm_client import LLMClient, LLMResult
 from app.services.github_cache import get_github_cache, get_github_cache_for_repo
+from app.services.daily_data_file_store import DailyDataFileStore
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +75,7 @@ class DailySummaryService:
         self.db = db
         self.github_client = GitHubClient(token=settings.GITHUB_TOKEN)
         self.llm_client = LLMClient()
+        self.file_store = DailyDataFileStore()
 
     async def refresh_pr_issue_status(
         self,
@@ -236,10 +236,10 @@ class DailySummaryService:
         # 1. 计算时间范围：北京时间 00:00:00 - 23:59:59
         # 使用 Asia/Shanghai 时区（UTC+8）
         shanghai_tz = ZoneInfo('Asia/Shanghai')
-        
+
         start_time = datetime.combine(fetch_date, time.min, tzinfo=shanghai_tz)
         end_time = datetime.combine(fetch_date, time.max, tzinfo=shanghai_tz)
-        
+
         # 转换为 UTC 时间用于 GitHub API 查询
         start_time_utc = start_time.astimezone(timezone.utc)
         end_time_utc = end_time.astimezone(timezone.utc)
@@ -273,13 +273,19 @@ class DailySummaryService:
             logger.info(f"Local cache unavailable for {owner}/{repo}, fetching commits from PRs")
             commits = await self._fetch_vllm_commits_from_prs(owner, repo, prs)
 
-        # 6. 保存到数据库
-        # 如果强制刷新，先删除已有数据
+        # 6. 保存到文件存储
+        # 如果强制刷新，先删除已有文件
         if force_refresh:
-            await self._delete_daily_data(project, fetch_date)
+            await self.file_store.delete_daily_data(project, fetch_date)
             logger.info(f"Deleted existing data for {project} on {fetch_date} (force refresh)")
-        
-        await self._save_to_database(project, fetch_date, prs, issues, commits)
+
+        await self.file_store.save_daily_data(
+            project=project,
+            data_date=fetch_date,
+            prs=prs,
+            issues=issues,
+            commits=commits,
+        )
 
         return DailyData(prs=prs, issues=issues, commits=commits)
 
@@ -580,8 +586,8 @@ class DailySummaryService:
                 if existing:
                     return existing
 
-            # 2. 从数据库获取当日数据
-            daily_data = await self._get_daily_data_from_db(project, summary_date)
+            # 2. 从文件存储获取当日数据
+            daily_data = await self._get_daily_data_from_files(project, summary_date)
 
             # 3. 构建提示词
             prompt = self._build_prompt(project, daily_data, summary_date)
@@ -624,51 +630,40 @@ class DailySummaryService:
             raise
 
     async def _get_existing_summary(self, project: str, summary_date: date) -> Optional[SummaryResult]:
-        """获取已存在的总结"""
-        stmt = select(DailySummary).where(
-            DailySummary.project == project,
-            DailySummary.data_date == summary_date,
-            DailySummary.status == 'success'
+        """从文件存储获取已存在的总结"""
+        data = await self.file_store.load_summary(project, summary_date)
+
+        if not data or data.get('status') != 'success':
+            return None
+
+        return SummaryResult(
+            project=data['project'],
+            date=date.fromisoformat(data['data_date']),
+            summary_markdown=data['summary_markdown'],
+            has_data=data.get('has_data', False),
+            pr_count=data.get('pr_count', 0),
+            issue_count=data.get('issue_count', 0),
+            commit_count=data.get('commit_count', 0),
+            llm_provider=data.get('llm_provider', ''),
+            llm_model=data.get('llm_model', ''),
+            prompt_tokens=data.get('prompt_tokens'),
+            completion_tokens=data.get('completion_tokens'),
+            generation_time_seconds=data.get('generation_time_seconds'),
+            status=data.get('status', 'success'),
         )
-        result = await self.db.execute(stmt)
-        summary = result.scalar_one_or_none()
 
-        if summary:
-            return SummaryResult(
-                project=summary.project,
-                date=summary.data_date,
-                summary_markdown=summary.summary_markdown,
-                has_data=summary.has_data,
-                pr_count=summary.pr_count,
-                issue_count=summary.issue_count,
-                commit_count=summary.commit_count,
-                llm_provider=summary.llm_provider or '',
-                llm_model=summary.llm_model or '',
-                prompt_tokens=summary.prompt_tokens,
-                completion_tokens=summary.completion_tokens,
-                generation_time_seconds=summary.generation_time_seconds,
-                status=summary.status,
-            )
-        return None
+    async def _get_daily_data_from_files(self, project: str, summary_date: date) -> DailyData:
+        """从文件存储获取当日数据"""
+        data = await self.file_store.load_daily_data(project, summary_date)
 
-    async def _get_daily_data_from_db(self, project: str, summary_date: date) -> DailyData:
-        """从数据库获取当日数据"""
-        # 获取 PRs
-        pr_stmt = select(DailyPR).where(DailyPR.project == project, DailyPR.data_date == summary_date)
-        pr_result = await self.db.execute(pr_stmt)
-        prs = [self._model_to_dict(pr) for pr in pr_result.scalars().all()]
+        if not data:
+            return DailyData(prs=[], issues=[], commits=[])
 
-        # 获取 Issues
-        issue_stmt = select(DailyIssue).where(DailyIssue.project == project, DailyIssue.data_date == summary_date)
-        issue_result = await self.db.execute(issue_stmt)
-        issues = [self._model_to_dict(i) for i in issue_result.scalars().all()]
-
-        # 获取 Commits
-        commit_stmt = select(DailyCommit).where(DailyCommit.project == project, DailyCommit.data_date == summary_date)
-        commit_result = await self.db.execute(commit_stmt)
-        commits = [self._model_to_dict(c) for c in commit_result.scalars().all()]
-
-        return DailyData(prs=prs, issues=issues, commits=commits)
+        return DailyData(
+            prs=data.get("pull_requests", []),
+            issues=data.get("issues", []),
+            commits=data.get("commits", [])
+        )
 
     def _model_to_dict(self, obj) -> dict:
         """SQLAlchemy 模型转字典"""
@@ -740,86 +735,64 @@ class DailySummaryService:
         return user_data
 
     async def _save_summary(self, **kwargs) -> SummaryResult:
-        """保存总结到数据库（使用 upsert：已存在的记录更新，新记录插入）"""
+        """保存总结到文件存储（使用 upsert：已存在的文件更新，新文件创建）"""
         project = kwargs.get('project')
         summary_date = kwargs.get('summary_date')
 
-        # 查找是否存在
-        stmt = select(DailySummary).where(
-            DailySummary.project == project,
-            DailySummary.data_date == summary_date,
+        # 准备元数据
+        metadata = {
+            "has_data": kwargs.get('has_data', False),
+            "pr_count": kwargs.get('pr_count', 0),
+            "issue_count": kwargs.get('issue_count', 0),
+            "commit_count": kwargs.get('commit_count', 0),
+            "llm_provider": kwargs.get('llm_provider'),
+            "llm_model": kwargs.get('llm_model'),
+            "prompt_tokens": kwargs.get('prompt_tokens'),
+            "completion_tokens": kwargs.get('completion_tokens'),
+            "generation_time_seconds": kwargs.get('generation_time_seconds'),
+            "status": kwargs.get('status', 'success'),
+            "error_message": kwargs.get('error_message'),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "regenerated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # 保存到文件
+        await self.file_store.save_summary(
+            project=project,
+            data_date=summary_date,
+            summary_markdown=kwargs.get('summary_markdown', ''),
+            metadata=metadata
         )
-        result = await self.db.execute(stmt)
-        existing = result.scalar_one_or_none()
 
-        if existing:
-            # 更新现有记录
-            existing.summary_markdown = kwargs.get('summary_markdown', '')
-            existing.has_data = kwargs.get('has_data', False)
-            existing.pr_count = kwargs.get('pr_count', 0)
-            existing.issue_count = kwargs.get('issue_count', 0)
-            existing.commit_count = kwargs.get('commit_count', 0)
-            existing.llm_provider = kwargs.get('llm_provider')
-            existing.llm_model = kwargs.get('llm_model')
-            existing.prompt_tokens = kwargs.get('prompt_tokens')
-            existing.completion_tokens = kwargs.get('completion_tokens')
-            existing.generation_time_seconds = kwargs.get('generation_time_seconds')
-            existing.status = kwargs.get('status', 'success')
-            existing.error_message = kwargs.get('error_message')
-            existing.generated_at = datetime.now(timezone.utc)  # 更新生成时间
-            existing.regenerated_at = datetime.now(timezone.utc)  # 标记为重新生成
-            summary = existing
-        else:
-            # 插入新记录 - 需要将 summary_date 转换为 data_date
-            kwargs_for_insert = {k: v for k, v in kwargs.items() if k != 'summary_date'}
-            kwargs_for_insert['data_date'] = summary_date
-            summary = DailySummary(**kwargs_for_insert)
-            self.db.add(summary)
-
-        await self.db.commit()
-        await self.db.refresh(summary)
-
+        # 返回 SummaryResult
         return SummaryResult(
-            project=summary.project,
-            date=summary.data_date,
-            summary_markdown=summary.summary_markdown,
-            has_data=summary.has_data,
-            pr_count=summary.pr_count,
-            issue_count=summary.issue_count,
-            commit_count=summary.commit_count,
-            llm_provider=summary.llm_provider or '',
-            llm_model=summary.llm_model or '',
-            prompt_tokens=summary.prompt_tokens,
-            completion_tokens=summary.completion_tokens,
-            generation_time_seconds=summary.generation_time_seconds,
-            status=summary.status,
+            project=project,
+            date=summary_date,
+            summary_markdown=kwargs.get('summary_markdown', ''),
+            has_data=kwargs.get('has_data', False),
+            pr_count=kwargs.get('pr_count', 0),
+            issue_count=kwargs.get('issue_count', 0),
+            commit_count=kwargs.get('commit_count', 0),
+            llm_provider=kwargs.get('llm_provider', ''),
+            llm_model=kwargs.get('llm_model', ''),
+            prompt_tokens=kwargs.get('prompt_tokens'),
+            completion_tokens=kwargs.get('completion_tokens'),
+            generation_time_seconds=kwargs.get('generation_time_seconds'),
+            status=kwargs.get('status', 'success'),
         )
 
     async def _save_error_summary(self, project: str, summary_date: date, error_message: str):
-        """保存错误状态的总结（使用 upsert）"""
-        # 查找是否存在
-        stmt = select(DailySummary).where(
-            DailySummary.project == project,
-            DailySummary.data_date == summary_date,
+        """保存错误状态的总结到文件存储"""
+        metadata = {
+            "has_data": False,
+            "status": "failed",
+            "error_message": error_message,
+            "regenerated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        await self.file_store.save_summary(
+            project=project,
+            data_date=summary_date,
+            summary_markdown=f"生成失败：{error_message}",
+            metadata=metadata
         )
-        result = await self.db.execute(stmt)
-        existing = result.scalar_one_or_none()
-
-        if existing:
-            existing.summary_markdown = f"生成失败：{error_message}"
-            existing.has_data = False
-            existing.status = 'failed'
-            existing.error_message = error_message
-            existing.regenerated_at = datetime.now(timezone.utc)
-        else:
-            summary = DailySummary(
-                project=project,
-                data_date=summary_date,
-                summary_markdown=f"生成失败：{error_message}",
-                has_data=False,
-                status='failed',
-                error_message=error_message,
-            )
-            self.db.add(summary)
-
-        await self.db.commit()
