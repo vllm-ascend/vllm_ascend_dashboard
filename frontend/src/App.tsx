@@ -18,6 +18,7 @@ import ModelDailyReport from './pages/ModelDailyReport'
 import ModelBoardConfig from './pages/ModelBoardConfig'
 import CIBoardConfig from './pages/CIBoardConfig'
 import GitHubActivityDetail from './pages/GitHubActivityDetail'
+import CommitAnalysisDetail from './pages/CommitAnalysisDetail'
 import ProjectBoard from './pages/ProjectBoard'
 import ProjectBoardConfig from './pages/ProjectBoardConfig'
 import { useCurrentUser } from './hooks/useCurrentUser'
@@ -130,6 +131,7 @@ function App() {
               <Route path="models/reports/:date" element={<ModelDailyReport />} />
               {/* GitHub 动态详情页面 */}
               <Route path="github-activity/:project" element={<GitHubActivityDetail />} />
+              <Route path="github-activity/:project/commits/:sha" element={<CommitAnalysisDetail />} />
 
               {/* 仅管理员访问的路由 */}
               <Route

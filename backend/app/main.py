@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import (
     auth,
     ci,
+    commit_analysis,
     daily_summary,
     job_owners,
     model_sync_configs,
@@ -181,6 +182,7 @@ def create_app() -> FastAPI:
     # 注册路由
     app.include_router(auth.router, prefix="/api/v1/auth", tags=["认证"])
     app.include_router(ci.router, prefix="/api/v1/ci", tags=["CI 数据"])
+    app.include_router(commit_analysis.router, prefix="/api/v1/commit-analysis", tags=["Commit 分析"])
     app.include_router(daily_summary.router, prefix="/api/v1", tags=["每日总结"])
     app.include_router(models.router, prefix="/api/v1/models", tags=["模型管理"])
     app.include_router(model_sync_configs.router, prefix="/api/v1/model-sync-configs", tags=["模型同步配置"])

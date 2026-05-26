@@ -16,8 +16,10 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import { useDailyData, useFetchDailyData, useRefreshDailyStatus, useLLMProviders } from '../hooks/useDailySummary'
+import { useCommitAnalysisBatch } from '../hooks/useCommitAnalysis'
 import { AISummaryTab } from '../components/AISummaryTab'
-import { DailyDataItem, DailyCommitItem } from '../services/dailySummary'
+import { DailyDataItem, DailyCommitItem, GitHubActor } from '../services/dailySummary'
+import { ANALYSIS_STATUSES, CHANGE_TYPES, CommitAnalysisBatchItem, CommitAnalysisStatus, CommitChangeType } from '../services/commitAnalysis'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import utc from 'dayjs/plugin/utc'
@@ -34,6 +36,34 @@ dayjs.extend(relativeTime)
 const BEIJING_TIMEZONE = 'Asia/Shanghai'
 
 const { Text, Title } = Typography
+
+const getActorName = (actor: GitHubActor) => {
+  if (!actor) return '-'
+  return typeof actor === 'string' ? actor : actor.login
+}
+
+const getStatusColor = (status: CommitAnalysisStatus) => {
+  if (status === '已闭环') return 'green'
+  if (status === '已分析') return 'blue'
+  return 'orange'
+}
+
+const getChangeTypeColor = (type: CommitChangeType) => {
+  const colors: Record<CommitChangeType, string> = {
+    Feature: 'green',
+    Bugfix: 'red',
+    Refactor: 'purple',
+    Common: 'default',
+    Test: 'cyan',
+    CI: 'gold',
+    Other: 'default',
+  }
+  return colors[type]
+}
+
+type CommitTableItem = DailyCommitItem & {
+  analysis?: CommitAnalysisBatchItem
+}
 
 function GitHubActivityDetail() {
   const { project } = useParams<{ project: string }>()
@@ -151,9 +181,9 @@ function GitHubActivityDetail() {
       dataIndex: 'user',
       key: 'user',
       width: 120,
-      sorter: (a: DailyDataItem, b: DailyDataItem) => a.user.localeCompare(b.user),
-      render: (user: string) => (
-        <Tag color="blue">{user}</Tag>
+      sorter: (a: DailyDataItem, b: DailyDataItem) => getActorName(a.user).localeCompare(getActorName(b.user)),
+      render: (user: GitHubActor) => (
+        <Tag color="blue">{getActorName(user)}</Tag>
       ),
     },
     {
@@ -239,8 +269,8 @@ function GitHubActivityDetail() {
       dataIndex: 'user',
       key: 'user',
       width: 120,
-      render: (user: string) => (
-        <Tag color="blue">{user}</Tag>
+      render: (user: GitHubActor) => (
+        <Tag color="blue">{getActorName(user)}</Tag>
       ),
     },
     {
@@ -267,6 +297,9 @@ function GitHubActivityDetail() {
     },
   ]
 
+  const commitShas = (data?.commits || []).map((commit) => commit.sha)
+  const { data: commitAnalysisData, isLoading: isCommitAnalysisLoading } = useCommitAnalysisBatch(project || '', commitShas)
+
   // Commit 表格列
   const commitColumns = [
     {
@@ -274,14 +307,15 @@ function GitHubActivityDetail() {
       dataIndex: 'sha',
       key: 'sha',
       width: 100,
-      render: (sha: string, record: DailyCommitItem) => (
+      render: (sha: string, record: CommitTableItem) => (
         <a
           href={record.html_url}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={(event) => event.stopPropagation()}
           style={{ fontFamily: 'monospace', color: '#52c41a' }}
         >
-          {sha}
+          {sha.slice(0, 7)}
         </a>
       ),
     },
@@ -290,7 +324,7 @@ function GitHubActivityDetail() {
       dataIndex: 'message',
       key: 'message',
       ellipsis: true,
-      render: (message: string, record: DailyCommitItem) => (
+      render: (message: string, record: CommitTableItem) => (
         <Space direction="vertical" size={2} style={{ width: '100%' }}>
           <Text ellipsis>{message}</Text>
           {record.pr_number && (
@@ -306,7 +340,36 @@ function GitHubActivityDetail() {
       dataIndex: 'author',
       key: 'author',
       width: 120,
-      render: (author: string) => <Tag color="geekblue">{author}</Tag>,
+      render: (author: GitHubActor) => <Tag color="geekblue">{getActorName(author)}</Tag>,
+    },
+    {
+      title: '责任人',
+      key: 'assignee',
+      width: 120,
+      filters: (commitAnalysisData?.filters.assignees || []).map((assignee) => ({ text: assignee, value: assignee })),
+      onFilter: (value: any, record: CommitTableItem) => (record.analysis?.assignee || '') === value,
+      render: (_: unknown, record: CommitTableItem) => record.analysis?.assignee ? <Tag>{record.analysis.assignee}</Tag> : '-',
+    },
+    {
+      title: '类型',
+      key: 'change_type',
+      width: 120,
+      filters: CHANGE_TYPES.map((type) => ({ text: type, value: type })),
+      onFilter: (value: any, record: CommitTableItem) => record.analysis?.change_type === value,
+      render: (_: unknown, record: CommitTableItem) => record.analysis?.change_type ? (
+        <Tag color={getChangeTypeColor(record.analysis.change_type)}>{record.analysis.change_type}</Tag>
+      ) : '-',
+    },
+    {
+      title: '状态',
+      key: 'analysis_status',
+      width: 110,
+      filters: ANALYSIS_STATUSES.map((status) => ({ text: status, value: status })),
+      onFilter: (value: any, record: CommitTableItem) => (record.analysis?.status || '未分析') === value,
+      render: (_: unknown, record: CommitTableItem) => {
+        const status = record.analysis?.status || '未分析'
+        return <Tag color={getStatusColor(status)}>{status}</Tag>
+      },
     },
     {
       title: '提交时间',
@@ -322,7 +385,10 @@ function GitHubActivityDetail() {
   // 数据安全访问
   const pullRequests = data?.pull_requests || []
   const issues = data?.issues || []
-  const commits = data?.commits || []
+  const commits: CommitTableItem[] = (data?.commits || []).map((commit) => ({
+    ...commit,
+    analysis: commitAnalysisData?.analyses[commit.sha],
+  }))
   const counts = data?.counts || { prs: 0, issues: 0, commits: 0 }
   const fetchedAt = data?.fetched_at
 
@@ -451,10 +517,14 @@ function GitHubActivityDetail() {
                 <Table
                   columns={commitColumns}
                   dataSource={commits}
-                  loading={isLoading}
+                  loading={isLoading || isCommitAnalysisLoading}
                   rowKey="sha"
                   pagination={{ pageSize: 10 }}
-                  scroll={{ x: 800 }}
+                  scroll={{ x: 1100 }}
+                  onRow={(record) => ({
+                    onClick: () => navigate(`/github-activity/${project}/commits/${record.sha}?date=${selectedDate}`),
+                    style: { cursor: 'pointer' },
+                  })}
                 />
               ) : (
                 <Empty description="当日无 Commit" />

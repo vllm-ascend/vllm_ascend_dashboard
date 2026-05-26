@@ -57,11 +57,19 @@ export interface SystemPromptConfig {
   description: string
 }
 
+export interface GitHubUser {
+  login: string
+  avatar_url?: string
+  html_url?: string
+}
+
+export type GitHubActor = string | GitHubUser | null
+
 export interface DailyDataItem {
   number: number
   title: string
   state: string
-  user: string
+  user: GitHubActor
   html_url: string
   created_at: string | null
   merged_at?: string | null  // PR 合入时间（仅 PR 类型有）
@@ -72,7 +80,7 @@ export interface DailyDataItem {
 export interface DailyCommitItem {
   sha: string
   message: string
-  author: string
+  author: GitHubActor
   html_url: string
   committed_at: string | null
   pr_number?: number
