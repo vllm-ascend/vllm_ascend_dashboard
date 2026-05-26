@@ -148,10 +148,10 @@ export const useUpdateDailySummaryConfig = () => {
 /**
  * 获取系统提示词配置
  */
-export const useSystemPromptConfig = () => {
+export const useSystemPromptConfig = (scope: api.SystemPromptScope = 'daily_summary') => {
   return useQuery({
-    queryKey: ['system-prompt-config'],
-    queryFn: api.getSystemPromptConfig,
+    queryKey: ['system-prompt-config', scope],
+    queryFn: () => api.getSystemPromptConfig(scope),
   })
 }
 
@@ -162,9 +162,15 @@ export const useUpdateSystemPromptConfig = () => {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: api.updateSystemPromptConfig,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['system-prompt-config'] })
+    mutationFn: ({
+      prompts,
+      scope = 'daily_summary',
+    }: {
+      prompts: Record<string, string>
+      scope?: api.SystemPromptScope
+    }) => api.updateSystemPromptConfig(prompts, scope),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['system-prompt-config', variables.scope || 'daily_summary'] })
     },
   })
 }

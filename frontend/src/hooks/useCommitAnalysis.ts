@@ -61,3 +61,24 @@ export const useUpdateCommitAnalysis = () => {
     },
   })
 }
+
+export const useRegenerateCommitAISummary = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({
+      project,
+      sha,
+      date,
+      llm_provider,
+    }: {
+      project: string
+      sha: string
+      date?: string
+      llm_provider?: string
+    }) => api.regenerateCommitAISummary(project, sha, date, llm_provider),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['commit-analysis', variables.project, variables.sha] })
+    },
+  })
+}

@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException, status
+from datetime import date as DateType
 
-from app.api.deps import CurrentAdminUser, CurrentUser
+from fastapi import APIRouter, HTTPException, Query, status
+
+from app.api.deps import CurrentAdminUser, CurrentSuperAdminUser, CurrentUser, DbSession
 from app.schemas.commit_analysis import (
     CommitAnalysisAssignRequest,
     CommitAnalysisBatchItem,
@@ -12,6 +14,7 @@ from app.schemas.commit_analysis import (
     CommitChangeType,
 )
 from app.services.commit_analysis_file_store import CommitAnalysisFileStore
+from app.services.commit_analysis_summary import CommitAnalysisSummaryService
 
 router = APIRouter()
 
@@ -107,6 +110,31 @@ async def claim_commit_analysis(
             analysis["updated_by"] = current_user.username
             analysis = await store.save_analysis(project, sha, analysis)
 
+        return to_response(store, current_user, analysis)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/{project}/{sha}/ai-summary/regenerate", response_model=CommitAnalysisResponse)
+async def regenerate_commit_ai_summary(
+    project: str,
+    sha: str,
+    current_user: CurrentSuperAdminUser,
+    db: DbSession,
+    date: str | None = Query(default=None),
+    llm_provider: str | None = Query(default=None),
+):
+    try:
+        data_date = DateType.fromisoformat(date) if date else None
+        service = CommitAnalysisSummaryService(db)
+        analysis = await service.generate_summary(
+            project=project,
+            sha=sha,
+            username=current_user.username,
+            data_date=data_date,
+            llm_provider=llm_provider,
+        )
+        store = CommitAnalysisFileStore()
         return to_response(store, current_user, analysis)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

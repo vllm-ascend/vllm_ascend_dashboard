@@ -142,6 +142,7 @@ function SystemConfig() {
   const [dailySummaryConfigForm] = Form.useForm()
   const [llmProviderForm] = Form.useForm()
   const [systemPromptForm] = Form.useForm()
+  const [commitAnalysisPromptForm] = Form.useForm()
 
   // 同步配置相关 state
   const [syncActiveTab, setSyncActiveTab] = useState('project_cache')
@@ -189,6 +190,7 @@ function SystemConfig() {
 
   // 系统提示词配置 hooks
   const { data: systemPromptConfig, isLoading: systemPromptConfigLoading } = useSystemPromptConfig()
+  const { data: commitAnalysisPromptConfig } = useSystemPromptConfig('commit_analysis')
   const updateSystemPromptMutation = useUpdateSystemPromptConfig()
 
   const [isAppConfigModalOpen, setIsAppConfigModalOpen] = useState(false)
@@ -197,6 +199,7 @@ function SystemConfig() {
   const [isLLMProviderModalOpen, setIsLLMProviderModalOpen] = useState(false)
   const [selectedLLMProvider, setSelectedLLMProvider] = useState<string | null>(null)
   const [isSystemPromptModalOpen, setIsSystemPromptModalOpen] = useState(false)
+  const [isCommitAnalysisPromptModalOpen, setIsCommitAnalysisPromptModalOpen] = useState(false)
 
   const [activeTabKey, setActiveTabKey] = useState('system')
 
@@ -1108,7 +1111,7 @@ function SystemConfig() {
             items={[
               {
                 key: 'ascend',
-                label: <Tag color="purple">vLLM Ascend 项目提示词</Tag>,
+                label: <Tag color="purple">vLLM Ascend 项目动态提示词</Tag>,
                 children: (
                   <div style={{ maxHeight: 200, overflow: 'auto' }}>
                     <Text>{systemPromptConfig?.prompts?.ascend || '未配置'}</Text>
@@ -1117,10 +1120,54 @@ function SystemConfig() {
               },
               {
                 key: 'vllm',
-                label: <Tag color="cyan">vLLM 项目提示词</Tag>,
+                label: <Tag color="cyan">vLLM 项目动态提示词</Tag>,
                 children: (
                   <div style={{ maxHeight: 200, overflow: 'auto' }}>
                     <Text>{systemPromptConfig?.prompts?.vllm || '未配置'}</Text>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </div>
+
+        <Divider />
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Title level={5} style={{ margin: 0 }}>
+              <MessageOutlined style={{ marginRight: 8 }} />
+              Commit 分析系统提示词
+            </Title>
+            {isSuperAdmin && (
+              <Button size="small" icon={<MessageOutlined />} onClick={() => setIsCommitAnalysisPromptModalOpen(true)}>
+                编辑
+              </Button>
+            )}
+          </div>
+          <Alert
+            message="说明"
+            description="系统提示词用于指导 AI 生成单个 Commit 分析总结的风格和内容重点。不同项目可使用不同的提示词模板。"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          <Collapse
+            items={[
+              {
+                key: 'commit-ascend',
+                label: <Tag color="purple">vLLM Ascend Commit 分析提示词</Tag>,
+                children: (
+                  <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                    <Text>{commitAnalysisPromptConfig?.prompts?.ascend || '未配置'}</Text>
+                  </div>
+                ),
+              },
+              {
+                key: 'commit-vllm',
+                label: <Tag color="cyan">vLLM Commit 分析提示词</Tag>,
+                children: (
+                  <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                    <Text>{commitAnalysisPromptConfig?.prompts?.vllm || '未配置'}</Text>
                   </div>
                 ),
               },
@@ -2024,9 +2071,11 @@ function SystemConfig() {
           layout="vertical"
           onFinish={(values) => {
             updateSystemPromptMutation.mutate({
-              ascend: values.ascend,
-              vllm: values.vllm,
-              combined: values.combined,
+              prompts: {
+                ascend: values.ascend,
+                vllm: values.vllm,
+              },
+              scope: 'daily_summary',
             }, {
               onSuccess: () => {
                 message.success('系统提示词已更新')
@@ -2067,6 +2116,85 @@ function SystemConfig() {
               <Button onClick={() => {
                 setIsSystemPromptModalOpen(false)
                 systemPromptForm.resetFields()
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit" loading={updateSystemPromptMutation.isPending}>
+                保存
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Commit 分析系统提示词编辑弹窗 */}
+      <Modal
+        title="编辑 Commit 分析系统提示词"
+        open={isCommitAnalysisPromptModalOpen}
+        onCancel={() => {
+          setIsCommitAnalysisPromptModalOpen(false)
+          commitAnalysisPromptForm.resetFields()
+        }}
+        footer={null}
+        width={800}
+      >
+        <Alert
+          message="说明"
+          description="系统提示词用于指导 AI 生成单个 Commit 分析总结。修改后会对新生成的 Commit AI 总结生效。"
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Form
+          form={commitAnalysisPromptForm}
+          layout="vertical"
+          onFinish={(values) => {
+            updateSystemPromptMutation.mutate({
+              prompts: {
+                ascend: values.ascend,
+                vllm: values.vllm,
+              },
+              scope: 'commit_analysis',
+            }, {
+              onSuccess: () => {
+                message.success('Commit 分析系统提示词已更新')
+                setIsCommitAnalysisPromptModalOpen(false)
+              },
+              onError: (error: any) => {
+                message.error(error.response?.data?.detail || '更新失败')
+              },
+            })
+          }}
+          initialValues={{
+            ascend: commitAnalysisPromptConfig?.prompts?.ascend || '',
+            vllm: commitAnalysisPromptConfig?.prompts?.vllm || '',
+          }}
+        >
+          <Form.Item
+            name="ascend"
+            label={<Tag color="purple">vLLM Ascend Commit 分析提示词</Tag>}
+          >
+            <Input.TextArea
+              rows={6}
+              placeholder="用于 vLLM Ascend Commit 分析总结的系统提示词..."
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="vllm"
+            label={<Tag color="cyan">vLLM Commit 分析提示词</Tag>}
+          >
+            <Input.TextArea
+              rows={6}
+              placeholder="用于 vLLM Commit 分析总结的系统提示词..."
+            />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setIsCommitAnalysisPromptModalOpen(false)
+                commitAnalysisPromptForm.resetFields()
               }}>
                 取消
               </Button>

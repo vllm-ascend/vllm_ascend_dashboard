@@ -49,6 +49,8 @@ export interface LLMProvider {
   api_base_url?: string
 }
 
+export type SystemPromptScope = 'daily_summary' | 'commit_analysis'
+
 export interface SystemPromptConfig {
   prompts: {
     ascend: string
@@ -227,15 +229,18 @@ export const updateDailySummaryConfig = async (config: any) => {
 /**
  * 获取系统提示词配置
  */
-export const getSystemPromptConfig = async (): Promise<SystemPromptConfig> => {
-  const response = await apiClient.get('/system/config/system-prompt')
+export const getSystemPromptConfig = async (scope: SystemPromptScope = 'daily_summary'): Promise<SystemPromptConfig> => {
+  const response = await apiClient.get('/system/config/system-prompt', { params: { scope } })
   return response.data
 }
 
 /**
  * 更新系统提示词配置
  */
-export const updateSystemPromptConfig = async (prompts: Record<string, string>) => {
-  const response = await apiClient.put('/system/config/system-prompt', { prompts })
+export const updateSystemPromptConfig = async (
+  prompts: Record<string, string>,
+  scope: SystemPromptScope = 'daily_summary'
+) => {
+  const response = await apiClient.put('/system/config/system-prompt', { prompts }, { params: { scope } })
   return response.data
 }

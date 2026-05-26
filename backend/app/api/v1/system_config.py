@@ -924,31 +924,38 @@ async def update_llm_provider(
 
 # ============ 系统提示词配置 API ============
 
-@router.get("/system-prompt")
-async def get_system_prompt_config(
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    获取系统提示词配置
 
-    所有登录用户可访问
+def get_system_prompt_scope_config(scope: str) -> tuple[str, dict[str, str], str]:
+    if scope == "commit_analysis":
+        return (
+            "commit_analysis_system_prompt",
+            {
+                "ascend": """你是一名专业的 vLLM Ascend Commit 技术分析师。请基于给定的 Commit 元信息、关联 PR 信息、文件变更和已有人工分析字段，生成中文 Markdown 总结。
 
-    返回各项目的系统提示词配置：
-    - ascend: vLLM Ascend 项目提示词
-    - vllm: vLLM 项目提示词
-    """
-    from app.models import ProjectDashboardConfig
+要求：
+1. 概括该 Commit 做了什么
+2. 判断修改类型：Feature / Bugfix / Refactor / Common / Test / CI / Other
+3. 判断是否影响 API，并说明原因
+4. 分析对 vLLM Ascend 的潜在影响；如不涉及，请明确说明“不涉及”
+5. 给出后续跟进建议；如无需跟进，请明确说明“不涉及”
+6. 输出结构清晰，避免编造未提供的信息""",
+                "vllm": """你是一名专业的 vLLM Commit 技术分析师。请基于给定的 Commit 元信息、关联 PR 信息、文件变更和已有人工分析字段，生成中文 Markdown 总结。
 
-    try:
-        stmt = select(ProjectDashboardConfig).where(
-            ProjectDashboardConfig.config_key == 'daily_summary_system_prompt'
+要求：
+1. 概括该 Commit 做了什么
+2. 判断修改类型：Feature / Bugfix / Refactor / Common / Test / CI / Other
+3. 判断是否影响 API，并说明原因
+4. 分析对 vLLM Ascend 的潜在影响；如不涉及，请明确说明“不涉及”
+5. 给出后续跟进建议；如无需跟进，请明确说明“不涉及”
+6. 输出结构清晰，避免编造未提供的信息""",
+            },
+            "系统提示词用于指导 AI 生成单个 Commit 分析总结的风格和内容重点",
         )
-        result = await db.execute(stmt)
-        config = result.scalar_one_or_none()
-
-        # 默认系统提示词
-        default_prompts = {
+    if scope != "daily_summary":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid system prompt scope")
+    return (
+        "daily_summary_system_prompt",
+        {
             "ascend": """你是一名专业的 vLLM Ascend 项目技术分析师。请根据以下数据生成项目动态总结和分析。
 
 要求：
@@ -975,7 +982,35 @@ async def get_system_prompt_config(
 5. 使用 Markdown 格式，语言为中文
 6. 结构清晰，重点突出，便于快速了解当日技术动态
 7. 重点PR/ISSUE/COMMIT附带ID和github链接""",
-        }
+        },
+        "系统提示词用于指导 AI 生成项目动态总结的风格和内容重点",
+    )
+
+
+@router.get("/system-prompt")
+async def get_system_prompt_config(
+    current_user: Annotated[User, Depends(get_current_user)],
+    scope: str = "daily_summary",
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取系统提示词配置
+
+    所有登录用户可访问
+
+    返回各项目的系统提示词配置：
+    - ascend: vLLM Ascend 项目提示词
+    - vllm: vLLM 项目提示词
+    """
+    from app.models import ProjectDashboardConfig
+
+    try:
+        config_key, default_prompts, default_description = get_system_prompt_scope_config(scope)
+        stmt = select(ProjectDashboardConfig).where(
+            ProjectDashboardConfig.config_key == config_key
+        )
+        result = await db.execute(stmt)
+        config = result.scalar_one_or_none()
 
         if config and config.config_value:
             return {
@@ -985,7 +1020,7 @@ async def get_system_prompt_config(
 
         return {
             "prompts": default_prompts,
-            "description": "系统提示词用于指导 AI 生成项目动态总结的风格和内容重点",
+            "description": default_description,
         }
     except Exception as e:
         logger.error(f"Failed to get system prompt config: {e}")
@@ -999,6 +1034,7 @@ async def get_system_prompt_config(
 async def update_system_prompt_config(
     config: dict,
     current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
+    scope: str = "daily_summary",
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -1023,19 +1059,21 @@ async def update_system_prompt_config(
                 detail="请提供 prompts 配置"
             )
 
+        config_key, _, default_description = get_system_prompt_scope_config(scope)
         stmt = select(ProjectDashboardConfig).where(
-            ProjectDashboardConfig.config_key == 'daily_summary_system_prompt'
+            ProjectDashboardConfig.config_key == config_key
         )
         result = await db.execute(stmt)
         prompt_config = result.scalar_one_or_none()
 
         if prompt_config:
             prompt_config.config_value = config['prompts']
+            prompt_config.description = default_description
         else:
             prompt_config = ProjectDashboardConfig(
-                config_key='daily_summary_system_prompt',
+                config_key=config_key,
                 config_value=config['prompts'],
-                description='每日总结系统提示词配置',
+                description=default_description,
             )
             db.add(prompt_config)
 

@@ -49,6 +49,16 @@ class CommitAnalysisResponse(BaseModel):
     next_plan: str | None = None
     planned_closure_time: str | None = None
     actual_closure_time: str | None = None
+    ai_summary_markdown: str | None = None
+    ai_summary_status: str | None = None
+    ai_summary_generated_at: str | None = None
+    ai_summary_generated_by: str | None = None
+    ai_summary_llm_provider: str | None = None
+    ai_summary_llm_model: str | None = None
+    ai_summary_prompt_tokens: int | None = None
+    ai_summary_completion_tokens: int | None = None
+    ai_summary_generation_time_seconds: int | None = None
+    ai_summary_error_message: str | None = None
     created_at: str | None = None
     created_by: str | None = None
     updated_at: str | None = None

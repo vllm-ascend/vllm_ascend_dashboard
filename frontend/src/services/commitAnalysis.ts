@@ -1,4 +1,4 @@
-import apiClient from './api'
+import apiClient, { longTimeoutApiClient } from './api'
 
 export const CHANGE_TYPES = ['Feature', 'Bugfix', 'Refactor', 'Common', 'Test', 'CI', 'Other'] as const
 export const ANALYSIS_STATUSES = ['未分析', '已分析', '已闭环'] as const
@@ -17,6 +17,16 @@ export interface CommitAnalysis {
   next_plan: string | null
   planned_closure_time: string | null
   actual_closure_time: string | null
+  ai_summary_markdown: string | null
+  ai_summary_status: 'not_generated' | 'success' | 'failed' | null
+  ai_summary_generated_at: string | null
+  ai_summary_generated_by: string | null
+  ai_summary_llm_provider: string | null
+  ai_summary_llm_model: string | null
+  ai_summary_prompt_tokens: number | null
+  ai_summary_completion_tokens: number | null
+  ai_summary_generation_time_seconds: number | null
+  ai_summary_error_message: string | null
   created_at: string | null
   created_by: string | null
   updated_at: string | null
@@ -78,5 +88,19 @@ export const updateCommitAnalysis = async (
   data: CommitAnalysisUpdate
 ): Promise<CommitAnalysis> => {
   const response = await apiClient.put(`/commit-analysis/${project}/${sha}`, data)
+  return response.data
+}
+
+export const regenerateCommitAISummary = async (
+  project: string,
+  sha: string,
+  date?: string,
+  llm_provider?: string
+): Promise<CommitAnalysis> => {
+  const response = await longTimeoutApiClient.post(
+    `/commit-analysis/${project}/${sha}/ai-summary/regenerate`,
+    null,
+    { params: { date, llm_provider } }
+  )
   return response.data
 }
