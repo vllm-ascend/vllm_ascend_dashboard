@@ -16,9 +16,9 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -318,7 +318,16 @@ class DailyDataMigrator:
 
     def _model_to_dict(self, obj) -> dict:
         """SQLAlchemy 模型转字典"""
-        return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+        return {c.name: self._json_safe_value(getattr(obj, c.name)) for c in obj.__table__.columns}
+
+    def _json_safe_value(self, value: Any) -> Any:
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {key: self._json_safe_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._json_safe_value(item) for item in value]
+        return value
 
 
 async def main():
