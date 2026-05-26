@@ -259,33 +259,31 @@ class DailyDataMigrator:
 
     async def _get_unique_project_dates(self, session: AsyncSession) -> list[tuple[str, date]]:
         """获取所有不同的项目和日期组合"""
-        from sqlalchemy import distinct
-
         # 从 PRs 获取
-        pr_stmt = select(distinct(DailyPR.project), distinct(DailyPR.data_date)).where(
+        pr_stmt = select(DailyPR.project, DailyPR.data_date).where(
             DailyPR.data_date.isnot(None)
-        )
+        ).distinct()
         pr_result = await session.execute(pr_stmt)
         project_dates = set(pr_result.all())
 
         # 从 Issues 获取
-        issue_stmt = select(distinct(DailyIssue.project), distinct(DailyIssue.data_date)).where(
+        issue_stmt = select(DailyIssue.project, DailyIssue.data_date).where(
             DailyIssue.data_date.isnot(None)
-        )
+        ).distinct()
         issue_result = await session.execute(issue_stmt)
         project_dates.update(issue_result.all())
 
         # 从 Commits 获取
-        commit_stmt = select(distinct(DailyCommit.project), distinct(DailyCommit.data_date)).where(
+        commit_stmt = select(DailyCommit.project, DailyCommit.data_date).where(
             DailyCommit.data_date.isnot(None)
-        )
+        ).distinct()
         commit_result = await session.execute(commit_stmt)
         project_dates.update(commit_result.all())
 
         # 从 Summaries 获取
-        summary_stmt = select(distinct(DailySummary.project), distinct(DailySummary.data_date)).where(
+        summary_stmt = select(DailySummary.project, DailySummary.data_date).where(
             DailySummary.data_date.isnot(None)
-        )
+        ).distinct()
         summary_result = await session.execute(summary_stmt)
         project_dates.update(summary_result.all())
 
