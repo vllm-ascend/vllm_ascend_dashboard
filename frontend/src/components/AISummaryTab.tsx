@@ -4,6 +4,7 @@
 import React, { useEffect } from 'react'
 import { Card, Empty, Button, Spin, Alert, Space, Tag, Typography, message } from 'antd'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { RobotOutlined, ReloadOutlined, DownloadOutlined } from '@ant-design/icons'
 import { useDailySummary, useRegenerateDailySummary } from '../hooks/useDailySummary'
 import dayjs from 'dayjs'
@@ -199,7 +200,24 @@ ${data.summary_markdown}
         maxHeight: '600px',
         overflowY: 'auto'
       }}>
-        <ReactMarkdown>{data.summary_markdown}</ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            table: ({ node, ...props }) => (
+              <div style={{ overflowX: 'auto', marginBottom: 16 }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }} {...props} />
+              </div>
+            ),
+            th: ({ node, ...props }) => (
+              <th style={{ border: '1px solid #d9d9d9', padding: '8px 12px', background: '#f5f5f5', textAlign: 'left' }} {...props} />
+            ),
+            td: ({ node, ...props }) => (
+              <td style={{ border: '1px solid #d9d9d9', padding: '8px 12px', verticalAlign: 'top' }} {...props} />
+            ),
+          }}
+        >
+          {data.summary_markdown}
+        </ReactMarkdown>
       </div>
     </div>
   )
