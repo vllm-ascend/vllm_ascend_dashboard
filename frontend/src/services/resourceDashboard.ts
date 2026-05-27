@@ -1,0 +1,144 @@
+import api from './api'
+
+export interface KubernetesCluster {
+  id: number
+  name: string
+  description?: string | null
+  context?: string | null
+  default_label_selector?: string | null
+  npu_resource_name: string
+  enabled: boolean
+  display_order: number
+  kubeconfig_configured: boolean
+  created_by?: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface KubernetesClusterCreate {
+  name: string
+  description?: string | null
+  kubeconfig: string
+  context?: string | null
+  default_label_selector?: string | null
+  npu_resource_name: string
+  enabled: boolean
+  display_order: number
+}
+
+export interface KubernetesClusterUpdate {
+  name?: string
+  description?: string | null
+  kubeconfig?: string | null
+  context?: string | null
+  default_label_selector?: string | null
+  npu_resource_name?: string
+  enabled?: boolean
+  display_order?: number
+}
+
+export interface KubernetesClusterTestResponse {
+  success: boolean
+  message: string
+  node_count: number
+  pod_count: number
+}
+
+export interface ResourceQuantity {
+  cpu_cores: number
+  memory_bytes: number
+  npu: number
+}
+
+export interface ClusterResourceSummary {
+  cluster_id: number
+  cluster_name: string
+  total: ResourceQuantity
+  used: ResourceQuantity
+  available: ResourceQuantity
+  running_instances: number
+  executing_pods_count: number
+  executed_pods_count: number
+  scope: Record<string, unknown>
+  error?: string | null
+}
+
+export interface ResourcePodInfo {
+  cluster_id: number
+  cluster_name: string
+  namespace: string
+  name: string
+  phase?: string | null
+  status?: string | null
+  node_name?: string | null
+  labels: Record<string, string>
+  created_at?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  duration_seconds?: number | null
+  requests: ResourceQuantity
+  containers: string[]
+}
+
+export interface ResourceDashboardResponse {
+  generated_at: string
+  overall: ClusterResourceSummary
+  clusters: ClusterResourceSummary[]
+  executing_pods: ResourcePodInfo[]
+  executed_pods: ResourcePodInfo[]
+}
+
+export interface ResourceDashboardParams {
+  cluster_ids?: number[]
+  label_selector?: string
+  include_pods?: boolean
+}
+
+const buildParams = (params: ResourceDashboardParams) => {
+  const searchParams = new URLSearchParams()
+  params.cluster_ids?.forEach(id => searchParams.append('cluster_ids', String(id)))
+  if (params.label_selector) {
+    searchParams.append('label_selector', params.label_selector)
+  }
+  if (params.include_pods !== undefined) {
+    searchParams.append('include_pods', String(params.include_pods))
+  }
+  return searchParams
+}
+
+export const getEnabledResourceClusters = async () => {
+  const response = await api.get<KubernetesCluster[]>('/resource-dashboard/clusters/enabled')
+  return response.data
+}
+
+export const getResourceDashboard = async (params: ResourceDashboardParams = {}) => {
+  const response = await api.get<ResourceDashboardResponse>('/resource-dashboard/summary', {
+    params: buildParams(params),
+  })
+  return response.data
+}
+
+export const listResourceClusters = async () => {
+  const response = await api.get<KubernetesCluster[]>('/resource-dashboard/clusters')
+  return response.data
+}
+
+export const createResourceCluster = async (data: KubernetesClusterCreate) => {
+  const response = await api.post<KubernetesCluster>('/resource-dashboard/clusters', data)
+  return response.data
+}
+
+export const updateResourceCluster = async (id: number, data: KubernetesClusterUpdate) => {
+  const response = await api.put<KubernetesCluster>(`/resource-dashboard/clusters/${id}`, data)
+  return response.data
+}
+
+export const deleteResourceCluster = async (id: number) => {
+  const response = await api.delete<{ message: string }>(`/resource-dashboard/clusters/${id}`)
+  return response.data
+}
+
+export const testResourceCluster = async (id: number) => {
+  const response = await api.post<KubernetesClusterTestResponse>(`/resource-dashboard/clusters/${id}/test`)
+  return response.data
+}

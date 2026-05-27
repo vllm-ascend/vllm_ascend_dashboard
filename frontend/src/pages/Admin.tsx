@@ -5,6 +5,7 @@ import SystemConfig from './SystemConfig'
 import CIBoardConfig from './CIBoardConfig'
 import ModelBoardConfig from './ModelBoardConfig'
 import ProjectBoardConfig from './ProjectBoardConfig'
+import ResourceDashboardConfig from './ResourceDashboardConfig'
 
 function Admin() {
   const hasAdminRole = useHasAdminRole()
@@ -66,6 +67,11 @@ function Admin() {
       key: 'model-board',
       label: '模型看板配置',
       children: <ModelBoardConfig />,
+    },
+    {
+      key: 'resource-dashboard',
+      label: '资源看板配置',
+      children: <ResourceDashboardConfig />,
     },
   )
 

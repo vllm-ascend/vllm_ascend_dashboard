@@ -21,7 +21,7 @@ from sqlalchemy.types import JSON
 __all__ = [
     "Base", "User", "ModelConfig", "ModelReport", "CIResult", "CIJob",
     "WorkflowConfig", "PerformanceData", "JobOwner",
-    "ModelSyncConfig", "ProjectDashboardConfig",
+    "ModelSyncConfig", "ProjectDashboardConfig", "KubernetesClusterConfig",
     # 每日总结相关模型
     "DailyPR", "DailyIssue", "DailyCommit", "DailySummary", "LLMProviderConfig"
 ]
@@ -229,6 +229,24 @@ class ProjectDashboardConfig(Base):
     config_key = Column(String(100), unique=True, nullable=False, index=True)  # 配置键
     config_value = Column(JSON, nullable=False)  # 配置值（JSON 格式）
     description = Column(String(500))  # 配置描述
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class KubernetesClusterConfig(Base):
+    """Kubernetes 集群配置表"""
+    __tablename__ = "kubernetes_cluster_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    description = Column(String(500))
+    kubeconfig_encrypted = Column(Text, nullable=False)
+    context = Column(String(200))
+    default_label_selector = Column(String(500))
+    npu_resource_name = Column(String(200), nullable=False, default="huawei.com/Ascend910")
+    enabled = Column(Boolean, default=True, index=True)
+    display_order = Column(Integer, default=0)
+    created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 

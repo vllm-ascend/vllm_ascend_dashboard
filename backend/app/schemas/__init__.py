@@ -31,6 +31,10 @@ __all__ = [
     # Project Dashboard
     "ProjectDashboardConfigResponse", "ProjectDashboardConfigUpdate",
     "ReleaseInfo", "VllmVersionInfo", "ModelSupportMatrix", "ModelSupportEntry",
+    # Resource Dashboard
+    "KubernetesClusterCreate", "KubernetesClusterUpdate", "KubernetesClusterResponse",
+    "KubernetesClusterTestResponse", "ResourceQuantity", "ClusterResourceSummary",
+    "ResourcePodInfo", "ResourceDashboardResponse",
     "StaleIssue", "PRActionRequest", "TagComparisonRequest", "TagComparisonResult", "CommitInfo",
     # Daily Summary
     "GenerateSummaryRequest", "FetchDataRequest", "DailySummaryResponse", "DailySummaryListResponse",
@@ -703,4 +707,15 @@ from .daily_summary import (
     GenerateSummaryRequest, FetchDataRequest, DailySummaryResponse,
     DailySummaryListResponse, DailySummaryListItem, FetchDataResponse,
     GenerateSummaryResponse, LLMProviderResponse, DailySummaryConfigResponse
+)
+
+from .resource_dashboard import (
+    ClusterResourceSummary,
+    KubernetesClusterCreate,
+    KubernetesClusterResponse,
+    KubernetesClusterTestResponse,
+    KubernetesClusterUpdate,
+    ResourceDashboardResponse,
+    ResourcePodInfo,
+    ResourceQuantity,
 )

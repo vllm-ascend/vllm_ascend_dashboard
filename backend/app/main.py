@@ -18,6 +18,7 @@ from app.api.v1 import (
     models,
     performance,
     project_dashboard,
+    resource_dashboard,
     system_config,
     users,
     workflows,
@@ -25,7 +26,7 @@ from app.api.v1 import (
 from app.core.config import settings
 from app.db.base import engine
 from app.models import Base
-from app.services.scheduler import start_scheduler, stop_scheduler_async
+from app.services.scheduler import get_scheduler, start_scheduler, stop_scheduler_async
 
 # 配置日志
 logging.basicConfig(
@@ -129,7 +130,6 @@ async def lifespan(app: FastAPI):
 
     # 启动数据同步调度器
     try:
-        from app.services.scheduler import start_scheduler, get_scheduler
         start_scheduler()  # 调用 scheduler.start() 来添加任务并启动
         scheduler = get_scheduler()
         logger.info("Scheduler started successfully")
@@ -144,13 +144,13 @@ async def lifespan(app: FastAPI):
 
     # 关闭时清理资源
     logger.info("Shutting down application...")
-    
+
     try:
         await stop_scheduler_async()
         logger.info("Scheduler stopped successfully")
     except Exception as e:
         logger.error(f"Error stopping scheduler: {e}", exc_info=True)
-    
+
     try:
         await engine.dispose()
         logger.info("Database engine disposed successfully")
@@ -192,6 +192,7 @@ def create_app() -> FastAPI:
     app.include_router(job_owners.router, prefix="/api/v1/job-owners", tags=["Job 责任人"])
     app.include_router(system_config.router, prefix="/api/v1/system/config", tags=["系统配置"])
     app.include_router(project_dashboard.router, prefix="/api/v1/project-dashboard", tags=["项目看板"])
+    app.include_router(resource_dashboard.router, prefix="/api/v1/resource-dashboard", tags=["资源看板"])
 
     @app.get("/health")
     async def health_check():

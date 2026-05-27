@@ -12,6 +12,7 @@ import {
   LockOutlined,
   GithubOutlined,
   MenuOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { logout } from '../services/auth'
@@ -43,6 +44,11 @@ const menuItems: MenuProps['items'] = [
     key: '/models',
     icon: <ExperimentOutlined />,
     label: '模型看板',
+  },
+  {
+    key: '/resources',
+    icon: <CloudServerOutlined />,
+    label: '资源看板',
   },
 ]
 
@@ -129,6 +135,7 @@ function Layout() {
     { key: '/project', icon: <GithubOutlined />, label: '项目看板' },
     { key: '/ci', icon: <CheckCircleOutlined />, label: 'CI 看板' },
     { key: '/models', icon: <ExperimentOutlined />, label: '模型看板' },
+    { key: '/resources', icon: <CloudServerOutlined />, label: '资源看板' },
     ...(hasAdminRole ? [{ key: '/admin', icon: <SettingOutlined />, label: '系统管理' }] : []),
   ]
 

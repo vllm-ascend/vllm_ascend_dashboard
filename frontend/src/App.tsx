@@ -21,6 +21,8 @@ import GitHubActivityDetail from './pages/GitHubActivityDetail'
 import CommitAnalysisDetail from './pages/CommitAnalysisDetail'
 import ProjectBoard from './pages/ProjectBoard'
 import ProjectBoardConfig from './pages/ProjectBoardConfig'
+import ResourceDashboard from './pages/ResourceDashboard'
+import ResourceDashboardConfig from './pages/ResourceDashboardConfig'
 import { useCurrentUser } from './hooks/useCurrentUser'
 
 const queryClient = new QueryClient({
@@ -127,6 +129,7 @@ function App() {
               {/* 模型管理页面 */}
               <Route path="models" element={<Models />} />
               <Route path="models/:id" element={<ModelDetail />} />
+              <Route path="resources" element={<ResourceDashboard />} />
               {/* 模型每日报告页面 */}
               <Route path="models/reports/:date" element={<ModelDailyReport />} />
               {/* GitHub 动态详情页面 */}
@@ -166,6 +169,15 @@ function App() {
                 element={
                   <AdminRoute>
                     <ProjectBoardConfig />
+                  </AdminRoute>
+                }
+              />
+              {/* 资源看板配置（管理员） */}
+              <Route
+                path="admin/resource-dashboard-config"
+                element={
+                  <AdminRoute>
+                    <ResourceDashboardConfig />
                   </AdminRoute>
                 }
               />

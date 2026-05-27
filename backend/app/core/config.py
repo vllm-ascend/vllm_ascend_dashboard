@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 小时
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    KUBECONFIG_ENCRYPTION_KEY: str | None = None
 
     # CORS 配置
     # 生产环境应明确指定允许的域名，不要使用 "*"
