@@ -6,6 +6,7 @@ export interface KubernetesCluster {
   description?: string | null
   context?: string | null
   default_label_selector?: string | null
+  namespaces: string
   npu_resource_name: string
   enabled: boolean
   display_order: number
@@ -21,6 +22,7 @@ export interface KubernetesClusterCreate {
   kubeconfig: string
   context?: string | null
   default_label_selector?: string | null
+  namespaces: string
   npu_resource_name: string
   enabled: boolean
   display_order: number
@@ -32,6 +34,7 @@ export interface KubernetesClusterUpdate {
   kubeconfig?: string | null
   context?: string | null
   default_label_selector?: string | null
+  namespaces?: string
   npu_resource_name?: string
   enabled?: boolean
   display_order?: number
@@ -69,6 +72,7 @@ export interface ClusterResourceSummary {
   executing_pods_count: number
   executed_pods_count: number
   node_resources: ResourceNodeInfo[]
+  executing_pods: ResourcePodInfo[]
   scope: Record<string, unknown>
   error?: string | null
 }
@@ -121,6 +125,11 @@ const buildParams = (params: ResourceDashboardParams) => {
 
 export const getEnabledResourceClusters = async () => {
   const response = await api.get<KubernetesCluster[]>('/resource-dashboard/clusters/enabled')
+  return response.data
+}
+
+export const getClusterSummary = async (clusterId: number) => {
+  const response = await api.get<ClusterResourceSummary>(`/resource-dashboard/cluster/${clusterId}/summary`)
   return response.data
 }
 

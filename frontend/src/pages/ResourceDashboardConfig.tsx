@@ -48,6 +48,7 @@ function ResourceDashboardConfig() {
       message.success('集群配置已创建')
       queryClient.invalidateQueries({ queryKey: ['resource-clusters-admin'] })
       queryClient.invalidateQueries({ queryKey: ['resource-clusters-enabled'] })
+      queryClient.invalidateQueries({ queryKey: ['resource-dashboard'] })
       setModalOpen(false)
       form.resetFields()
     },
@@ -95,6 +96,7 @@ function ResourceDashboardConfig() {
     setEditingCluster(null)
     form.resetFields()
     form.setFieldsValue({
+      namespaces: 'vllm-project',
       npu_resource_name: 'huawei.com/Ascend910',
       enabled: true,
       display_order: 0,
@@ -109,6 +111,7 @@ function ResourceDashboardConfig() {
       description: cluster.description,
       context: cluster.context,
       default_label_selector: cluster.default_label_selector,
+      namespaces: cluster.namespaces || 'vllm-project',
       npu_resource_name: cluster.npu_resource_name,
       enabled: cluster.enabled,
       display_order: cluster.display_order,
@@ -140,6 +143,11 @@ function ResourceDashboardConfig() {
       width: 90,
       render: enabled => <Tag color={enabled ? 'green' : 'default'}>{enabled ? '启用' : '停用'}</Tag>,
     },
+    {
+      title: '命名空间',
+      dataIndex: 'namespaces',
+      render: value => value ? value.split(',').map((namespace: string) => namespace.trim()).filter(Boolean).map((namespace: string) => <Tag key={namespace}>{namespace}</Tag>) : '-',
+    },
     { title: 'Label Selector', dataIndex: 'default_label_selector', render: value => value || '-' },
     { title: 'NPU 资源名', dataIndex: 'npu_resource_name', width: 180 },
     { title: '排序', dataIndex: 'display_order', width: 80 },
@@ -170,7 +178,7 @@ function ResourceDashboardConfig() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div>
             <Title level={4}>资源看板配置</Title>
-            <Text type="secondary">配置 Kubernetes 集群、Label 过滤和 NPU 资源名；Pod 固定读取 vllm-project namespace</Text>
+            <Text type="secondary">配置 Kubernetes 集群、命名空间、Label 过滤和 NPU 资源名</Text>
           </div>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>新增集群</Button>
         </div>
@@ -213,6 +221,14 @@ function ResourceDashboardConfig() {
           </Form.Item>
           <Form.Item name="default_label_selector" label="默认 Label Selector">
             <Input placeholder="app=vllm,team=infra" />
+          </Form.Item>
+          <Form.Item
+            name="namespaces"
+            label="命名空间"
+            rules={[{ required: true, message: '请输入命名空间' }]}
+            extra="多个命名空间请用英文逗号分隔"
+          >
+            <Input placeholder="vllm-project, another-namespace" />
           </Form.Item>
           <Form.Item name="npu_resource_name" label="NPU 资源名" rules={[{ required: true, message: '请输入 NPU 资源名' }]}>
             <Input placeholder="huawei.com/Ascend910" />

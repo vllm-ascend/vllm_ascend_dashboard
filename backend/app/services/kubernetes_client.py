@@ -46,7 +46,7 @@ class KubernetesClientFactory:
 
 async def list_nodes(api_client: ApiClient):
     api = CoreV1Api(api_client)
-    response = await api.list_node()
+    response = await api.list_node(_request_timeout=30)
     return response.items
 
 
@@ -55,11 +55,11 @@ async def list_pods(api_client: ApiClient, namespaces: list[str] | None, label_s
     if namespaces:
         pods = []
         for namespace in namespaces:
-            response = await api.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
+            response = await api.list_namespaced_pod(namespace=namespace, label_selector=label_selector, _request_timeout=30)
             pods.extend(response.items)
         return pods
 
-    response = await api.list_pod_for_all_namespaces(label_selector=label_selector)
+    response = await api.list_pod_for_all_namespaces(label_selector=label_selector, _request_timeout=30)
     return response.items
 
 
@@ -70,5 +70,6 @@ async def list_ephemeral_runners(api_client: ApiClient, namespace: str):
         version="v1alpha1",
         namespace=namespace,
         plural="ephemeralrunners",
+        _request_timeout=30,
     )
     return response.get("items", [])

@@ -1,7 +1,23 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+DEFAULT_RESOURCE_DASHBOARD_NAMESPACE = "vllm-project"
+
+
+def normalize_namespaces_value(value: str | None) -> str:
+    namespaces = []
+    seen = set()
+    for item in (value or "").split(","):
+        namespace = item.strip()
+        if namespace and namespace not in seen:
+            namespaces.append(namespace)
+            seen.add(namespace)
+    return ",".join(namespaces) if namespaces else DEFAULT_RESOURCE_DASHBOARD_NAMESPACE
 
 
 class KubernetesClusterBase(BaseModel):
@@ -9,6 +25,7 @@ class KubernetesClusterBase(BaseModel):
     description: str | None = Field(None, max_length=500)
     context: str | None = Field(None, max_length=200)
     default_label_selector: str | None = Field(None, max_length=500)
+    namespaces: str = Field("vllm-project", min_length=1, max_length=500, description="逗号分隔的命名空间列表")
     npu_resource_name: str = Field("huawei.com/Ascend910", min_length=1, max_length=200)
     enabled: bool = True
     display_order: int = 0
@@ -21,6 +38,11 @@ class KubernetesClusterBase(BaseModel):
         value = value.strip()
         return value or None
 
+    @field_validator("namespaces", mode="before")
+    @classmethod
+    def normalize_namespaces(cls, value: str) -> str:
+        return normalize_namespaces_value(value)
+
 
 class KubernetesClusterCreate(KubernetesClusterBase):
     kubeconfig: str = Field(..., min_length=1)
@@ -32,6 +54,7 @@ class KubernetesClusterUpdate(BaseModel):
     kubeconfig: str | None = None
     context: str | None = Field(None, max_length=200)
     default_label_selector: str | None = Field(None, max_length=500)
+    namespaces: str | None = Field(None, min_length=1, max_length=500)
     npu_resource_name: str | None = Field(None, min_length=1, max_length=200)
     enabled: bool | None = None
     display_order: int | None = None
@@ -43,6 +66,13 @@ class KubernetesClusterUpdate(BaseModel):
             return None
         value = value.strip()
         return value or None
+
+    @field_validator("namespaces", mode="before")
+    @classmethod
+    def normalize_namespaces(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_namespaces_value(value)
 
 
 class KubernetesClusterResponse(KubernetesClusterBase):
@@ -64,7 +94,7 @@ class KubernetesClusterTestResponse(BaseModel):
 
 class ResourceQuantity(BaseModel):
     cpu_cores: float = 0
-    memory_bytes: int = 0
+    memory_bytes: float = 0
     npu: float = 0
 
 
@@ -77,27 +107,12 @@ class ResourceNodeInfo(BaseModel):
     executing_pods_count: int = 0
 
 
-class ClusterResourceSummary(BaseModel):
-    cluster_id: int
-    cluster_name: str
-    total: ResourceQuantity
-    used: ResourceQuantity
-    available: ResourceQuantity
-    running_instances: int = 0
-    executing_pods_count: int = 0
-    executed_pods_count: int = 0
-    node_resources: list[ResourceNodeInfo] = Field(default_factory=list)
-    scope: dict[str, Any]
-    error: str | None = None
-
-
 class ResourcePodInfo(BaseModel):
     cluster_id: int
     cluster_name: str
     namespace: str
     name: str
     phase: str | None = None
-    status: str | None = None
     node_name: str | None = None
     labels: dict[str, str] = Field(default_factory=dict)
     created_at: datetime | None = None
@@ -111,8 +126,22 @@ class ResourcePodInfo(BaseModel):
     containers: list[str] = Field(default_factory=list)
 
 
+class ClusterResourceSummary(BaseModel):
+    cluster_id: int
+    cluster_name: str
+    total: ResourceQuantity
+    used: ResourceQuantity
+    available: ResourceQuantity
+    running_instances: int = 0
+    executing_pods_count: int = 0
+    executed_pods_count: int = 0
+    node_resources: list[ResourceNodeInfo] = Field(default_factory=list)
+    executing_pods: list[ResourcePodInfo] = Field(default_factory=list)
+    scope: dict[str, Any]
+    error: str | None = None
+
+
 class ResourceDashboardResponse(BaseModel):
-    generated_at: datetime
     overall: ClusterResourceSummary
     clusters: list[ClusterResourceSummary]
     executing_pods: list[ResourcePodInfo]

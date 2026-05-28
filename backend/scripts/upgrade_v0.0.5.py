@@ -11,18 +11,21 @@ Usage:
 
 import asyncio
 import logging
-from sqlalchemy import select, delete
-from app.db.session import AsyncSession
+from sqlalchemy import delete, select
+
+from app.db.base import SessionLocal
 from app.models import ProjectDashboardConfig
-from app.db.base import async_engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def remove_biweekly_meeting_config():
+DESCRIPTION = "Remove biweekly meeting configuration"
+
+
+async def upgrade():
     """Remove all biweekly meeting configuration records from the database."""
-    async with AsyncSession() as session:
+    async with SessionLocal() as session:
         try:
             # Query existing biweekly meeting configs
             stmt = select(ProjectDashboardConfig).where(
@@ -56,5 +59,5 @@ async def remove_biweekly_meeting_config():
 
 if __name__ == "__main__":
     logger.info("Starting biweekly meeting configuration cleanup...")
-    asyncio.run(remove_biweekly_meeting_config())
+    asyncio.run(upgrade())
     logger.info("Cleanup completed!")

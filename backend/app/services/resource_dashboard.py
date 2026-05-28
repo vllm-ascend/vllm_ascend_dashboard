@@ -1,3 +1,4 @@
+import asyncio
 import re
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -29,36 +30,15 @@ class ResourceDashboardService:
         label_selector: str | None = None,
         include_pods: bool = True,
     ) -> ResourceDashboardResponse:
-        summaries: list[ClusterResourceSummary] = []
-        executing_pods: list[ResourcePodInfo] = []
-        executed_pods: list[ResourcePodInfo] = []
+        cluster_tasks = [
+            self._safe_build_cluster_summary(cluster, label_selector, include_pods)
+            for cluster in clusters
+        ]
+        results = await asyncio.gather(*cluster_tasks)
 
-        for cluster in clusters:
-            try:
-                summary, cluster_executing, cluster_executed = await self.build_cluster_summary(
-                    cluster,
-                    label_selector,
-                    include_pods,
-                )
-            except Exception as exc:
-                summary = ClusterResourceSummary(
-                    cluster_id=cluster.id,
-                    cluster_name=cluster.name,
-                    total=ResourceQuantity(),
-                    used=ResourceQuantity(),
-                    available=ResourceQuantity(),
-                    scope={
-                        "namespaces": [RESOURCE_DASHBOARD_NAMESPACE],
-                        "label_selector": label_selector or cluster.default_label_selector,
-                    },
-                    error=str(exc),
-                )
-                cluster_executing = []
-                cluster_executed = []
-
-            summaries.append(summary)
-            executing_pods.extend(cluster_executing)
-            executed_pods.extend(cluster_executed)
+        summaries = [result[0] for result in results]
+        executing_pods = [pod for result in results for pod in result[1]]
+        executed_pods = [pod for result in results for pod in result[2]]
 
         overall = self._build_overall_summary(summaries)
         return ResourceDashboardResponse(
@@ -69,6 +49,44 @@ class ResourceDashboardService:
             executed_pods=executed_pods,
         )
 
+    async def _safe_build_cluster_summary(
+        self,
+        cluster: KubernetesClusterConfig,
+        label_selector: str | None,
+        include_pods: bool,
+    ) -> tuple[ClusterResourceSummary, list[ResourcePodInfo], list[ResourcePodInfo]]:
+        namespaces = self._cluster_namespaces(cluster)
+        try:
+            return await asyncio.wait_for(
+                self.build_cluster_summary(cluster, label_selector, include_pods),
+                timeout=45,
+            )
+        except Exception as exc:
+            summary = ClusterResourceSummary(
+                cluster_id=cluster.id,
+                cluster_name=cluster.name,
+                total=ResourceQuantity(),
+                used=ResourceQuantity(),
+                available=ResourceQuantity(),
+                scope={
+                    "namespaces": namespaces,
+                    "label_selector": label_selector or cluster.default_label_selector,
+                },
+                error=str(exc),
+            )
+            return summary, [], []
+
+    def _cluster_namespaces(self, cluster: KubernetesClusterConfig) -> list[str]:
+        raw_namespaces = getattr(cluster, "namespaces", None) or RESOURCE_DASHBOARD_NAMESPACE
+        namespaces = []
+        seen = set()
+        for item in raw_namespaces.split(","):
+            namespace = item.strip()
+            if namespace and namespace not in seen:
+                namespaces.append(namespace)
+                seen.add(namespace)
+        return namespaces or [RESOURCE_DASHBOARD_NAMESPACE]
+
     async def build_cluster_summary(
         self,
         cluster: KubernetesClusterConfig,
@@ -76,12 +94,13 @@ class ResourceDashboardService:
         include_pods: bool,
     ) -> tuple[ClusterResourceSummary, list[ResourcePodInfo], list[ResourcePodInfo]]:
         resolved_label_selector = label_selector if label_selector is not None else cluster.default_label_selector
+        namespaces = self._cluster_namespaces(cluster)
 
         api_client = await self.client_factory.create_api_client(cluster)
         try:
             nodes = await list_nodes(api_client)
-            pods = await list_pods(api_client, [RESOURCE_DASHBOARD_NAMESPACE], resolved_label_selector)
-            runner_pr_info = await self._runner_pr_info(api_client)
+            pods = await list_pods(api_client, namespaces, resolved_label_selector)
+            runner_pr_info = await self._runner_pr_info(api_client, namespaces)
         finally:
             await api_client.close()
 
@@ -128,18 +147,20 @@ class ResourceDashboardService:
             executing_pods_count=len([pod for pod in visible_pods if pod.status and pod.status.phase in EXECUTING_PHASES]),
             executed_pods_count=len([pod for pod in visible_pods if pod.status and pod.status.phase in EXECUTED_PHASES]),
             node_resources=self._finalize_node_resources(node_resources),
+            executing_pods=executing_infos,
             scope={
-                "namespaces": [RESOURCE_DASHBOARD_NAMESPACE],
+                "namespaces": namespaces,
                 "label_selector": resolved_label_selector,
             },
         )
         return summary, executing_infos, executed_infos
 
     async def test_cluster(self, cluster: KubernetesClusterConfig) -> tuple[int, int]:
+        namespaces = self._cluster_namespaces(cluster)
         api_client = await self.client_factory.create_api_client(cluster)
         try:
             nodes = await list_nodes(api_client)
-            pods = await list_pods(api_client, [RESOURCE_DASHBOARD_NAMESPACE], cluster.default_label_selector)
+            pods = await list_pods(api_client, namespaces, cluster.default_label_selector)
             return len(nodes), len(pods)
         finally:
             await api_client.close()
@@ -210,27 +231,32 @@ class ResourceDashboardService:
             )
         return sorted(node_resources.values(), key=lambda node_resource: node_resource.node_name)
 
-    async def _runner_pr_info(self, api_client: Any) -> dict[str, dict[str, Any]]:
-        try:
-            runners = await list_ephemeral_runners(api_client, RESOURCE_DASHBOARD_NAMESPACE)
-        except Exception:
-            return {}
-
+    async def _runner_pr_info(self, api_client: Any, namespaces: list[str]) -> dict[str, dict[str, Any]]:
         pr_info = {}
-        for runner in runners:
-            name = runner.get("metadata", {}).get("name")
-            job_workflow_ref = runner.get("status", {}).get("jobWorkflowRef")
-            if not name or not job_workflow_ref:
+        for namespace in namespaces:
+            try:
+                runners = await list_ephemeral_runners(api_client, namespace)
+            except Exception:
                 continue
-            match = re.search(r"refs/pull/(\d+)/", job_workflow_ref)
-            if not match:
-                continue
-            pr_number = int(match.group(1))
-            pr_info[name] = {
-                "pr_number": pr_number,
-                "pr_url": f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/pull/{pr_number}",
-                "job_workflow_ref": job_workflow_ref,
-            }
+
+            for runner in runners:
+                metadata = runner.get("metadata", {})
+                name = metadata.get("name")
+                runner_namespace = metadata.get("namespace") or namespace
+                job_workflow_ref = runner.get("status", {}).get("jobWorkflowRef")
+                if not name or not job_workflow_ref:
+                    continue
+                match = re.search(r"refs/pull/(\d+)/", job_workflow_ref)
+                if not match:
+                    continue
+                pr_number = int(match.group(1))
+                info = {
+                    "pr_number": pr_number,
+                    "pr_url": f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/pull/{pr_number}",
+                    "job_workflow_ref": job_workflow_ref,
+                }
+                pr_info[name] = info
+                pr_info[f"{runner_namespace}/{name}"] = info
         return pr_info
 
     def _pod_requests(self, pod: Any, npu_resource_name: str) -> ResourceQuantity:
@@ -261,11 +287,22 @@ class ResourceDashboardService:
         effective.npu += parse_number(overhead.get(npu_resource_name))
         return effective
 
-    def _pod_pr_info(self, pod_name: str, runner_pr_info: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    def _pod_pr_info(
+        self,
+        pod_namespace: str,
+        pod_name: str,
+        runner_pr_info: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        namespaced_pod_name = f"{pod_namespace}/{pod_name}"
+        if namespaced_pod_name in runner_pr_info:
+            return runner_pr_info[namespaced_pod_name]
         if pod_name in runner_pr_info:
             return runner_pr_info[pod_name]
         if pod_name.endswith("-workflow"):
             runner_name = pod_name[: -len("-workflow")]
+            namespaced_runner_name = f"{pod_namespace}/{runner_name}"
+            if namespaced_runner_name in runner_pr_info:
+                return runner_pr_info[namespaced_runner_name]
             if runner_name in runner_pr_info:
                 return runner_pr_info[runner_name]
         return None
@@ -286,7 +323,7 @@ class ResourceDashboardService:
             end_time = finished_at or datetime.now(UTC)
             duration_seconds = int((end_time - started_at).total_seconds())
 
-        pr_info = self._pod_pr_info(pod.metadata.name, runner_pr_info) if pod.metadata else None
+        pr_info = self._pod_pr_info(pod.metadata.namespace, pod.metadata.name, runner_pr_info) if pod.metadata else None
 
         return ResourcePodInfo(
             cluster_id=cluster.id,

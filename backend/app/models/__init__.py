@@ -243,6 +243,7 @@ class KubernetesClusterConfig(Base):
     kubeconfig_encrypted = Column(Text, nullable=False)
     context = Column(String(200))
     default_label_selector = Column(String(500))
+    namespaces = Column(String(500), nullable=False, default="vllm-project")
     npu_resource_name = Column(String(200), nullable=False, default="huawei.com/Ascend910")
     enabled = Column(Boolean, default=True, index=True)
     display_order = Column(Integer, default=0)

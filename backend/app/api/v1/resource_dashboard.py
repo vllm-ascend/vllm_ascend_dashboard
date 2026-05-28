@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.api.deps import CurrentAdminUser, CurrentUser, DbSession
 from app.models import KubernetesClusterConfig
 from app.schemas import (
+    ClusterResourceSummary,
     KubernetesClusterCreate,
     KubernetesClusterResponse,
     KubernetesClusterTestResponse,
@@ -66,6 +67,28 @@ async def get_resource_dashboard(
         label_selector=label_selector,
         include_pods=include_pods,
     )
+
+
+@router.get("/cluster/{cluster_id}/summary", response_model=ClusterResourceSummary)
+async def get_cluster_summary(
+    db: DbSession,
+    current_user: CurrentUser,
+    cluster_id: int,
+    label_selector: str | None = None,
+    include_pods: bool = True,
+):
+    stmt = select(KubernetesClusterConfig).where(
+        KubernetesClusterConfig.id == cluster_id,
+        KubernetesClusterConfig.enabled.is_(True),
+    )
+    result = await db.execute(stmt)
+    cluster = result.scalar_one_or_none()
+    if not cluster:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="集群不存在或未启用")
+
+    service = ResourceDashboardService()
+    summary, _, _ = await service.build_cluster_summary(cluster, label_selector, include_pods)
+    return summary
 
 
 @router.get("/clusters", response_model=list[KubernetesClusterResponse])
