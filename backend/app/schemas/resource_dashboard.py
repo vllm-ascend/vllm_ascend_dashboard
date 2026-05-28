@@ -104,6 +104,9 @@ class ResourcePodInfo(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     duration_seconds: int | None = None
+    pr_number: int | None = None
+    pr_url: str | None = None
+    job_workflow_ref: str | None = None
     requests: ResourceQuantity
     containers: list[str] = Field(default_factory=list)
 

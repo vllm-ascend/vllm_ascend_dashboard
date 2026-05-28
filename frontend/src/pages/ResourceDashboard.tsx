@@ -6,6 +6,7 @@ import {
   Col,
   Drawer,
   Empty,
+  Input,
   Progress,
   Row,
   Select,
@@ -111,10 +112,31 @@ function PodTable({ data }: { data: ResourcePodInfo[] }) {
         onShowSizeChange: (_, size) => setPageSize(size),
         onChange: (_, size) => setPageSize(size),
       }}
-      scroll={{ x: 980 }}
+      scroll={{ x: 1060 }}
       columns={[
         { title: '集群', dataIndex: 'cluster_name', width: 140 },
         { title: 'Pod', dataIndex: 'name', width: 260 },
+        {
+          title: 'PR ID',
+          width: 100,
+          render: (_, record) => record.pr_number && record.pr_url ? <a href={record.pr_url} target="_blank" rel="noreferrer">#{record.pr_number}</a> : '-',
+          filterDropdown: ({ setSelectedKeys, selectedKeys, confirm, clearFilters }) => (
+            <Space direction="vertical" style={{ padding: 8 }}>
+              <Input
+                placeholder="搜索 PR ID"
+                value={selectedKeys[0] as string}
+                onChange={event => setSelectedKeys(event.target.value ? [event.target.value] : [])}
+                onPressEnter={() => confirm()}
+                style={{ width: 160 }}
+              />
+              <Space>
+                <Button type="primary" size="small" onClick={() => confirm()}>搜索</Button>
+                <Button size="small" onClick={() => { clearFilters?.(); confirm() }}>重置</Button>
+              </Space>
+            </Space>
+          ),
+          onFilter: (value, record) => String(record.pr_number || '').includes(String(value)),
+        },
         {
           title: '状态',
           width: 120,

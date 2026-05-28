@@ -5,7 +5,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet
 from kubernetes_asyncio import client, config
-from kubernetes_asyncio.client import ApiClient, CoreV1Api
+from kubernetes_asyncio.client import ApiClient, CoreV1Api, CustomObjectsApi
 
 from app.core.config import settings
 from app.models import KubernetesClusterConfig
@@ -61,3 +61,14 @@ async def list_pods(api_client: ApiClient, namespaces: list[str] | None, label_s
 
     response = await api.list_pod_for_all_namespaces(label_selector=label_selector)
     return response.items
+
+
+async def list_ephemeral_runners(api_client: ApiClient, namespace: str):
+    api = CustomObjectsApi(api_client)
+    response = await api.list_namespaced_custom_object(
+        group="actions.github.com",
+        version="v1alpha1",
+        namespace=namespace,
+        plural="ephemeralrunners",
+    )
+    return response.get("items", [])

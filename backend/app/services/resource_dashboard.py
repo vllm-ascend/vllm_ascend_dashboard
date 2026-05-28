@@ -1,7 +1,9 @@
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
+from app.core.config import settings
 from app.models import KubernetesClusterConfig
 from app.schemas import (
     ClusterResourceSummary,
@@ -10,7 +12,7 @@ from app.schemas import (
     ResourcePodInfo,
     ResourceQuantity,
 )
-from app.services.kubernetes_client import KubernetesClientFactory, list_nodes, list_pods
+from app.services.kubernetes_client import KubernetesClientFactory, list_ephemeral_runners, list_nodes, list_pods
 
 EXECUTING_PHASES = {"Pending", "Running", "Unknown"}
 EXECUTED_PHASES = {"Succeeded", "Failed"}
@@ -79,6 +81,7 @@ class ResourceDashboardService:
         try:
             nodes = await list_nodes(api_client)
             pods = await list_pods(api_client, [RESOURCE_DASHBOARD_NAMESPACE], resolved_label_selector)
+            runner_pr_info = await self._runner_pr_info(api_client)
         finally:
             await api_client.close()
 
@@ -107,9 +110,9 @@ class ResourceDashboardService:
                     node_resource.used = self._add_quantity(node_resource.used, pod_requests)
                     node_resource.executing_pods_count += 1
                 if include_pods:
-                    executing_infos.append(self._pod_info(cluster, pod, pod_requests))
+                    executing_infos.append(self._pod_info(cluster, pod, pod_requests, runner_pr_info))
             elif phase in EXECUTED_PHASES and include_pods:
-                executed_infos.append(self._pod_info(cluster, pod, pod_requests))
+                executed_infos.append(self._pod_info(cluster, pod, pod_requests, runner_pr_info))
 
         summary = ClusterResourceSummary(
             cluster_id=cluster.id,
@@ -207,6 +210,29 @@ class ResourceDashboardService:
             )
         return sorted(node_resources.values(), key=lambda node_resource: node_resource.node_name)
 
+    async def _runner_pr_info(self, api_client: Any) -> dict[str, dict[str, Any]]:
+        try:
+            runners = await list_ephemeral_runners(api_client, RESOURCE_DASHBOARD_NAMESPACE)
+        except Exception:
+            return {}
+
+        pr_info = {}
+        for runner in runners:
+            name = runner.get("metadata", {}).get("name")
+            job_workflow_ref = runner.get("status", {}).get("jobWorkflowRef")
+            if not name or not job_workflow_ref:
+                continue
+            match = re.search(r"refs/pull/(\d+)/", job_workflow_ref)
+            if not match:
+                continue
+            pr_number = int(match.group(1))
+            pr_info[name] = {
+                "pr_number": pr_number,
+                "pr_url": f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/pull/{pr_number}",
+                "job_workflow_ref": job_workflow_ref,
+            }
+        return pr_info
+
     def _pod_requests(self, pod: Any, npu_resource_name: str) -> ResourceQuantity:
         regular = ResourceQuantity()
         init_max = ResourceQuantity()
@@ -235,7 +261,22 @@ class ResourceDashboardService:
         effective.npu += parse_number(overhead.get(npu_resource_name))
         return effective
 
-    def _pod_info(self, cluster: KubernetesClusterConfig, pod: Any, requests: ResourceQuantity) -> ResourcePodInfo:
+    def _pod_pr_info(self, pod_name: str, runner_pr_info: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+        if pod_name in runner_pr_info:
+            return runner_pr_info[pod_name]
+        if pod_name.endswith("-workflow"):
+            runner_name = pod_name[: -len("-workflow")]
+            if runner_name in runner_pr_info:
+                return runner_pr_info[runner_name]
+        return None
+
+    def _pod_info(
+        self,
+        cluster: KubernetesClusterConfig,
+        pod: Any,
+        requests: ResourceQuantity,
+        runner_pr_info: dict[str, dict[str, Any]],
+    ) -> ResourcePodInfo:
         status = pod.status
         started_at = getattr(status, "start_time", None) if status else None
         finished_at = self._finished_at(status)
@@ -244,6 +285,8 @@ class ResourceDashboardService:
         if started_at:
             end_time = finished_at or datetime.now(UTC)
             duration_seconds = int((end_time - started_at).total_seconds())
+
+        pr_info = self._pod_pr_info(pod.metadata.name, runner_pr_info) if pod.metadata else None
 
         return ResourcePodInfo(
             cluster_id=cluster.id,
@@ -258,6 +301,9 @@ class ResourceDashboardService:
             started_at=started_at,
             finished_at=finished_at,
             duration_seconds=duration_seconds,
+            pr_number=pr_info["pr_number"] if pr_info else None,
+            pr_url=pr_info["pr_url"] if pr_info else None,
+            job_workflow_ref=pr_info["job_workflow_ref"] if pr_info else None,
             requests=requests,
             containers=[container.name for container in pod.spec.containers or []],
         )

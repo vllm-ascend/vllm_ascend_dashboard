@@ -86,6 +86,9 @@ export interface ResourcePodInfo {
   started_at?: string | null
   finished_at?: string | null
   duration_seconds?: number | null
+  pr_number?: number | null
+  pr_url?: string | null
+  job_workflow_ref?: string | null
   requests: ResourceQuantity
   containers: string[]
 }
