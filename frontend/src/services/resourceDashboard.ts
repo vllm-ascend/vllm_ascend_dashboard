@@ -50,6 +50,15 @@ export interface ResourceQuantity {
   npu: number
 }
 
+export interface ResourceNodeInfo {
+  node_name: string
+  total: ResourceQuantity
+  used: ResourceQuantity
+  available: ResourceQuantity
+  running_instances: number
+  executing_pods_count: number
+}
+
 export interface ClusterResourceSummary {
   cluster_id: number
   cluster_name: string
@@ -59,6 +68,7 @@ export interface ClusterResourceSummary {
   running_instances: number
   executing_pods_count: number
   executed_pods_count: number
+  node_resources: ResourceNodeInfo[]
   scope: Record<string, unknown>
   error?: string | null
 }

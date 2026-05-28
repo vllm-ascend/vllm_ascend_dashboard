@@ -68,6 +68,15 @@ class ResourceQuantity(BaseModel):
     npu: float = 0
 
 
+class ResourceNodeInfo(BaseModel):
+    node_name: str
+    total: ResourceQuantity
+    used: ResourceQuantity
+    available: ResourceQuantity
+    running_instances: int = 0
+    executing_pods_count: int = 0
+
+
 class ClusterResourceSummary(BaseModel):
     cluster_id: int
     cluster_name: str
@@ -77,6 +86,7 @@ class ClusterResourceSummary(BaseModel):
     running_instances: int = 0
     executing_pods_count: int = 0
     executed_pods_count: int = 0
+    node_resources: list[ResourceNodeInfo] = Field(default_factory=list)
     scope: dict[str, Any]
     error: str | None = None
 

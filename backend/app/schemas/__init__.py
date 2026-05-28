@@ -716,6 +716,7 @@ from .resource_dashboard import (
     KubernetesClusterTestResponse,
     KubernetesClusterUpdate,
     ResourceDashboardResponse,
+    ResourceNodeInfo,
     ResourcePodInfo,
     ResourceQuantity,
 )

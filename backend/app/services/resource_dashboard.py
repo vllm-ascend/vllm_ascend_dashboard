@@ -6,6 +6,7 @@ from app.models import KubernetesClusterConfig
 from app.schemas import (
     ClusterResourceSummary,
     ResourceDashboardResponse,
+    ResourceNodeInfo,
     ResourcePodInfo,
     ResourceQuantity,
 )
@@ -82,18 +83,29 @@ class ResourceDashboardService:
             await api_client.close()
 
         total = self._sum_node_allocatable(nodes, cluster.npu_resource_name)
+        node_resources = self._build_node_resources(nodes, cluster.npu_resource_name)
         used = ResourceQuantity()
         running_instances = 0
         executing_infos: list[ResourcePodInfo] = []
         executed_infos: list[ResourcePodInfo] = []
 
+        visible_pods = []
         for pod in pods:
             phase = pod.status.phase if pod.status else None
             pod_requests = self._pod_requests(pod, cluster.npu_resource_name)
+            if pod_requests.npu <= 0:
+                continue
+            visible_pods.append(pod)
+            node_resource = node_resources.get(getattr(pod.spec, "node_name", None))
             if phase == "Running":
                 running_instances += 1
+                if node_resource:
+                    node_resource.running_instances += 1
             if phase in EXECUTING_PHASES:
                 used = self._add_quantity(used, pod_requests)
+                if node_resource:
+                    node_resource.used = self._add_quantity(node_resource.used, pod_requests)
+                    node_resource.executing_pods_count += 1
                 if include_pods:
                     executing_infos.append(self._pod_info(cluster, pod, pod_requests))
             elif phase in EXECUTED_PHASES and include_pods:
@@ -110,8 +122,9 @@ class ResourceDashboardService:
                 npu=max(total.npu - used.npu, 0),
             ),
             running_instances=running_instances,
-            executing_pods_count=len([pod for pod in pods if pod.status and pod.status.phase in EXECUTING_PHASES]),
-            executed_pods_count=len([pod for pod in pods if pod.status and pod.status.phase in EXECUTED_PHASES]),
+            executing_pods_count=len([pod for pod in visible_pods if pod.status and pod.status.phase in EXECUTING_PHASES]),
+            executed_pods_count=len([pod for pod in visible_pods if pod.status and pod.status.phase in EXECUTED_PHASES]),
+            node_resources=self._finalize_node_resources(node_resources),
             scope={
                 "namespaces": [RESOURCE_DASHBOARD_NAMESPACE],
                 "label_selector": resolved_label_selector,
@@ -166,6 +179,33 @@ class ResourceDashboardService:
             total.memory_bytes += parse_memory(allocatable.get("memory"))
             total.npu += parse_number(allocatable.get(npu_resource_name))
         return total
+
+    def _build_node_resources(self, nodes: list[Any], npu_resource_name: str) -> dict[str, ResourceNodeInfo]:
+        node_resources = {}
+        for node in nodes:
+            node_name = node.metadata.name
+            allocatable = node.status.allocatable or {}
+            total = ResourceQuantity(
+                cpu_cores=parse_cpu(allocatable.get("cpu")),
+                memory_bytes=parse_memory(allocatable.get("memory")),
+                npu=parse_number(allocatable.get(npu_resource_name)),
+            )
+            node_resources[node_name] = ResourceNodeInfo(
+                node_name=node_name,
+                total=total,
+                used=ResourceQuantity(),
+                available=total,
+            )
+        return node_resources
+
+    def _finalize_node_resources(self, node_resources: dict[str, ResourceNodeInfo]) -> list[ResourceNodeInfo]:
+        for node_resource in node_resources.values():
+            node_resource.available = ResourceQuantity(
+                cpu_cores=max(node_resource.total.cpu_cores - node_resource.used.cpu_cores, 0),
+                memory_bytes=max(node_resource.total.memory_bytes - node_resource.used.memory_bytes, 0),
+                npu=max(node_resource.total.npu - node_resource.used.npu, 0),
+            )
+        return sorted(node_resources.values(), key=lambda node_resource: node_resource.node_name)
 
     def _pod_requests(self, pod: Any, npu_resource_name: str) -> ResourceQuantity:
         regular = ResourceQuantity()
