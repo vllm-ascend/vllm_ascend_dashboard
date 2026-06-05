@@ -22,8 +22,8 @@ __all__ = [
     "Base", "User", "ModelConfig", "ModelReport", "CIResult", "CIJob",
     "WorkflowConfig", "PerformanceData", "JobOwner",
     "ModelSyncConfig", "ProjectDashboardConfig", "KubernetesClusterConfig",
-    # 每日总结相关模型
-    "DailyPR", "DailyIssue", "DailyCommit", "DailySummary", "LLMProviderConfig"
+    "DailyPR", "DailyIssue", "DailyCommit", "DailySummary", "LLMProviderConfig",
+    "DailyReportHistory",
 ]
 
 
@@ -250,6 +250,24 @@ class KubernetesClusterConfig(Base):
     created_by = Column(Integer, ForeignKey("users.id"))
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class DailyReportHistory(Base):
+    """每日运行报告发送历史表"""
+    __tablename__ = "daily_report_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_date = Column(String(10), nullable=False, index=True)
+    recipients = Column(Text, nullable=False)
+    subject = Column(String(200), nullable=False)
+    status = Column(String(20), default="pending", index=True)
+    sent_at = Column(TIMESTAMP)
+    error_message = Column(Text)
+    ci_summary = Column(JSON)
+    model_summary = Column(JSON)
+    github_summary = Column(JSON)
+    performance_summary = Column(JSON)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
 
 # 导入每日总结相关模型

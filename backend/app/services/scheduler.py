@@ -185,6 +185,45 @@ class DataSyncScheduler:
         else:
             logger.info("Scheduler already running")
 
+        # 每日运行报告邮件推送任务 - 每天早上 8:30 执行（可配置）
+        # 与每日总结任务（8:00 AM）错开 30 分钟，确保数据采集先完成
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+
+            report_enabled = getattr(settings, 'REPORT_ENABLED', True)
+            report_hour = getattr(settings, 'REPORT_SCHEDULE_HOUR', 8)
+            report_minute = getattr(settings, 'REPORT_SCHEDULE_MINUTE', 30)
+
+            timezone_str = 'Asia/Shanghai'
+            try:
+                from sqlalchemy import select
+                from app.models import ProjectDashboardConfig
+                from app.db.base import SessionLocal
+
+                with SessionLocal() as db:
+                    stmt = select(ProjectDashboardConfig).where(
+                        ProjectDashboardConfig.config_key == 'daily_summary_schedule'
+                    )
+                    result = db.execute(stmt).scalar_one_or_none()
+                    if result and 'timezone' in result.config_value:
+                        timezone_str = result.config_value['timezone']
+            except Exception as e:
+                logger.warning(f"Failed to load timezone from database for report job, using default: {timezone_str}. Error: {e}")
+
+            if report_enabled:
+                self.scheduler.add_job(
+                    self._send_daily_report_job,
+                    trigger=CronTrigger(hour=report_hour, minute=report_minute, timezone=timezone_str),
+                    id="daily_report_task",
+                    name="Daily Report Email",
+                    replace_existing=True,
+                )
+                logger.info(f"Daily report email scheduled at {report_hour}:{report_minute:02d} {timezone_str} (enabled={report_enabled})")
+            else:
+                logger.info(f"Daily report email DISABLED (enabled={report_enabled})")
+        except Exception as e:
+            logger.error(f"Failed to add daily report job: {e}", exc_info=True)
+
     def stop(self) -> None:
         """停止调度器"""
         if self.scheduler.running:
@@ -427,6 +466,51 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error("=" * 60)
             logger.error(f"DAILY SUMMARY GENERATION JOB FAILED - Error: {e}", exc_info=True)
+            logger.error("=" * 60)
+
+    async def _send_daily_report_job(self):
+        """每日运行报告邮件推送任务"""
+        logger.info("=" * 60)
+        logger.info("DAILY REPORT EMAIL JOB STARTED")
+        logger.info("=" * 60)
+
+        try:
+            from datetime import date, timedelta
+            from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+            from sqlalchemy.orm import sessionmaker
+            from app.services.daily_report import DailyReportService
+
+            if not settings.REPORT_ENABLED:
+                logger.info("Report disabled, skipping")
+                return
+
+            if not settings.REPORT_RECIPIENTS:
+                logger.info("No recipients configured, skipping")
+                return
+
+            if not settings.SMTP_HOST:
+                logger.info("SMTP not configured, skipping")
+                return
+
+            engine = create_async_engine(settings.DATABASE_URL, echo=False)
+            async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+            async with async_session() as db:
+                yesterday = date.today() - timedelta(days=1)
+                service = DailyReportService(db)
+                history = await service.send_report(yesterday)
+
+                logger.info(f"Daily report result: status={history.status}, date={history.report_date}")
+
+            await engine.dispose()
+
+            logger.info("=" * 60)
+            logger.info("DAILY REPORT EMAIL JOB COMPLETED")
+            logger.info("=" * 60)
+
+        except Exception as e:
+            logger.error("=" * 60)
+            logger.error(f"DAILY REPORT EMAIL JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
 
     def update_daily_summary_schedule(self, enabled: bool, cron_hour: int, cron_minute: int, timezone: str = 'Asia/Shanghai'):
