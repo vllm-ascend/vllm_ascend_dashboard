@@ -478,24 +478,33 @@ class DataSyncScheduler:
             from datetime import date, timedelta
             from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
             from sqlalchemy.orm import sessionmaker
-            from app.services.daily_report import DailyReportService
+            from sqlalchemy import select
+            from app.models import ProjectDashboardConfig
+            from app.services.daily_report import DailyReportService, REPORT_CONFIG_KEY
 
             if not settings.REPORT_ENABLED:
                 logger.info("Report disabled, skipping")
-                return
-
-            if not settings.REPORT_RECIPIENTS:
-                logger.info("No recipients configured, skipping")
-                return
-
-            if not settings.SMTP_HOST:
-                logger.info("SMTP not configured, skipping")
                 return
 
             engine = create_async_engine(settings.DATABASE_URL, echo=False)
             async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
             async with async_session() as db:
+                stmt = select(ProjectDashboardConfig).where(
+                    ProjectDashboardConfig.config_key == REPORT_CONFIG_KEY
+                )
+                config_result = await db.execute(stmt)
+                config = config_result.scalar_one_or_none()
+                db_config = config.config_value if config else {}
+
+                if not db_config.get("report_recipients"):
+                    logger.info("No recipients configured in DB, skipping")
+                    return
+
+                if not db_config.get("smtp_host"):
+                    logger.info("SMTP_HOST not configured in DB, skipping")
+                    return
+
                 yesterday = date.today() - timedelta(days=1)
                 service = DailyReportService(db)
                 history = await service.send_report(yesterday)

@@ -62,19 +62,12 @@ class Settings(BaseSettings):
     DAILY_SUMMARY_CRON_HOUR: int = 8  # 每日总结生成时间（小时），默认早上 8 点
     DAILY_SUMMARY_CRON_MINUTE: int = 0  # 每日总结生成时间（分钟）
 
-    # 每日运行报告邮件推送配置
+    # 每日运行报告邮件推送配置（调度相关）
     REPORT_ENABLED: bool = True
     REPORT_SCHEDULE_HOUR: int = 8
     REPORT_SCHEDULE_MINUTE: int = 30
-    SMTP_HOST: str = ""
-    SMTP_PORT: int = 587
-    SMTP_USERNAME: str = ""
-    SMTP_PASSWORD: str = ""
-    SMTP_USE_TLS: bool = True
-    REPORT_FROM_EMAIL: str = ""
-    REPORT_RECIPIENTS: str = ""
-    REPORT_CC_RECIPIENTS: str = ""
     REPORT_SUBJECT_TEMPLATE: str = "vLLM Ascend 运行报告 - {date}"
+    # SMTP 配置存储在数据库（ProjectDashboardConfig 表），不放在 .env 文件中
 
     class Config:
         env_file = ".env"
@@ -95,14 +88,6 @@ class Settings(BaseSettings):
         """验证 GitHub Token 格式"""
         if not (v.startswith("ghp_") or v.startswith("github_pat_") or len(v) >= 10):
             raise ValueError("GITHUB_TOKEN must be a valid GitHub token (ghp_*, github_pat_*, or valid length)")
-        return v
-
-    @field_validator("REPORT_RECIPIENTS")
-    @classmethod
-    def validate_recipients(cls, v: str) -> str:
-        """验证报告收件人格式"""
-        if v and not all("@" in r.strip() for r in v.split(",")):
-            raise ValueError("REPORT_RECIPIENTS must be valid email addresses separated by commas")
         return v
 
     @property

@@ -1,6 +1,9 @@
 """
 每日运行报告邮件推送服务
 聚合三个时间窗口数据，构建 HTML 邮件并发送
+
+SMTP 配置存储在数据库（ProjectDashboardConfig 表，config_key='daily_report_config'）
+与 LLMProviderConfig 设计一致：敏感凭据不放在 .env 文件中
 """
 import json
 import logging
@@ -14,13 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.email import send_email
-from app.models import CIResult, CIJob, ModelConfig, ModelReport, PerformanceData, DailyReportHistory
+from app.models import CIResult, ModelConfig, ModelReport, PerformanceData, ProjectDashboardConfig, DailyReportHistory
 from app.services.daily_data_file_store import DailyDataFileStore
 
 logger = logging.getLogger(__name__)
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+
+REPORT_CONFIG_KEY = "daily_report_config"
 
 
 class DailyReportService:
@@ -29,6 +34,39 @@ class DailyReportService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.file_store = DailyDataFileStore()
+
+    async def _get_report_config(self) -> dict:
+        """从数据库读取报告邮件配置（ProjectDashboardConfig 表）"""
+        stmt = select(ProjectDashboardConfig).where(
+            ProjectDashboardConfig.config_key == REPORT_CONFIG_KEY
+        )
+        result = await self.db.execute(stmt)
+        config = result.scalar_one_or_none()
+
+        if config and config.config_value:
+            return config.config_value
+
+        return {}
+
+    async def _update_report_config(self, config_value: dict) -> None:
+        """更新数据库中的报告邮件配置"""
+        stmt = select(ProjectDashboardConfig).where(
+            ProjectDashboardConfig.config_key == REPORT_CONFIG_KEY
+        )
+        result = await self.db.execute(stmt)
+        config = result.scalar_one_or_none()
+
+        if config:
+            config.config_value = config_value
+        else:
+            config = ProjectDashboardConfig(
+                config_key=REPORT_CONFIG_KEY,
+                config_value=config_value,
+                description="每日运行报告邮件推送配置（SMTP、收件人等）",
+            )
+            self.db.add(config)
+
+        await self.db.flush()
 
     async def generate_report(self, report_date: date) -> dict:
         """
@@ -121,13 +159,13 @@ class DailyReportService:
         fail_count = sum(1 for r in reports if r.pass_fail == "fail")
         rate = (pass_count / total * 100) if total > 0 else 0.0
 
-        model_names_in_window = {r.model_config_id for r in reports}
+        model_ids_in_window = {r.model_config_id for r in reports}
 
         earlier_stmt = select(ModelReport).where(ModelReport.created_at < start_dt)
         earlier_result = await self.db.execute(earlier_stmt)
         earlier_ids = {r.model_config_id for r in earlier_result.scalars().all()}
 
-        new_model_ids = model_names_in_window - earlier_ids
+        new_model_ids = model_ids_in_window - earlier_ids
         new_models = []
         if new_model_ids:
             mc_stmt = select(ModelConfig).where(ModelConfig.id.in_(new_model_ids))
@@ -227,7 +265,7 @@ class DailyReportService:
         }
 
     def build_email_html(self, report_data: dict) -> str:
-        """使用 Jinja2 渲染 HTML 邶件"""
+        """使用 Jinja2 渲染 HTML 邮件"""
         env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
         template = env.get_template("daily_report.html")
 
@@ -243,20 +281,34 @@ class DailyReportService:
         """
         生成报告并发送邮件，记录发送历史
 
+        SMTP 配置从数据库读取，不从 .env 文件读取
+
         Args:
             report_date: 报告日期（昨日日期）
 
         Returns:
             DailyReportHistory 记录
         """
-        recipients = [r.strip() for r in settings.REPORT_RECIPIENTS.split(",") if r.strip()] if settings.REPORT_RECIPIENTS else []
-        cc_recipients = [r.strip() for r in settings.REPORT_CC_RECIPIENTS.split(",") if r.strip()] if settings.REPORT_CC_RECIPIENTS else []
+        report_config = await self._get_report_config()
 
-        subject = settings.REPORT_SUBJECT_TEMPLATE.format(date=report_date.isoformat())
+        smtp_host = report_config.get("smtp_host", "")
+        smtp_port = report_config.get("smtp_port", 587)
+        smtp_username = report_config.get("smtp_username", "")
+        smtp_password = report_config.get("smtp_password", "")
+        smtp_use_tls = report_config.get("smtp_use_tls", True)
+        from_email = report_config.get("report_from_email", "")
+        recipients_str = report_config.get("report_recipients", "")
+        cc_str = report_config.get("report_cc_recipients", "")
+
+        recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
+        cc_recipients = [r.strip() for r in cc_str.split(",") if r.strip()]
+
+        subject_template = report_config.get("report_subject_template", settings.REPORT_SUBJECT_TEMPLATE)
+        subject = subject_template.format(date=report_date.isoformat())
 
         history = DailyReportHistory(
             report_date=report_date.isoformat(),
-            recipients=settings.REPORT_RECIPIENTS,
+            recipients=recipients_str,
             subject=subject,
             status="pending",
         )
@@ -265,7 +317,6 @@ class DailyReportService:
 
         try:
             report_data = await self.generate_report(report_date)
-
             html_content = self.build_email_html(report_data)
 
             history.ci_summary = report_data["yesterday"]["ci"]
@@ -279,11 +330,23 @@ class DailyReportService:
                 await self.db.commit()
                 return history
 
+            if not smtp_host:
+                history.status = "failed"
+                history.error_message = "SMTP_HOST not configured"
+                await self.db.commit()
+                return history
+
             result = await send_email(
                 subject=subject,
                 html_content=html_content,
                 recipients=recipients,
                 cc_recipients=cc_recipients,
+                smtp_host=smtp_host,
+                smtp_port=smtp_port,
+                smtp_username=smtp_username,
+                smtp_password=smtp_password,
+                smtp_use_tls=smtp_use_tls,
+                from_email=from_email,
             )
 
             if result["success"]:

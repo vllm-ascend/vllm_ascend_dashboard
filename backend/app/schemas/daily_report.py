@@ -8,11 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DailyReportConfigResponse(BaseModel):
-    """报告配置响应"""
+    """报告配置响应（smtp_password 不返回，与 LLMProviderConfig.api_key 设计一致）"""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_use_tls: bool = True
+    smtp_password_set: bool = False
     report_from_email: str = ""
     report_recipients: str = ""
     report_cc_recipients: str = ""
