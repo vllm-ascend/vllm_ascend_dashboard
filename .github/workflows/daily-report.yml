@@ -1,0 +1,59 @@
+name: Daily Report Email
+
+on:
+  schedule:
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+    inputs:
+      report_date:
+        description: 'Report date (YYYY-MM-DD), defaults to yesterday'
+        required: false
+        type: string
+
+jobs:
+  send-daily-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine report date
+        id: date
+        run: |
+          if [ -n "${{ inputs.report_date }}" ]; then
+            echo "date=${{ inputs.report_date }}" >> $GITHUB_OUTPUT
+          else
+            echo "date=$(date -u -d 'yesterday' +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Trigger daily report
+        env:
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          DASHBOARD_TOKEN: ${{ secrets.DASHBOARD_ADMIN_TOKEN }}
+        run: |
+          if [ -z "$DASHBOARD_URL" ] || [ -z "$DASHBOARD_TOKEN" ]; then
+            echo "ERROR: DASHBOARD_URL or DASHBOARD_ADMIN_TOKEN not configured in GitHub Secrets"
+            echo "Please add these secrets to the repository settings:"
+            echo "  DASHBOARD_URL: e.g. https://your-dashboard.example.com"
+            echo "  DASHBOARD_ADMIN_TOKEN: admin JWT access token"
+            exit 1
+          fi
+
+          REPORT_DATE="${{ steps.date.outputs.date }}"
+          echo "Triggering daily report for: $REPORT_DATE"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $DASHBOARD_TOKEN" \
+            -H "Content-Type: application/json" \
+            "${DASHBOARD_URL}/api/v1/daily-report/trigger?report_date=${REPORT_DATE}")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+
+          echo "Response HTTP code: $HTTP_CODE"
+          echo "Response body: $BODY"
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "Daily report triggered successfully"
+          else
+            echo "Failed to trigger daily report"
+            exit 1
+          fi
