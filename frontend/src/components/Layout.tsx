@@ -13,6 +13,7 @@ import {
   GithubOutlined,
   MenuOutlined,
   CloudServerOutlined,
+  MailOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { logout } from '../services/auth'
@@ -58,6 +59,11 @@ const adminMenuItems: MenuProps['items'] = [
     key: '/admin',
     icon: <SettingOutlined />,
     label: '系统管理',
+  },
+  {
+    key: '/admin/daily-report',
+    icon: <MailOutlined />,
+    label: '每日报告',
   },
 ]
 
@@ -136,7 +142,10 @@ function Layout() {
     { key: '/ci', icon: <CheckCircleOutlined />, label: 'CI 看板' },
     { key: '/models', icon: <ExperimentOutlined />, label: '模型看板' },
     { key: '/resources', icon: <CloudServerOutlined />, label: '资源看板' },
-    ...(hasAdminRole ? [{ key: '/admin', icon: <SettingOutlined />, label: '系统管理' }] : []),
+    ...(hasAdminRole ? [
+      { key: '/admin', icon: <SettingOutlined />, label: '系统管理' },
+      { key: '/admin/daily-report', icon: <MailOutlined />, label: '每日报告' },
+    ] : []),
   ]
 
   return (
