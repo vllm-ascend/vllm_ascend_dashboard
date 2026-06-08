@@ -1,0 +1,121 @@
+.stripe-page-container {
+  padding: 24px;
+  max-width: 100%;
+}
+
+.stripe-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.stripe-page-title {
+  margin: 0 !important;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--stripe-text-heading);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stripe-page-icon {
+  color: var(--stripe-accent);
+}
+
+.report-config-section {
+  margin-bottom: 24px;
+}
+
+.report-config-section .ant-card-head-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.report-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.report-status-dot.sent {
+  background-color: #059669;
+}
+
+.report-status-dot.failed {
+  background-color: #dc2626;
+}
+
+.report-status-dot.pending {
+  background-color: #d97706;
+}
+
+.report-history-table .ant-table-thead > tr > th {
+  background: var(--stripe-bg-subtle);
+  font-weight: 600;
+}
+
+.report-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.report-summary-card {
+  background: var(--stripe-bg-subtle);
+  border: 1px solid var(--stripe-border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.report-summary-card .value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--stripe-text-heading);
+}
+
+.report-summary-card .label {
+  font-size: 12px;
+  color: var(--stripe-text-secondary);
+  margin-top: 4px;
+}
+
+.report-summary-card.success .value {
+  color: #059669;
+}
+
+.report-summary-card.danger .value {
+  color: #dc2626;
+}
+
+.report-summary-card.warning .value {
+  color: #d97706;
+}
+
+.smtp-password-hint {
+  font-size: 12px;
+  color: var(--stripe-text-secondary);
+  margin-top: 4px;
+}
+
+.trigger-result-card {
+  margin-top: 16px;
+  border-radius: 8px;
+}
+
+.trigger-result-card.success {
+  border-color: #059669;
+  background: #f0fdf4;
+}
+
+.trigger-result-card.failed {
+  border-color: #dc2626;
+  background: #fef2f2;
+}

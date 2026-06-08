@@ -23,6 +23,7 @@ import ProjectBoard from './pages/ProjectBoard'
 import ProjectBoardConfig from './pages/ProjectBoardConfig'
 import ResourceDashboard from './pages/ResourceDashboard'
 import ResourceDashboardConfig from './pages/ResourceDashboardConfig'
+import DailyReportConfigPage from './pages/DailyReportConfig'
 import { useCurrentUser } from './hooks/useCurrentUser'
 
 const queryClient = new QueryClient({
@@ -178,6 +179,15 @@ function App() {
                 element={
                   <AdminRoute>
                     <ResourceDashboardConfig />
+                  </AdminRoute>
+                }
+              />
+              {/* 每日运行报告（管理员） */}
+              <Route
+                path="admin/daily-report"
+                element={
+                  <AdminRoute>
+                    <DailyReportConfigPage />
                   </AdminRoute>
                 }
               />
