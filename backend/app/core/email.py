@@ -60,13 +60,15 @@ async def send_email(
 
     try:
         if smtp_use_tls:
+            use_implicit_tls = smtp_port == 465
             await aiosmtplib.send(
                 msg,
                 hostname=smtp_host,
                 port=smtp_port,
                 username=smtp_username,
                 password=smtp_password,
-                start_tls=True,
+                use_tls=use_implicit_tls,
+                start_tls=not use_implicit_tls,
             )
         else:
             await aiosmtplib.send(
