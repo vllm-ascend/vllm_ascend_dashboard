@@ -1,5 +1,9 @@
 """
 SMTP 邮件发送工具（异步）
+
+支持两种 TLS 模式：
+- Port 465: 隐式 TLS (SMTPS)，连接即加密
+- Port 587: 显式 STARTTLS，先明文连接再升级加密
 """
 import logging
 from email.mime.multipart import MIMEMultipart
@@ -22,24 +26,6 @@ async def send_email(
     smtp_use_tls: bool = True,
     from_email: str = "",
 ) -> dict:
-    """
-    异步发送 HTML 邶件
-
-    Args:
-        subject: 邶件主题
-        html_content: HTML 内容
-        recipients: 收件人列表
-        cc_recipients: 抄送人列表
-        smtp_host: SMTP 服务器地址
-        smtp_port: SMTP 端口
-        smtp_username: SMTP 用户名
-        smtp_password: SMTP 密码
-        smtp_use_tls: 是否启用 TLS
-        from_email: 发件人地址
-
-    Returns:
-        {"success": True/False, "error": str | None}
-    """
     if not smtp_host:
         return {"success": False, "error": "SMTP_HOST not configured"}
 
@@ -58,27 +44,24 @@ async def send_email(
 
     all_recipients = recipients + (cc_recipients or [])
 
+    use_implicit_tls = smtp_use_tls and smtp_port == 465
+    use_starttls = smtp_use_tls and smtp_port != 465
+
     try:
-        if smtp_use_tls:
-            use_implicit_tls = smtp_port == 465
-            await aiosmtplib.send(
-                msg,
-                hostname=smtp_host,
-                port=smtp_port,
-                username=smtp_username,
-                password=smtp_password,
-                use_tls=use_implicit_tls,
-                start_tls=not use_implicit_tls,
-            )
-        else:
-            await aiosmtplib.send(
-                msg,
-                hostname=smtp_host,
-                port=smtp_port,
-                username=smtp_username,
-                password=smtp_password,
-                use_tls=False,
-            )
+        smtp_client = aiosmtplib.SMTP(
+            hostname=smtp_host,
+            port=smtp_port,
+            use_tls=use_implicit_tls,
+        )
+
+        await smtp_client.connect()
+
+        if use_starttls:
+            await smtp_client.starttls(validate_certs=False)
+
+        await smtp_client.login(smtp_username, smtp_password)
+        await smtp_client.send_message(msg)
+        await smtp_client.quit()
 
         logger.info(f"Email sent successfully to {all_recipients}")
         return {"success": True, "error": None}
