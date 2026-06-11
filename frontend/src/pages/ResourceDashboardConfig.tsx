@@ -2,6 +2,7 @@ import { useState } from 'react'
 import {
   Button,
   Card,
+  Collapse,
   Form,
   Input,
   InputNumber,
@@ -27,6 +28,7 @@ import {
   testResourceCluster,
   updateResourceCluster,
 } from '../services/resourceDashboard'
+import { useResourceMetricsConfig, useUpdateResourceMetricsConfig } from '../hooks/useResourceMetrics'
 
 const { TextArea } = Input
 const { Title, Text } = Typography
@@ -36,11 +38,15 @@ function ResourceDashboardConfig() {
   const [form] = Form.useForm()
   const [modalOpen, setModalOpen] = useState(false)
   const [editingCluster, setEditingCluster] = useState<KubernetesCluster | null>(null)
+  const [metricsForm] = Form.useForm()
 
   const { data = [], isLoading } = useQuery({
     queryKey: ['resource-clusters-admin'],
     queryFn: listResourceClusters,
   })
+
+  const { data: metricsConfig } = useResourceMetricsConfig()
+  const updateMetricsMutation = useUpdateResourceMetricsConfig()
 
   const createMutation = useMutation({
     mutationFn: createResourceCluster,
@@ -134,6 +140,17 @@ function ResourceDashboardConfig() {
     }
   }
 
+  const saveMetricsConfig = async () => {
+    const values = await metricsForm.validateFields()
+    updateMetricsMutation.mutate({
+      interval_minutes: values.interval_minutes,
+      retention_days: values.retention_days,
+    }, {
+      onSuccess: () => message.success('数据采集配置已更新'),
+      onError: () => message.error('配置更新失败'),
+    })
+  }
+
   const columns: ColumnsType<KubernetesCluster> = [
     { title: '名称', dataIndex: 'name', width: 160 },
     { title: '描述', dataIndex: 'description', render: value => value || '-' },
@@ -189,6 +206,33 @@ function ResourceDashboardConfig() {
           dataSource={data}
           columns={columns}
           scroll={{ x: 1200 }}
+        />
+      </Card>
+
+      <Card style={{ marginTop: 16 }}>
+        <Collapse
+          items={[
+            {
+              key: 'metrics',
+              label: '数据采集配置',
+              children: (
+                <Form form={metricsForm} layout="vertical" initialValues={{
+                  interval_minutes: metricsConfig?.interval_minutes ?? 1,
+                  retention_days: metricsConfig?.retention_days ?? 30,
+                }}>
+                  <Form.Item name="interval_minutes" label="采集间隔（分钟）" rules={[{ required: true }]} extra="NPU 指标采集频率，1-60 分钟">
+                    <InputNumber min={1} max={60} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item name="retention_days" label="数据保留天数" rules={[{ required: true }]} extra="超过保留期的历史数据将自动清理，1-365 天">
+                    <InputNumber min={1} max={365} style={{ width: '100%' }} />
+                  </Form.Item>
+                  <Form.Item>
+                    <Button type="primary" onClick={saveMetricsConfig} loading={updateMetricsMutation.isPending}>保存配置</Button>
+                  </Form.Item>
+                </Form>
+              ),
+            },
+          ]}
         />
       </Card>
 

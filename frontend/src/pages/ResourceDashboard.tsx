@@ -8,18 +8,30 @@ import {
   Empty,
   Input,
   Progress,
+  Radio,
   Row,
   Select,
   Skeleton,
   Space,
   Statistic,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import dayjs from 'dayjs'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts'
 import {
   ClusterResourceSummary,
   ResourceNodeInfo,
@@ -28,6 +40,8 @@ import {
   getEnabledResourceClusters,
   getClusterSummary,
 } from '../services/resourceDashboard'
+import { useNpuMetrics } from '../hooks/useResourceMetrics'
+import type { NpuMetricPoint, TopPodInfo } from '../services/resourceMetrics'
 
 const { Title, Text } = Typography
 
@@ -37,6 +51,8 @@ const formatNpu = (value: number) => `${value.toFixed(0)} 卡`
 
 const percent = (used: number, total: number) => (total > 0 ? Math.round(Math.min((used / total) * 100, 100)) : 0)
 const usageColor = (value: number) => (value >= 90 ? '#ff4d4f' : value >= 50 ? '#1677ff' : '#52c41a')
+
+const CLUSTER_COLORS = ['#1677ff', '#52c41a', '#faad14', '#ff4d4f', '#722ed1', '#13c2c2']
 
 function ResourceUsage({ summary }: { summary: ClusterResourceSummary }) {
   const cpuPct = percent(summary.used.cpu_cores, summary.total.cpu_cores)
@@ -159,7 +175,212 @@ function PodTable({ data }: { data: ResourcePodInfo[] }) {
   )
 }
 
-function ResourceDashboard() {
+function NpuTrendTooltipContent({ active, payload, label }: any) {
+  if (!active || !payload || payload.length === 0) return null
+
+  const utilizationData = payload.find((p: any) => p.dataKey === 'npu_utilization')
+  const podsData = payload.find((p: any) => p.dataKey === 'executing_pods_count')
+  const prData = payload.find((p: any) => p.dataKey === 'pr_count')
+
+  const topPods: TopPodInfo[] = utilizationData?.payload?.top_pods || []
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #eee', padding: 12, borderRadius: 4, maxWidth: 400 }}>
+      <Text strong>{dayjs(label).format('YYYY-MM-DD HH:mm')}</Text>
+      <div style={{ marginTop: 8 }}>
+        {utilizationData && <div style={{ color: utilizationData.color }}>NPU 利用率: {utilizationData.value.toFixed(1)}%</div>}
+        {podsData && <div style={{ color: podsData.color }}>执行中 Pod: {podsData.value}</div>}
+        {prData && <div style={{ color: prData.color }}>PR 数量: {prData.value}</div>}
+      </div>
+      {topPods.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>Top 5 Pod:</Text>
+          <ul style={{ margin: 0, padding: '4px 0 0 16px', fontSize: 12 }}>
+            {topPods.map((pod: TopPodInfo, i: number) => (
+              <li key={i}>
+                {pod.name} ({formatNpu(pod.npu)})
+                {pod.pr_number && pod.pr_url && (
+                  <a href={pod.pr_url} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>#{pod.pr_number}</a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NpuTrendTab() {
+  const [timeRange, setTimeRange] = useState<string>('24h')
+  const [selectedClusters, setSelectedClusters] = useState<number[]>([])
+
+  const { data: allClusters = [] } = useQuery({
+    queryKey: ['resource-clusters-enabled'],
+    queryFn: getEnabledResourceClusters,
+  })
+
+  const activeClusterIds = selectedClusters.length > 0 ? selectedClusters : allClusters.map(c => c.id)
+
+  const { data: metricsData, isLoading: metricsLoading } = useNpuMetrics({
+    cluster_ids: activeClusterIds.length > 0 ? activeClusterIds : undefined,
+    time_range: timeRange,
+  })
+
+  const clusterOptions = allClusters.map(c => ({ label: c.name, value: c.id }))
+
+  const chartData = useMemo(() => {
+    if (!metricsData?.clusters) return []
+    const allPoints: any[] = []
+    for (const cluster of metricsData.clusters) {
+      for (const point of cluster.metrics) {
+        allPoints.push({
+          collected_at: point.collected_at,
+          timeLabel: dayjs(point.collected_at).format(timeRange === '1h' ? 'HH:mm' : timeRange === '24h' ? 'HH:mm' : timeRange === '7d' ? 'MM-DD HH:mm' : 'MM-DD'),
+          [`npu_utilization_${cluster.cluster_id}`]: point.npu_utilization,
+          [`executing_pods_count_${cluster.cluster_id}`]: point.executing_pods_count,
+          [`pr_count_${cluster.cluster_id}`]: point.pr_count,
+          [`cluster_name_${cluster.cluster_id}`]: cluster.cluster_name,
+          [`top_pods_${cluster.cluster_id}`]: point.top_pods,
+        })
+      }
+    }
+    const timeMap = new Map<string, any>()
+    for (const point of allPoints) {
+      const key = point.collected_at
+      if (!timeMap.has(key)) {
+        timeMap.set(key, { collected_at: key, timeLabel: point.timeLabel })
+      }
+      const existing = timeMap.get(key)!
+      Object.assign(existing, point)
+    }
+    return Array.from(timeMap.values()).sort((a, b) => a.collected_at.localeCompare(b.collected_at))
+  }, [metricsData, timeRange])
+
+  if (metricsLoading && !metricsData) {
+    return (
+      <div style={{ padding: 24 }}>
+        <Skeleton active paragraph={{ rows: 6 }} />
+      </div>
+    )
+  }
+
+  return (
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Card size="small">
+        <Space wrap size="middle">
+          <Radio.Group value={timeRange} onChange={e => setTimeRange(e.target.value)} optionType="button" buttonStyle="solid">
+            <Radio.Button value="1h">近1小时</Radio.Button>
+            <Radio.Button value="24h">近24小时</Radio.Button>
+            <Radio.Button value="7d">近7天</Radio.Button>
+            <Radio.Button value="30d">近30天</Radio.Button>
+          </Radio.Group>
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            placeholder="默认全部集群"
+            options={clusterOptions}
+            value={selectedClusters}
+            onChange={setSelectedClusters}
+            style={{ minWidth: 240 }}
+          />
+        </Space>
+      </Card>
+
+      {metricsData?.clusters && metricsData.clusters.length > 0 ? (
+        <Card title="NPU 利用率趋势">
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="timeLabel"
+                tick={{ fontSize: 12 }}
+                angle={-30}
+                textAnchor="end"
+                height={50}
+              />
+              <YAxis
+                domain={[0, 100]}
+                label={{ value: 'NPU 利用率 (%)', angle: -90, position: 'insideLeft' }}
+                tickFormatter={(v: number) => `${v}%`}
+              />
+              <Tooltip content={<NpuTrendTooltipContent />} />
+              <Legend />
+              {metricsData.clusters.map((cluster, index) => (
+                <Line
+                  key={cluster.cluster_id}
+                  type="monotone"
+                  dataKey={`npu_utilization_${cluster.cluster_id}`}
+                  name={`${cluster.cluster_name} NPU利用率`}
+                  stroke={CLUSTER_COLORS[index % CLUSTER_COLORS.length]}
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 4 }}
+                  connectNulls
+                  unit="%"
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>
+      ) : (
+        <Card title="NPU 利用率趋势">
+          <Empty description="暂无 NPU 趋势数据，请等待采集任务运行" />
+        </Card>
+      )}
+
+      {metricsData?.clusters && metricsData.clusters.length > 0 && (
+        <Card title="Pod / PR 数量趋势">
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="timeLabel"
+                tick={{ fontSize: 12 }}
+                angle={-30}
+                textAnchor="end"
+                height={50}
+              />
+              <YAxis
+                label={{ value: '数量', angle: -90, position: 'insideLeft' }}
+              />
+              <Tooltip />
+              <Legend />
+              {metricsData.clusters.map((cluster, index) => (
+                <Line
+                  key={`pods-${cluster.cluster_id}`}
+                  type="monotone"
+                  dataKey={`executing_pods_count_${cluster.cluster_id}`}
+                  name={`${cluster.cluster_name} Pod数`}
+                  stroke={CLUSTER_COLORS[index % CLUSTER_COLORS.length]}
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
+                  connectNulls
+                />
+              ))}
+              {metricsData.clusters.map((cluster, index) => (
+                <Line
+                  key={`pr-${cluster.cluster_id}`}
+                  type="monotone"
+                  dataKey={`pr_count_${cluster.cluster_id}`}
+                  name={`${cluster.cluster_name} PR数`}
+                  stroke={CLUSTER_COLORS[index % CLUSTER_COLORS.length]}
+                  strokeDasharray="4 4"
+                  strokeWidth={1.5}
+                  dot={{ r: 2 }}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
+    </Space>
+  )
+}
+
+function RealtimeDashboardTab() {
   const [selectedClusters, setSelectedClusters] = useState<number[]>([])
   const [appliedFilters, setAppliedFilters] = useState({ clusterIds: [] as number[] })
   const [selectedClusterSummary, setSelectedClusterSummary] = useState<ClusterResourceSummary | null>(null)
@@ -250,97 +471,87 @@ function ResourceDashboard() {
   }
 
   return (
-    <div className="stripe-page-container">
-      <Space direction="vertical" size="large" style={{ width: '100%' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <Title level={2}>资源看板</Title>
-            <Text type="secondary">查看多个 Kubernetes 资源池的 CPU、内存和 NPU 分配情况</Text>
+    <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Card size="small">
+        <Space wrap align="end" size="middle" style={{ width: '100%' }}>
+          <div style={{ minWidth: 360, flex: 1 }}>
+            <Text>集群</Text>
+            <Select mode="multiple" allowClear maxTagCount="responsive" placeholder="默认全部启用集群" options={clusterOptions} value={selectedClusters} onChange={setSelectedClusters} style={{ width: '100%', marginTop: 8 }} />
           </div>
-          <Button icon={<ReloadOutlined />} onClick={() => clusterQueries.forEach(q => q.refetch())} loading={anyFetching}>{anyFetching ? '刷新中…' : '刷新'}</Button>
-        </div>
-
-        <Card size="small">
-          <Space wrap align="end" size="middle" style={{ width: '100%' }}>
-            <div style={{ minWidth: 360, flex: 1 }}>
-              <Text>集群</Text>
-              <Select mode="multiple" allowClear maxTagCount="responsive" placeholder="默认全部启用集群" options={clusterOptions} value={selectedClusters} onChange={setSelectedClusters} style={{ width: '100%', marginTop: 8 }} />
-            </div>
-            <Space>
-              <Button type="primary" onClick={applyFilters}>应用筛选</Button>
-              <Button onClick={resetFilters}>重置</Button>
-            </Space>
+          <Space>
+            <Button type="primary" onClick={applyFilters}>应用筛选</Button>
+            <Button onClick={resetFilters}>重置</Button>
           </Space>
-        </Card>
+        </Space>
+      </Card>
 
-        {anyFetching && (
-          <Alert type="info" showIcon message="正在刷新资源数据…" banner />
-        )}
+      {anyFetching && (
+        <Alert type="info" showIcon message="正在刷新资源数据…" banner />
+      )}
 
-        {failedSummaries.length > 0 && (
-          <Alert
-            type="warning"
-            showIcon
-            message={`以下集群查询失败：${failedSummaries.map(c => c.cluster_name).join('、')}`}
-            description={failedSummaries.map(c => c.error).filter(Boolean).join('；')}
-          />
-        )}
+      {failedSummaries.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`以下集群查询失败：${failedSummaries.map(c => c.cluster_name).join('、')}`}
+          description={failedSummaries.map(c => c.error).filter(Boolean).join('；')}
+        />
+      )}
 
-        <Row gutter={[16, 16]}>
-          <Col xs={24} md={8}><Card><Statistic title="运行实例" value={overall.running_instances} /></Card></Col>
-          <Col xs={24} md={8}><Card><Statistic title="执行中 Pod" value={overall.executing_pods_count} /></Card></Col>
-          <Col xs={24} md={8}><Card><Statistic title="可用 NPU" value={formatNpu(overall.available.npu)} /></Card></Col>
-        </Row>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={8}><Card><Statistic title="运行实例" value={overall.running_instances} /></Card></Col>
+        <Col xs={24} md={8}><Card><Statistic title="执行中 Pod" value={overall.executing_pods_count} /></Card></Col>
+        <Col xs={24} md={8}><Card><Statistic title="可用 NPU" value={formatNpu(overall.available.npu)} /></Card></Col>
+      </Row>
 
-        <Row gutter={[16, 16]}>
-          <Col xs={24} md={8}><Card><Statistic title="CPU 总量" value={formatCpu(overall.total.cpu_cores)} /></Card></Col>
-          <Col xs={24} md={8}><Card><Statistic title="内存总量" value={formatMemory(overall.total.memory_bytes)} /></Card></Col>
-          <Col xs={24} md={8}><Card><Statistic title="NPU 总量" value={formatNpu(overall.total.npu)} /></Card></Col>
-        </Row>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={8}><Card><Statistic title="CPU 总量" value={formatCpu(overall.total.cpu_cores)} /></Card></Col>
+        <Col xs={24} md={8}><Card><Statistic title="内存总量" value={formatMemory(overall.total.memory_bytes)} /></Card></Col>
+        <Col xs={24} md={8}><Card><Statistic title="NPU 总量" value={formatNpu(overall.total.npu)} /></Card></Col>
+      </Row>
 
-        <Row gutter={[16, 16]}>
-          {clusterQueries.map((query, index) => {
-            const cluster = allClusters.find(c => c.id === activeClusterIds[index])
-            if (!cluster) return null
-            return (
-              <Col xs={24} lg={12} xl={8} key={cluster.id}>
-                <Card
-                  hoverable
-                  title={cluster.name}
-                  extra={
-                    query.error ? <Tag color="red">异常</Tag>
-                      : query.data?.error ? <Tag color="red">异常</Tag>
-                        : query.isLoading ? <Tag color="blue">加载中</Tag>
-                          : <Tag color="green">正常</Tag>
-                  }
-                  onClick={() => query.data && setSelectedClusterSummary(query.data)}
-                  style={{ cursor: query.data ? 'pointer' : 'default' }}
-                >
-                  {query.error ? (
-                    <Alert type="error" showIcon message="集群查询失败" description={(query.error as Error).message} />
-                  ) : query.isLoading ? (
-                    <Skeleton active paragraph={{ rows: 4 }} />
-                  ) : query.data?.error ? (
-                    <Alert type="error" showIcon message="集群查询失败" description={query.data.error} />
-                  ) : query.data ? (
-                    <Space direction="vertical" style={{ width: '100%' }}>
-                      <ResourceUsage summary={query.data} />
-                      <Space wrap>
-                        <Tag>运行实例 {query.data.running_instances}</Tag>
-                        <Tag>执行中 {query.data.executing_pods_count}</Tag>
-                      </Space>
+      <Row gutter={[16, 16]}>
+        {clusterQueries.map((query, index) => {
+          const cluster = allClusters.find(c => c.id === activeClusterIds[index])
+          if (!cluster) return null
+          return (
+            <Col xs={24} lg={12} xl={8} key={cluster.id}>
+              <Card
+                hoverable
+                title={cluster.name}
+                extra={
+                  query.error ? <Tag color="red">异常</Tag>
+                    : query.data?.error ? <Tag color="red">异常</Tag>
+                      : query.isLoading ? <Tag color="blue">加载中</Tag>
+                        : <Tag color="green">正常</Tag>
+                }
+                onClick={() => query.data && setSelectedClusterSummary(query.data)}
+                style={{ cursor: query.data ? 'pointer' : 'default' }}
+              >
+                {query.error ? (
+                  <Alert type="error" showIcon message="集群查询失败" description={(query.error as Error).message} />
+                ) : query.isLoading ? (
+                  <Skeleton active paragraph={{ rows: 4 }} />
+                ) : query.data?.error ? (
+                  <Alert type="error" showIcon message="集群查询失败" description={query.data.error} />
+                ) : query.data ? (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <ResourceUsage summary={query.data} />
+                    <Space wrap>
+                      <Tag>运行实例 {query.data.running_instances}</Tag>
+                      <Tag>执行中 {query.data.executing_pods_count}</Tag>
                     </Space>
-                  ) : null}
-                </Card>
-              </Col>
-            )
-          })}
-        </Row>
+                  </Space>
+                ) : null}
+              </Card>
+            </Col>
+          )
+        })}
+      </Row>
 
-        <Card title={`执行中 Pod (${executingPods.length})`}>
-          <PodTable data={executingPods} />
-        </Card>
-      </Space>
+      <Card title={`执行中 Pod (${executingPods.length})`}>
+        <PodTable data={executingPods} />
+      </Card>
 
       <Drawer
         title={selectedClusterSummary ? `${selectedClusterSummary.cluster_name} 节点资源使用情况` : '节点资源使用情况'}
@@ -354,6 +565,39 @@ function ResourceDashboard() {
           <NodeResourceTable data={selectedClusterSummary?.node_resources || []} />
         )}
       </Drawer>
+    </Space>
+  )
+}
+
+function ResourceDashboard() {
+  const [activeTab, setActiveTab] = useState('realtime')
+
+  return (
+    <div className="stripe-page-container">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div>
+          <Title level={2}>资源看板</Title>
+          <Text type="secondary">查看多个 Kubernetes 资源池的 CPU、内存和 NPU 分配情况</Text>
+        </div>
+      </div>
+
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        type="card"
+        items={[
+          {
+            key: 'realtime',
+            label: '实时看板',
+            children: <RealtimeDashboardTab />,
+          },
+          {
+            key: 'trend',
+            label: 'NPU 趋势',
+            children: <NpuTrendTab />,
+          },
+        ]}
+      />
     </div>
   )
 }

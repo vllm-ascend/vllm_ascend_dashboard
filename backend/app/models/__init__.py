@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -23,7 +24,7 @@ __all__ = [
     "WorkflowConfig", "PerformanceData", "JobOwner",
     "ModelSyncConfig", "ProjectDashboardConfig", "KubernetesClusterConfig",
     "DailyPR", "DailyIssue", "DailyCommit", "DailySummary", "LLMProviderConfig",
-    "DailyReportHistory",
+    "DailyReportHistory", "ResourceNpuMetrics",
 ]
 
 
@@ -268,6 +269,23 @@ class DailyReportHistory(Base):
     github_summary = Column(JSON)
     performance_summary = Column(JSON)
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+
+
+class ResourceNpuMetrics(Base):
+    """资源 NPU 指标采集表"""
+    __tablename__ = "resource_npu_metrics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cluster_id = Column(Integer, ForeignKey("kubernetes_cluster_configs.id"), nullable=False, index=True)
+    cluster_name = Column(String(100), nullable=False)
+    npu_total = Column(Float, default=0)
+    npu_used = Column(Float, default=0)
+    npu_available = Column(Float, default=0)
+    npu_utilization = Column(Float, default=0)
+    executing_pods_count = Column(Integer, default=0)
+    pr_count = Column(Integer, default=0)
+    top_pods_json = Column(JSON)
+    collected_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), index=True)
 
 
 # 导入每日总结相关模型

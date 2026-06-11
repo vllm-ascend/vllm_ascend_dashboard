@@ -185,6 +185,48 @@ class DataSyncScheduler:
         else:
             logger.info("Scheduler already running")
 
+        # NPU 指标采集任务 - 默认每 1 分钟执行
+        try:
+            from app.schemas.resource_metrics import RESOURCE_METRICS_CONFIG_KEY
+            metrics_interval = 1
+            try:
+                with SessionLocal() as db:
+                    from sqlalchemy import select as sa_select
+                    from app.models import ProjectDashboardConfig
+                    stmt = sa_select(ProjectDashboardConfig).where(
+                        ProjectDashboardConfig.config_key == RESOURCE_METRICS_CONFIG_KEY
+                    )
+                    result = db.execute(stmt).scalar_one_or_none()
+                    if result and result.config_value:
+                        metrics_interval = result.config_value.get("interval_minutes", 1)
+            except Exception as e:
+                logger.warning(f"Failed to load metrics config from database, using default interval {metrics_interval}. Error: {e}")
+
+            self.scheduler.add_job(
+                self._collect_resource_metrics_job,
+                trigger=IntervalTrigger(minutes=metrics_interval),
+                id="resource_metrics_collect",
+                name="Resource Metrics Collect",
+                replace_existing=True,
+            )
+            logger.info(f"Resource metrics collection scheduled every {metrics_interval} minutes")
+        except Exception as e:
+            logger.error(f"Failed to add resource metrics collection job: {e}", exc_info=True)
+
+        # NPU 指标数据清理任务 - 每天凌晨 00:00 执行
+        try:
+            from apscheduler.triggers.cron import CronTrigger as CronTrigger2
+            self.scheduler.add_job(
+                self._cleanup_resource_metrics_job,
+                trigger=CronTrigger2(hour=0, minute=0, timezone=timezone_str),
+                id="resource_metrics_cleanup",
+                name="Resource Metrics Cleanup",
+                replace_existing=True,
+            )
+            logger.info(f"Resource metrics cleanup scheduled at 00:00 {timezone_str}")
+        except Exception as e:
+            logger.error(f"Failed to add resource metrics cleanup job: {e}", exc_info=True)
+
         # 每日运行报告邮件推送任务 - 每天早上 8:30 执行（可配置）
         # 与每日总结任务（8:00 AM）错开 30 分钟，确保数据采集先完成
         try:
@@ -522,6 +564,42 @@ class DataSyncScheduler:
             logger.error(f"DAILY REPORT EMAIL JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
 
+    async def _collect_resource_metrics_job(self) -> None:
+        """NPU 指标采集任务"""
+        logger.info("=" * 60)
+        logger.info("RESOURCE METRICS COLLECT JOB STARTED")
+        logger.info("=" * 60)
+
+        try:
+            from app.services.resource_metrics import ResourceMetricsService
+
+            async with SessionLocal() as db:
+                service = ResourceMetricsService(db)
+                count = await service.collect_snapshot()
+                logger.info(f"RESOURCE METRICS COLLECT JOB COMPLETED - Collected {count} cluster metrics")
+        except Exception as e:
+            logger.error("=" * 60)
+            logger.error(f"RESOURCE METRICS COLLECT JOB FAILED - Error: {e}", exc_info=True)
+            logger.error("=" * 60)
+
+    async def _cleanup_resource_metrics_job(self) -> None:
+        """NPU 指标数据清理任务"""
+        logger.info("=" * 60)
+        logger.info("RESOURCE METRICS CLEANUP JOB STARTED")
+        logger.info("=" * 60)
+
+        try:
+            from app.services.resource_metrics import ResourceMetricsService
+
+            async with SessionLocal() as db:
+                service = ResourceMetricsService(db)
+                deleted = await service.cleanup_old_metrics()
+                logger.info(f"RESOURCE METRICS CLEANUP JOB COMPLETED - Deleted {deleted} old records")
+        except Exception as e:
+            logger.error("=" * 60)
+            logger.error(f"RESOURCE METRICS CLEANUP JOB FAILED - Error: {e}", exc_info=True)
+            logger.error("=" * 60)
+
     def update_daily_summary_schedule(self, enabled: bool, cron_hour: int, cron_minute: int, timezone: str = 'Asia/Shanghai'):
         """
         动态更新每日总结定时任务配置
@@ -552,6 +630,25 @@ class DataSyncScheduler:
                 logger.info("Daily summary task disabled")
         except Exception as e:
             logger.error(f"Failed to update daily summary schedule: {e}", exc_info=True)
+
+    def update_resource_metrics_schedule(self, interval_minutes: int = 1):
+        """
+        动态更新 NPU 指标采集间隔
+
+        Args:
+            interval_minutes: 采集间隔（分钟）
+        """
+        try:
+            self.scheduler.add_job(
+                self._collect_resource_metrics_job,
+                trigger=IntervalTrigger(minutes=interval_minutes),
+                id="resource_metrics_collect",
+                name="Resource Metrics Collect",
+                replace_existing=True,
+            )
+            logger.info(f"Resource metrics collection schedule updated: every {interval_minutes} minutes")
+        except Exception as e:
+            logger.error(f"Failed to update resource metrics schedule: {e}", exc_info=True)
 
     async def trigger_manual_sync(
         self,
