@@ -1,4 +1,4 @@
-import api from './api'
+import api, { longTimeoutApiClient } from './api'
 
 export interface DailyReportConfig {
   smtp_host: string
@@ -78,7 +78,7 @@ export const updateReportConfig = async (data: DailyReportConfigUpdate): Promise
 
 export const triggerReport = async (reportDate?: string): Promise<DailyReportTriggerResponse> => {
   const params = reportDate ? { report_date: reportDate } : {}
-  const response = await api.post<DailyReportTriggerResponse>('/daily-report/trigger', null, { params })
+  const response = await longTimeoutApiClient.post<DailyReportTriggerResponse>('/daily-report/trigger', null, { params })
   return response.data
 }
 
