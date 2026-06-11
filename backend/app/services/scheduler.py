@@ -2,6 +2,7 @@
 数据同步定时任务调度器
 使用 APScheduler 实现定时数据采集
 """
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -15,6 +16,26 @@ from app.services.ci_collector import CICollector
 from app.services.github_client import GitHubClient
 
 logger = logging.getLogger(__name__)
+
+
+def _read_config_from_db(config_key: str) -> dict | None:
+    async def _read():
+        from sqlalchemy import select as sa_select
+        from app.models import ProjectDashboardConfig
+        async with SessionLocal() as db:
+            stmt = sa_select(ProjectDashboardConfig).where(
+                ProjectDashboardConfig.config_key == config_key
+            )
+            result = await db.execute(stmt)
+            row = result.scalar_one_or_none()
+            if row and row.config_value:
+                return dict(row.config_value)
+            return None
+    try:
+        return asyncio.run(_read())
+    except Exception as e:
+        logger.warning(f"Failed to read config '{config_key}' from database: {e}")
+        return None
 
 
 class DataSyncScheduler:
@@ -34,18 +55,11 @@ class DataSyncScheduler:
         from app.models import ProjectDashboardConfig
         from app.db.base import SessionLocal
         
-        timezone_str = 'Asia/Shanghai'  # 默认时区
-        try:
-            with SessionLocal() as db:
-                stmt = select(ProjectDashboardConfig).where(
-                    ProjectDashboardConfig.config_key == 'daily_summary_schedule'
-                )
-                result = db.execute(stmt).scalar_one_or_none()
-                if result and 'timezone' in result.config_value:
-                    timezone_str = result.config_value['timezone']
-                    logger.info(f"Loaded timezone from database: {timezone_str}")
-        except Exception as e:
-            logger.warning(f"Failed to load timezone from database, using default: {timezone_str}. Error: {e}")
+        timezone_str = 'Asia/Shanghai'
+        config_data = _read_config_from_db('daily_summary_schedule')
+        if config_data and 'timezone' in config_data:
+            timezone_str = config_data['timezone']
+            logger.info(f"Loaded timezone from database: {timezone_str}")
         
         self.scheduler = AsyncIOScheduler(
             timezone=timezone_str,
@@ -132,24 +146,11 @@ class DataSyncScheduler:
             from apscheduler.triggers.cron import CronTrigger
 
             # 从数据库读取时区配置，如果数据库未初始化则使用默认值
-            timezone_str = 'Asia/Shanghai'  # 默认时区
-            try:
-                from sqlalchemy import select
-                from app.models import ProjectDashboardConfig
-                from app.db.base import SessionLocal
-                import asyncio
-
-                # 同步方式获取数据库时区配置（阻塞调用，因为调度器初始化是同步的）
-                with SessionLocal() as db:
-                    stmt = select(ProjectDashboardConfig).where(
-                        ProjectDashboardConfig.config_key == 'daily_summary_schedule'
-                    )
-                    result = db.execute(stmt).scalar_one_or_none()
-                    if result and 'timezone' in result.config_value:
-                        timezone_str = result.config_value['timezone']
-                        logger.info(f"Loaded timezone from database: {timezone_str}")
-            except Exception as e:
-                logger.warning(f"Failed to load timezone from database, using default: {timezone_str}. Error: {e}")
+            timezone_str = 'Asia/Shanghai'
+            config_data = _read_config_from_db('daily_summary_schedule')
+            if config_data and 'timezone' in config_data:
+                timezone_str = config_data['timezone']
+                logger.info(f"Loaded timezone from database: {timezone_str}")
 
             cron_hour = getattr(settings, 'DAILY_SUMMARY_CRON_HOUR', 8)
             cron_minute = getattr(settings, 'DAILY_SUMMARY_CRON_MINUTE', 0)
@@ -189,18 +190,9 @@ class DataSyncScheduler:
         try:
             from app.schemas.resource_metrics import RESOURCE_METRICS_CONFIG_KEY
             metrics_interval = 1
-            try:
-                with SessionLocal() as db:
-                    from sqlalchemy import select as sa_select
-                    from app.models import ProjectDashboardConfig
-                    stmt = sa_select(ProjectDashboardConfig).where(
-                        ProjectDashboardConfig.config_key == RESOURCE_METRICS_CONFIG_KEY
-                    )
-                    result = db.execute(stmt).scalar_one_or_none()
-                    if result and result.config_value:
-                        metrics_interval = result.config_value.get("interval_minutes", 1)
-            except Exception as e:
-                logger.warning(f"Failed to load metrics config from database, using default interval {metrics_interval}. Error: {e}")
+            config_data = _read_config_from_db(RESOURCE_METRICS_CONFIG_KEY)
+            if config_data and "interval_minutes" in config_data:
+                metrics_interval = config_data["interval_minutes"]
 
             self.scheduler.add_job(
                 self._collect_resource_metrics_job,
@@ -215,10 +207,10 @@ class DataSyncScheduler:
 
         # NPU 指标数据清理任务 - 每天凌晨 00:00 执行
         try:
-            from apscheduler.triggers.cron import CronTrigger as CronTrigger2
+            from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._cleanup_resource_metrics_job,
-                trigger=CronTrigger2(hour=0, minute=0, timezone=timezone_str),
+                trigger=CronTrigger(hour=0, minute=0, timezone=timezone_str),
                 id="resource_metrics_cleanup",
                 name="Resource Metrics Cleanup",
                 replace_existing=True,
@@ -237,20 +229,9 @@ class DataSyncScheduler:
             report_minute = getattr(settings, 'REPORT_SCHEDULE_MINUTE', 30)
 
             timezone_str = 'Asia/Shanghai'
-            try:
-                from sqlalchemy import select
-                from app.models import ProjectDashboardConfig
-                from app.db.base import SessionLocal
-
-                with SessionLocal() as db:
-                    stmt = select(ProjectDashboardConfig).where(
-                        ProjectDashboardConfig.config_key == 'daily_summary_schedule'
-                    )
-                    result = db.execute(stmt).scalar_one_or_none()
-                    if result and 'timezone' in result.config_value:
-                        timezone_str = result.config_value['timezone']
-            except Exception as e:
-                logger.warning(f"Failed to load timezone from database for report job, using default: {timezone_str}. Error: {e}")
+            report_config = _read_config_from_db('daily_summary_schedule')
+            if report_config and 'timezone' in report_config:
+                timezone_str = report_config['timezone']
 
             if report_enabled:
                 self.scheduler.add_job(

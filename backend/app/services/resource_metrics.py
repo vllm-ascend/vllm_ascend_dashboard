@@ -1,4 +1,4 @@
-import json
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -43,7 +43,10 @@ class ResourceMetricsService:
             return 0
 
         service = ResourceDashboardService()
-        dashboard = await service.build_dashboard(clusters, include_pods=True)
+        dashboard = await asyncio.wait_for(
+            service.build_dashboard(clusters, include_pods=True),
+            timeout=30,
+        )
 
         count = 0
         now = datetime.now(UTC)
@@ -125,19 +128,7 @@ class ResourceMetricsService:
             else:
                 aggregated = self._aggregate_metrics(raw_metrics, granularity_minutes)
 
-            points = [
-                {
-                    "collected_at": m.collected_at if hasattr(m, "collected_at") else m["collected_at"],
-                    "npu_utilization": m.npu_utilization if hasattr(m, "npu_utilization") else m["npu_utilization"],
-                    "npu_total": m.npu_total if hasattr(m, "npu_total") else m["npu_total"],
-                    "npu_used": m.npu_used if hasattr(m, "npu_used") else m["npu_used"],
-                    "npu_available": m.npu_available if hasattr(m, "npu_available") else m["npu_available"],
-                    "executing_pods_count": m.executing_pods_count if hasattr(m, "executing_pods_count") else m["executing_pods_count"],
-                    "pr_count": m.pr_count if hasattr(m, "pr_count") else m["pr_count"],
-                    "top_pods": m.top_pods_json if hasattr(m, "top_pods_json") else m.get("top_pods", []),
-                }
-                for m in aggregated
-            ]
+            points = [self._normalize_metric(m) for m in aggregated]
 
             result_clusters.append({
                 "cluster_id": cluster.id,
@@ -178,6 +169,20 @@ class ResourceMetricsService:
             })
 
         return result
+
+    def _normalize_metric(self, m: ResourceNpuMetrics | dict) -> dict:
+        if isinstance(m, ResourceNpuMetrics):
+            return {
+                "collected_at": m.collected_at,
+                "npu_utilization": m.npu_utilization,
+                "npu_total": m.npu_total,
+                "npu_used": m.npu_used,
+                "npu_available": m.npu_available,
+                "executing_pods_count": m.executing_pods_count,
+                "pr_count": m.pr_count,
+                "top_pods": m.top_pods_json or [],
+            }
+        return m
 
     def _time_bucket(self, dt: datetime, granularity_minutes: int) -> str:
         total_minutes = int(dt.timestamp()) // 60

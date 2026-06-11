@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Button,
   Card,
@@ -47,6 +47,15 @@ function ResourceDashboardConfig() {
 
   const { data: metricsConfig } = useResourceMetricsConfig()
   const updateMetricsMutation = useUpdateResourceMetricsConfig()
+
+  useEffect(() => {
+    if (metricsConfig) {
+      metricsForm.setFieldsValue({
+        interval_minutes: metricsConfig.interval_minutes,
+        retention_days: metricsConfig.retention_days,
+      })
+    }
+  }, [metricsConfig, metricsForm])
 
   const createMutation = useMutation({
     mutationFn: createResourceCluster,

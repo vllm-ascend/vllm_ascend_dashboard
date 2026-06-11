@@ -292,10 +292,10 @@ class DailyReportService:
         report_config = await self._get_report_config()
 
         smtp_host = report_config.get("smtp_host", "")
-        smtp_port = report_config.get("smtp_port", 587)
+        smtp_port = int(report_config.get("smtp_port", 587))
         smtp_username = report_config.get("smtp_username", "")
         smtp_password = report_config.get("smtp_password", "")
-        smtp_use_tls = report_config.get("smtp_use_tls", True)
+        smtp_use_tls = bool(report_config.get("smtp_use_tls", True))
         from_email = report_config.get("report_from_email", "")
         recipients_str = report_config.get("report_recipients", "")
         cc_str = report_config.get("report_cc_recipients", "")

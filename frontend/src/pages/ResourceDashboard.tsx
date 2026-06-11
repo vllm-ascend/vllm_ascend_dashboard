@@ -178,35 +178,53 @@ function PodTable({ data }: { data: ResourcePodInfo[] }) {
 function NpuTrendTooltipContent({ active, payload, label }: any) {
   if (!active || !payload || payload.length === 0) return null
 
-  const utilizationData = payload.find((p: any) => p.dataKey === 'npu_utilization')
-  const podsData = payload.find((p: any) => p.dataKey === 'executing_pods_count')
-  const prData = payload.find((p: any) => p.dataKey === 'pr_count')
-
-  const topPods: TopPodInfo[] = utilizationData?.payload?.top_pods || []
+  const clusterEntries: any[] = []
+  for (const p of payload) {
+    const clusterId = p.dataKey?.replace(/^(npu_utilization|executing_pods_count|pr_count)_/, '')
+    if (!clusterId) continue
+    const existing = clusterEntries.find((e: any) => e.clusterId === clusterId)
+    if (!existing) {
+      clusterEntries.push({ clusterId, clusterName: p.payload?.[`cluster_name_${clusterId}`], entries: [p] })
+    } else {
+      existing.entries.push(p)
+    }
+  }
 
   return (
-    <div style={{ background: '#fff', border: '1px solid #eee', padding: 12, borderRadius: 4, maxWidth: 400 }}>
+    <div style={{ background: '#fff', border: '1px solid #eee', padding: 12, borderRadius: 4, maxWidth: 500 }}>
       <Text strong>{dayjs(label).format('YYYY-MM-DD HH:mm')}</Text>
-      <div style={{ marginTop: 8 }}>
-        {utilizationData && <div style={{ color: utilizationData.color }}>NPU 利用率: {utilizationData.value.toFixed(1)}%</div>}
-        {podsData && <div style={{ color: podsData.color }}>执行中 Pod: {podsData.value}</div>}
-        {prData && <div style={{ color: prData.color }}>PR 数量: {prData.value}</div>}
-      </div>
-      {topPods.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>Top 5 Pod:</Text>
-          <ul style={{ margin: 0, padding: '4px 0 0 16px', fontSize: 12 }}>
-            {topPods.map((pod: TopPodInfo, i: number) => (
-              <li key={i}>
-                {pod.name} ({formatNpu(pod.npu)})
-                {pod.pr_number && pod.pr_url && (
-                  <a href={pod.pr_url} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>#{pod.pr_number}</a>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {clusterEntries.map(({ clusterId, clusterName, entries }: any) => {
+        const utilEntry = entries.find((e: any) => e.dataKey.startsWith('npu_utilization_'))
+        const podsEntry = entries.find((e: any) => e.dataKey.startsWith('executing_pods_count_'))
+        const prEntry = entries.find((e: any) => e.dataKey.startsWith('pr_count_'))
+        const topPods: TopPodInfo[] = utilEntry?.payload?.[`top_pods_${clusterId}`] || []
+
+        return (
+          <div key={clusterId} style={{ marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
+            <Text strong style={{ fontSize: 13 }}>{clusterName || `集群 ${clusterId}`}</Text>
+            <div style={{ fontSize: 12 }}>
+              {utilEntry && <div style={{ color: utilEntry.color }}>NPU 利用率: {utilEntry.value.toFixed(1)}%</div>}
+              {podsEntry && <div style={{ color: podsEntry.color }}>执行中 Pod: {podsEntry.value}</div>}
+              {prEntry && <div style={{ color: prEntry.color }}>PR 数量: {prEntry.value}</div>}
+            </div>
+            {topPods.length > 0 && (
+              <div style={{ marginTop: 4 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>Top 5 Pod:</Text>
+                <ul style={{ margin: 0, padding: '2px 0 0 14px', fontSize: 11 }}>
+                  {topPods.map((pod: TopPodInfo, i: number) => (
+                    <li key={i}>
+                      {pod.name} ({formatNpu(pod.npu)})
+                      {pod.pr_number && pod.pr_url && (
+                        <a href={pod.pr_url} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>#{pod.pr_number}</a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
