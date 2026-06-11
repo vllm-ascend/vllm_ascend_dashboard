@@ -36,6 +36,9 @@ __all__ = [
     "KubernetesClusterTestResponse", "ResourceQuantity", "ClusterResourceSummary",
     "ResourcePodInfo", "ResourceDashboardResponse",
     "StaleIssue", "PRActionRequest", "TagComparisonRequest", "TagComparisonResult", "CommitInfo",
+    # Resource Metrics
+    "NpuMetricPoint", "ClusterNpuMetrics", "NpuMetricsResponse",
+    "ResourceMetricsConfigResponse", "ResourceMetricsConfigUpdate", "RESOURCE_METRICS_CONFIG_KEY",
     # Daily Summary
     "GenerateSummaryRequest", "FetchDataRequest", "DailySummaryResponse", "DailySummaryListResponse",
     "DailySummaryListItem", "FetchDataResponse", "GenerateSummaryResponse",
@@ -719,4 +722,13 @@ from .resource_dashboard import (
     ResourceNodeInfo,
     ResourcePodInfo,
     ResourceQuantity,
+)
+
+from .resource_metrics import (
+    NpuMetricPoint,
+    ClusterNpuMetrics,
+    NpuMetricsResponse,
+    ResourceMetricsConfigResponse,
+    ResourceMetricsConfigUpdate,
+    RESOURCE_METRICS_CONFIG_KEY,
 )

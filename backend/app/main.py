@@ -20,6 +20,7 @@ from app.api.v1 import (
     performance,
     project_dashboard,
     resource_dashboard,
+    resource_metrics,
     system_config,
     users,
     workflows,
@@ -194,6 +195,7 @@ def create_app() -> FastAPI:
     app.include_router(system_config.router, prefix="/api/v1/system/config", tags=["系统配置"])
     app.include_router(project_dashboard.router, prefix="/api/v1/project-dashboard", tags=["项目看板"])
     app.include_router(resource_dashboard.router, prefix="/api/v1/resource-dashboard", tags=["资源看板"])
+    app.include_router(resource_metrics.router, prefix="/api/v1/resource-dashboard", tags=["资源看板"])
     app.include_router(daily_report.router, prefix="/api/v1", tags=["每日运行报告"])
 
     @app.get("/health")
