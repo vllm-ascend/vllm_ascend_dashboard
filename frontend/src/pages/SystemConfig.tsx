@@ -42,6 +42,8 @@ import {
   ExperimentOutlined,
   MergeOutlined,
   PlusOutlined,
+  RocketOutlined,
+  CodeOutlined,
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCurrentUser } from '../hooks/useCurrentUser'
@@ -58,6 +60,7 @@ import api from '../services/api'
 import { formatTimezone } from '../utils/timezone'
 import { useSyncProgress } from '../hooks/useCI'
 import { getGitCacheStatus, syncGitCache, type GitCacheStatus } from '../services/systemConfig'
+import { listSkills, getSkillDetail, refreshSkills, type SkillInfo, type SkillDetail } from '../services/skills'
 import {
   getDashboardConfig,
   updateLocalCache,
@@ -1216,6 +1219,166 @@ function SystemConfig() {
     </Card>
   )
 
+  const [skillsList, setSkillsList] = useState<SkillInfo[]>([])
+  const [skillsLoading, setSkillsLoading] = useState(false)
+  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null)
+  const [skillDetail, setSkillDetail] = useState<SkillDetail | null>(null)
+  const [skillDetailLoading, setSkillDetailLoading] = useState(false)
+  const [skillRefreshing, setSkillRefreshing] = useState(false)
+
+  const loadSkills = async () => {
+    setSkillsLoading(true)
+    try {
+      const data = await listSkills()
+      setSkillsList(data)
+    } catch (error) {
+      message.error('加载 Skills 失败')
+    } finally {
+      setSkillsLoading(false)
+    }
+  }
+
+  const loadSkillDetail = async (name: string) => {
+    setSelectedSkillName(name)
+    setSkillDetailLoading(true)
+    try {
+      const data = await getSkillDetail(name)
+      setSkillDetail(data)
+    } catch (error) {
+      message.error('加载 Skill 详情失败')
+    } finally {
+      setSkillDetailLoading(false)
+    }
+  }
+
+  const handleRefreshSkills = async () => {
+    setSkillRefreshing(true)
+    try {
+      const result = await refreshSkills()
+      message.success(result.message)
+      await loadSkills()
+    } catch (error) {
+      message.error('刷新 Skills 失败')
+    } finally {
+      setSkillRefreshing(false)
+    }
+  }
+
+  useEffect(() => {
+    if (activeTabKey === 'skills') {
+      loadSkills()
+    }
+  }, [activeTabKey])
+
+  const renderSkillsTab = () => (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card
+        title="已安装的 Skills"
+        extra={
+          <Button
+            icon={<ReloadOutlined />}
+            loading={skillRefreshing}
+            onClick={handleRefreshSkills}
+          >
+            刷新
+          </Button>
+        }
+      >
+        <Table
+          dataSource={skillsList}
+          loading={skillsLoading}
+          rowKey="name"
+          pagination={false}
+          columns={[
+            {
+              title: 'Skill 名称',
+              dataIndex: 'name',
+              key: 'name',
+              render: (name: string) => (
+                <Button type="link" onClick={() => loadSkillDetail(name)} style={{ padding: 0 }}>
+                  <CodeOutlined style={{ marginRight: 4 }} />
+                  {name}
+                </Button>
+              ),
+            },
+            {
+              title: '描述',
+              dataIndex: 'description',
+              key: 'description',
+              ellipsis: true,
+            },
+            {
+              title: '关联 Scope',
+              dataIndex: 'scope',
+              key: 'scope',
+              render: (scope: string | null) => scope ? <Tag color="blue">{scope}</Tag> : '-',
+            },
+            {
+              title: '内容长度',
+              dataIndex: 'content_length',
+              key: 'content_length',
+              render: (len: number) => len > 0 ? `${len} 字符` : '-',
+            },
+            {
+              title: '加载时间',
+              dataIndex: 'loaded_at',
+              key: 'loaded_at',
+              render: (at: string) => at ? dayjs(at).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+          ]}
+        />
+        {skillsList.length === 0 && !skillsLoading && (
+          <Alert
+            message="未安装任何 Skill"
+            description="请将 Skill 文件（SKILL.md）放到 data/skills/<skill_name>/ 目录下，然后点击刷新按钮加载"
+            type="info"
+            showIcon
+            style={{ marginTop: 16 }}
+          />
+        )}
+      </Card>
+
+      {selectedSkillName && (
+        <Card
+          title={<Space><CodeOutlined /> Skill 详情: {selectedSkillName}</Space>}
+          loading={skillDetailLoading}
+        >
+          {skillDetail && (
+            <Descriptions column={1} bordered size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="名称">{skillDetail.name}</Descriptions.Item>
+              <Descriptions.Item label="描述">{skillDetail.description}</Descriptions.Item>
+              <Descriptions.Item label="关联 Scope">
+                {skillDetail.scope ? <Tag color="blue">{skillDetail.scope}</Tag> : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="文件路径">
+                <Text copyable style={{ fontFamily: 'monospace', fontSize: 12 }}>{skillDetail.file_path}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="加载时间">{skillDetail.loaded_at}</Descriptions.Item>
+            </Descriptions>
+          )}
+          {skillDetail?.content && (
+            <div style={{ marginTop: 16 }}>
+              <Text strong style={{ marginBottom: 8, display: 'block' }}>Skill 内容（SKILL.md）</Text>
+              <div style={{
+                padding: 16,
+                background: '#fafafa',
+                borderRadius: 8,
+                maxHeight: '500px',
+                overflowY: 'auto',
+                fontSize: 13,
+                fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap',
+                lineHeight: 1.6,
+              }}>
+                {skillDetail.content}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+    </Space>
+  )
+
   const tabItems = [
     {
       key: 'system',
@@ -1256,6 +1419,16 @@ function SystemConfig() {
         </Space>
       ),
       children: null, // Will be added separately
+    },
+    {
+      key: 'skills',
+      label: (
+        <Space>
+          <RocketOutlined />
+          Skills 管理
+        </Space>
+      ),
+      children: renderSkillsTab(),
     },
   ]
 
