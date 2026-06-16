@@ -196,6 +196,38 @@ function WorkflowDetail() {
       },
     },
     {
+      title: '操作',
+      key: 'action',
+      width: 160,
+      render: (_: any, record: any) => {
+        const isFailed = record.conclusion === 'failure' || record.conclusion === 'cancelled'
+        return (
+          <Space>
+            <Button type="link" icon={<EyeOutlined />} onClick={() => navigate(`/ci/jobs/${record.job_id}`)} style={{ padding: 0 }}>
+              详情
+            </Button>
+            {isFailed && (
+              analysisMap.get(record.job_id) ? (
+                <Button type="link" icon={<FileSearchOutlined />} onClick={() => handleViewAnalysis(record.job_id)} style={{ padding: 0 }}>
+                  分析报告
+                </Button>
+              ) : (
+                <Button
+                  type="link"
+                  icon={<RobotOutlined />}
+                  loading={analyzeMutation.isPending && analyzeMutation.variables?.jobId === record.job_id}
+                  onClick={() => handleQuickAnalyze(record.job_id)}
+                  style={{ padding: 0 }}
+                >
+                  分析
+                </Button>
+              )
+            )}
+          </Space>
+        )
+      },
+    },
+    {
       title: '问题分类',
       key: 'problem_category',
       width: 100,
@@ -263,38 +295,6 @@ function WorkflowDetail() {
           <Space>
             <UserOutlined />
             <Text>{ownerInfo.owner}</Text>
-          </Space>
-        )
-      },
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 160,
-      render: (_: any, record: any) => {
-        const isFailed = record.conclusion === 'failure' || record.conclusion === 'cancelled'
-        return (
-          <Space>
-            <Button type="link" icon={<EyeOutlined />} onClick={() => navigate(`/ci/jobs/${record.job_id}`)} style={{ padding: 0 }}>
-              详情
-            </Button>
-            {isFailed && (
-              analysisMap.get(record.job_id) ? (
-                <Button type="link" icon={<FileSearchOutlined />} onClick={() => handleViewAnalysis(record.job_id)} style={{ padding: 0 }}>
-                  分析报告
-                </Button>
-              ) : (
-                <Button
-                  type="link"
-                  icon={<RobotOutlined />}
-                  loading={analyzeMutation.isPending && analyzeMutation.variables?.jobId === record.job_id}
-                  onClick={() => handleQuickAnalyze(record.job_id)}
-                  style={{ padding: 0 }}
-                >
-                  分析
-                </Button>
-              )
-            )}
           </Space>
         )
       },
