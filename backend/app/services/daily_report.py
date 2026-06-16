@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.email import send_email
+from app.core.email import get_smtp_config, send_email
 from app.models import CIResult, ModelConfig, ModelReport, PerformanceData, ProjectDashboardConfig, DailyReportHistory
 from app.services.daily_data_file_store import DailyDataFileStore
 
@@ -290,13 +290,14 @@ class DailyReportService:
             DailyReportHistory 记录
         """
         report_config = await self._get_report_config()
+        smtp_config = await get_smtp_config(self.db)
 
-        smtp_host = report_config.get("smtp_host", "")
-        smtp_port = int(report_config.get("smtp_port", 587))
-        smtp_username = report_config.get("smtp_username", "")
-        smtp_password = report_config.get("smtp_password", "")
-        smtp_use_tls = bool(report_config.get("smtp_use_tls", True))
-        from_email = report_config.get("report_from_email", "")
+        smtp_host = smtp_config.get("smtp_host", "")
+        smtp_port = int(smtp_config.get("smtp_port", 587))
+        smtp_username = smtp_config.get("smtp_username", "")
+        smtp_password = smtp_config.get("smtp_password", "")
+        smtp_use_tls = bool(smtp_config.get("smtp_use_tls", True))
+        from_email = smtp_config.get("from_email", "")
         recipients_str = report_config.get("report_recipients", "")
         cc_str = report_config.get("report_cc_recipients", "")
 

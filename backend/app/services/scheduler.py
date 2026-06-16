@@ -558,6 +558,16 @@ class DataSyncScheduler:
                 service = ResourceMetricsService(db)
                 count = await service.collect_snapshot()
                 logger.info(f"RESOURCE METRICS COLLECT JOB COMPLETED - Collected {count} cluster metrics")
+
+                # 评估告警规则
+                try:
+                    from app.services.alert_evaluator import AlertEvaluator
+                    evaluator = AlertEvaluator(db)
+                    alerts_triggered = await evaluator.evaluate_all_rules()
+                    if alerts_triggered > 0:
+                        logger.info(f"Alert evaluation: {alerts_triggered} alert(s) triggered")
+                except Exception as alert_exc:
+                    logger.error(f"Alert evaluation failed: {alert_exc}", exc_info=True)
         except Exception as e:
             logger.error("=" * 60)
             logger.error(f"RESOURCE METRICS COLLECT JOB FAILED - Error: {e}", exc_info=True)

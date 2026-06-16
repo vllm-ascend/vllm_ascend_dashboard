@@ -25,6 +25,8 @@ __all__ = [
     "ModelSyncConfig", "ProjectDashboardConfig", "KubernetesClusterConfig",
     "DailyPR", "DailyIssue", "DailyCommit", "DailySummary", "LLMProviderConfig",
     "DailyReportHistory", "ResourceNpuMetrics",
+    "ResourceNodeMetrics",
+    "AlertRule", "AlertConditionGroup", "AlertCondition", "AlertHistory",
 ]
 
 
@@ -286,6 +288,89 @@ class ResourceNpuMetrics(Base):
     pr_count = Column(Integer, default=0)
     top_pods_json = Column(JSON)
     collected_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), index=True)
+
+
+class ResourceNodeMetrics(Base):
+    """资源节点指标采集表"""
+    __tablename__ = "resource_node_metrics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cluster_id = Column(Integer, ForeignKey("kubernetes_cluster_configs.id"), nullable=False, index=True)
+    cluster_name = Column(String(100), nullable=False)
+    node_name = Column(String(250), nullable=False, index=True)
+    cpu_cores_total = Column(Float, default=0)
+    cpu_cores_used = Column(Float, default=0)
+    cpu_cores_available = Column(Float, default=0)
+    cpu_utilization = Column(Float, default=0)
+    memory_bytes_total = Column(Float, default=0)
+    memory_bytes_used = Column(Float, default=0)
+    memory_bytes_available = Column(Float, default=0)
+    memory_utilization = Column(Float, default=0)
+    npu_total = Column(Float, default=0)
+    npu_used = Column(Float, default=0)
+    npu_available = Column(Float, default=0)
+    npu_utilization = Column(Float, default=0)
+    executing_pods_count = Column(Integer, default=0)
+    collected_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), index=True)
+
+
+class AlertRule(Base):
+    """告警规则表（规则头）"""
+    __tablename__ = "alert_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    cluster_id = Column(Integer, ForeignKey("kubernetes_cluster_configs.id"), nullable=True)
+    node_name = Column(String(250), nullable=True)
+    enabled = Column(Boolean, default=True, index=True)
+    notify_email = Column(Boolean, default=True)
+    notification_email = Column(String(100), nullable=True)
+    last_triggered_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class AlertConditionGroup(Base):
+    """告警条件组表（组间 AND）"""
+    __tablename__ = "alert_condition_groups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rule_id = Column(Integer, ForeignKey("alert_rules.id"), nullable=False, index=True)
+    logic = Column(String(10), nullable=False, default="AND")  # AND / OR
+    display_order = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+
+
+class AlertCondition(Base):
+    """告警条件表"""
+    __tablename__ = "alert_conditions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(Integer, ForeignKey("alert_condition_groups.id"), nullable=False, index=True)
+    metric_field = Column(String(50), nullable=False)
+    operator = Column(String(10), nullable=False)
+    threshold = Column(Float, nullable=False)
+    is_exclude = Column(Boolean, default=False)
+    display_order = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+
+
+class AlertHistory(Base):
+    """告警触发历史表"""
+    __tablename__ = "alert_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rule_id = Column(Integer, ForeignKey("alert_rules.id"), nullable=False, index=True)
+    rule_name = Column(String(100), nullable=False)
+    actual_value = Column(Float, nullable=False)
+    cluster_id = Column(Integer, nullable=True)
+    cluster_name = Column(String(100), nullable=True)
+    node_name = Column(String(250), nullable=True)
+    condition_details = Column(JSON, nullable=True)
+    triggered_at = Column(TIMESTAMP, nullable=False, default=lambda: datetime.now(UTC), index=True)
+    notification_sent = Column(Boolean, default=False)
+    notification_error = Column(Text, nullable=True)
 
 
 # 导入每日总结相关模型

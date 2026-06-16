@@ -6,7 +6,12 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import KubernetesClusterConfig, ProjectDashboardConfig, ResourceNpuMetrics
+from app.models import (
+    KubernetesClusterConfig,
+    ProjectDashboardConfig,
+    ResourceNodeMetrics,
+    ResourceNpuMetrics,
+)
 from app.schemas.resource_metrics import RESOURCE_METRICS_CONFIG_KEY
 from app.services.resource_dashboard import ResourceDashboardService
 
@@ -84,6 +89,34 @@ class ResourceMetricsService:
             )
             self.db.add(metric)
             count += 1
+
+            # 存储节点级指标
+            for node in (cluster_summary.node_resources or []):
+                if node.total.npu <= 0:
+                    continue
+                cpu_pct = round(node.used.cpu_cores / node.total.cpu_cores * 100, 2) if node.total.cpu_cores > 0 else 0
+                mem_pct = round(node.used.memory_bytes / node.total.memory_bytes * 100, 2) if node.total.memory_bytes > 0 else 0
+                npu_pct = round(node.used.npu / node.total.npu * 100, 2) if node.total.npu > 0 else 0
+                node_metric = ResourceNodeMetrics(
+                    cluster_id=cluster_summary.cluster_id,
+                    cluster_name=cluster_summary.cluster_name,
+                    node_name=node.node_name,
+                    cpu_cores_total=node.total.cpu_cores,
+                    cpu_cores_used=node.used.cpu_cores,
+                    cpu_cores_available=node.available.cpu_cores,
+                    cpu_utilization=cpu_pct,
+                    memory_bytes_total=node.total.memory_bytes,
+                    memory_bytes_used=node.used.memory_bytes,
+                    memory_bytes_available=node.available.memory_bytes,
+                    memory_utilization=mem_pct,
+                    npu_total=node.total.npu,
+                    npu_used=node.used.npu,
+                    npu_available=node.available.npu,
+                    npu_utilization=npu_pct,
+                    executing_pods_count=node.executing_pods_count,
+                    collected_at=now,
+                )
+                self.db.add(node_metric)
 
         await self.db.commit()
         logger.info(f"Collected NPU metrics for {count} clusters")

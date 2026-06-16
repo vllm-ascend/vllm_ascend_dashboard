@@ -36,19 +36,12 @@ function DailyReportConfigPage() {
   const [triggering, setTriggering] = useState(false)
   const [triggerResult, setTriggerResult] = useState<{ success: boolean; message: string } | null>(null)
   const [triggerDate, setTriggerDate] = useState<string>('')
-  const [smtpPasswordVisible, setSmtpPasswordVisible] = useState(false)
 
   const handleSaveConfig = async () => {
     try {
       const values = await configForm.validateFields()
       setSaving(true)
       const update: DailyReportConfigUpdate = {}
-      if (values.smtp_host !== config?.smtp_host) update.smtp_host = values.smtp_host
-      if (values.smtp_port !== config?.smtp_port) update.smtp_port = values.smtp_port
-      if (values.smtp_username !== config?.smtp_username) update.smtp_username = values.smtp_username
-      if (values.smtp_password) update.smtp_password = values.smtp_password
-      if (values.smtp_use_tls !== config?.smtp_use_tls) update.smtp_use_tls = values.smtp_use_tls
-      if (values.report_from_email !== config?.report_from_email) update.report_from_email = values.report_from_email
       if (values.report_recipients !== config?.report_recipients) update.report_recipients = values.report_recipients
       if (values.report_cc_recipients !== config?.report_cc_recipients) update.report_cc_recipients = values.report_cc_recipients
       if (values.report_subject_template !== config?.report_subject_template) update.report_subject_template = values.report_subject_template
@@ -60,8 +53,7 @@ function DailyReportConfigPage() {
       }
 
       await updateConfig.mutateAsync(update)
-      Modal.success({ title: '保存成功', content: '报告邮件配置已更新' })
-      setSmtpPasswordVisible(false)
+      Modal.success({ title: '保存成功', content: '报告配置已更新' })
     } catch {
     } finally {
       setSaving(false)
@@ -256,49 +248,20 @@ function DailyReportConfigPage() {
             initialValues={config || {}}
             onFinish={handleSaveConfig}
           >
-            <Divider orientation="left" plain>SMTP 服务器</Divider>
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item label="SMTP 主机" name="smtp_host" rules={[{ required: true, message: '请输入 SMTP 主机地址' }]}>
-                  <Input placeholder="smtp.example.com" />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label="端口" name="smtp_port" rules={[{ required: true, message: '请输入端口' }]}>
-                  <InputNumber min={1} max={65535} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item label="启用 TLS" name="smtp_use_tls" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item label="SMTP 用户名" name="smtp_username">
-                  <Input placeholder="your_email@example.com" />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item label="SMTP 密码" name="smtp_password">
-                  <Input.Password
-                    placeholder={config?.smtp_password_set ? '已设置，留空则不修改' : '请输入密码'}
-                    visibilityToggle
-                  />
-                </Form.Item>
-                {config?.smtp_password_set && (
-                  <div className="smtp-password-hint" style={{ marginTop: -8, marginBottom: 16 }}>
-                    <KeyOutlined /> 密码已设置（不在响应中返回明文，与 LLM API Key 设计一致）
-                  </div>
-                )}
-              </Col>
-            </Row>
+            <Alert
+              type="info"
+              showIcon
+              icon={<InfoCircleOutlined />}
+              message={
+                <span>
+                  SMTP 邮件服务器配置已提取至独立页面，每日报告和告警规则共用。
+                  <a href="/admin/smtp-config" style={{ marginLeft: 8 }}>前往配置 →</a>
+                </span>
+              }
+              style={{ marginBottom: 16 }}
+            />
 
             <Divider orientation="left" plain>邮件内容</Divider>
-            <Form.Item label="发件人地址" name="report_from_email" rules={[{ required: true, message: '请输入发件人地址' }, { type: 'email', message: '请输入有效邮箱' }]}>
-              <Input placeholder="report@example.com" />
-            </Form.Item>
 <Form.Item label="收件人" name="report_recipients" rules={[{ required: true, message: '请输入收件人' }]}>
                   <Input placeholder="admin1@example.com, admin2@example.com" />
                 </Form.Item>

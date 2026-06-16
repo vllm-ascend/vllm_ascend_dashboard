@@ -4,14 +4,39 @@ SMTP 邮件发送工具（异步）
 支持两种 TLS 模式：
 - Port 465: 隐式 TLS (SMTPS)，连接即加密
 - Port 587: 显式 STARTTLS，先明文连接再升级加密
+
+SMTP 配置统一存储在 ProjectDashboardConfig 表，config_key='smtp_config'。
+通过 get_smtp_config(db) 获取，供每日报告和告警规则共用。
 """
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import aiosmtplib
+from sqlalchemy import select
+
+from app.models import ProjectDashboardConfig
 
 logger = logging.getLogger(__name__)
+
+SMTP_CONFIG_KEY = "smtp_config"
+
+DEFAULT_SMTP_CONFIG = {
+    "smtp_host": "",
+    "smtp_port": 587,
+    "smtp_username": "",
+    "smtp_password": "",
+    "smtp_use_tls": True,
+    "from_email": "",
+}
+
+
+async def get_smtp_config(db) -> dict:
+    """从数据库读取 SMTP 配置（供每日报告和告警规则共用）"""
+    stmt = select(ProjectDashboardConfig).where(ProjectDashboardConfig.config_key == SMTP_CONFIG_KEY)
+    result = await db.execute(stmt)
+    row = result.scalar_one_or_none()
+    return dict(row.config_value) if (row and row.config_value) else dict(DEFAULT_SMTP_CONFIG)
 
 
 async def send_email(
