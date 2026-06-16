@@ -1,16 +1,21 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Table, Space, Tag, Typography, Button, Descriptions, Alert, Select } from 'antd'
+import { Card, Table, Space, Tag, Typography, Button, Descriptions, Alert, Select, Tooltip, Spin } from 'antd'
 import {
   ArrowLeftOutlined,
   EyeOutlined,
   GithubOutlined,
   ReloadOutlined,
+  FileSearchOutlined,
+  RobotOutlined,
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import api from '../services/api'
 import { formatDuration, renderStatusTag, renderConclusionTag } from '../utils/ciRenderers'
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
+import { useFailureAnalysisList, useAnalyzeFailedJob } from '../hooks/useFailureAnalysis'
+import { PROBLEM_CATEGORY_MAP, ANALYSIS_STATUS_MAP } from '../services/failureAnalysis'
+import { FailureAnalysisDetailModal } from '../components/FailureAnalysisDetailModal'
 
 const { Text, Title } = Typography
 
@@ -36,8 +41,10 @@ function JobRuns() {
 
   const [conclusionFilter, setConclusionFilter] = useState<string[]>([])
   const [daysFilter, setDaysFilter] = useState<number | 'all'>(7)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [selectedJobId, setSelectedJobId] = useState<number | null>(null)
+  const [selectedAnalysis, setSelectedAnalysis] = useState<any>(null)
 
-  // 获取 job 的所有运行记录（带时间窗口过滤）
   const { data: jobRuns, isLoading: runsLoading, refetch } = useQuery<JobRun[]>({
     queryKey: ['job-runs', workflowName, jobName, daysFilter],
     queryFn: async () => {
@@ -53,7 +60,6 @@ function JobRuns() {
     enabled: !!workflowName && !!jobName,
   })
 
-  // 获取责任人信息
   const { data: jobOwners } = useQuery<Array<{ workflow_name: string; job_name: string; owner: string; display_name: string | null; email: string | null }>>({
     queryKey: ['job-owners', { workflow_name: workflowName }],
     queryFn: async () => {
@@ -64,11 +70,37 @@ function JobRuns() {
     },
   })
 
+  const { data: analysisData } = useFailureAnalysisList({
+    workflow_name: workflowName || undefined,
+    days_back: daysFilter === 'all' ? 90 : (daysFilter as number),
+  })
+
+  const analyzeMutation = useAnalyzeFailedJob()
+
   const jobOwner = jobOwners?.find(
     (jo) => jo.workflow_name === workflowName && jo.job_name === jobName
   )
 
-  // 表格列定义
+  const analysisMap = new Map<number, any>()
+  if (analysisData?.items) {
+    for (const item of analysisData.items) {
+      if (item.job_name === jobName) {
+        analysisMap.set(item.job_id, item)
+      }
+    }
+  }
+
+  const handleViewAnalysis = (jobId: number) => {
+    const analysis = analysisMap.get(jobId)
+    setSelectedJobId(jobId)
+    setSelectedAnalysis(analysis || null)
+    setModalOpen(true)
+  }
+
+  const handleQuickAnalyze = (jobId: number) => {
+    analyzeMutation.mutate({ jobId, force: false })
+  }
+
   const columns = [
     {
       title: 'Run ID',
@@ -149,6 +181,63 @@ function JobRuns() {
       render: (runnerName: string | null) => runnerName || '-',
     },
     {
+      title: '问题分类',
+      key: 'problem_category',
+      width: 100,
+      render: (_: any, record: JobRun) => {
+        const analysis = analysisMap.get(record.job_id)
+        if (!analysis || !analysis.problem_category) return '-'
+        const catInfo = PROBLEM_CATEGORY_MAP[analysis.problem_category] || { color: '#64748d', label: analysis.problem_category }
+        return <Tag color={catInfo.color}>{catInfo.label}</Tag>
+      },
+    },
+    {
+      title: '根因摘要',
+      key: 'root_cause_summary',
+      width: 200,
+      ellipsis: true,
+      render: (_: any, record: JobRun) => {
+        const analysis = analysisMap.get(record.job_id)
+        if (!analysis?.root_cause_summary) return '-'
+        return (
+          <Tooltip title={analysis.root_cause_summary}>
+            <Text ellipsis style={{ maxWidth: 180 }}>{analysis.root_cause_summary}</Text>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      title: '改进建议',
+      key: 'improvement_measures_summary',
+      width: 200,
+      ellipsis: true,
+      render: (_: any, record: JobRun) => {
+        const analysis = analysisMap.get(record.job_id)
+        if (!analysis?.improvement_measures_summary) return '-'
+        return (
+          <Tooltip title={analysis.improvement_measures_summary}>
+            <Text ellipsis style={{ maxWidth: 180 }}>{analysis.improvement_measures_summary}</Text>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      title: '分析状态',
+      key: 'analysis_status',
+      width: 100,
+      render: (_: any, record: JobRun) => {
+        const analysis = analysisMap.get(record.job_id)
+        if (!analysis) {
+          if (record.conclusion === 'failure' || record.conclusion === 'cancelled') {
+            return <Tag color="#64748d">未分析</Tag>
+          }
+          return '-'
+        }
+        const statusInfo = ANALYSIS_STATUS_MAP[analysis.analysis_status] || { color: '#64748d', label: analysis.analysis_status }
+        return <Tag color={statusInfo.color}>{statusInfo.label}</Tag>
+      },
+    },
+    {
       title: '开始时间',
       dataIndex: 'started_at',
       key: 'started_at',
@@ -173,20 +262,43 @@ function JobRuns() {
     {
       title: '操作',
       key: 'action',
-      width: 100,
+      width: 160,
       render: (_: any, record: JobRun) => (
-        <Button
-          type="link"
-          icon={<EyeOutlined />}
-          onClick={() => navigate(`/ci/jobs/${record.job_id}`)}
-        >
-          查看详情
-        </Button>
+        <Space>
+          <Button
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={() => navigate(`/ci/jobs/${record.job_id}`)}
+          >
+            查看详情
+          </Button>
+          {(record.conclusion === 'failure' || record.conclusion === 'cancelled') && (
+            <Space>
+              {analysisMap.get(record.job_id) ? (
+                <Button
+                  type="link"
+                  icon={<FileSearchOutlined />}
+                  onClick={() => handleViewAnalysis(record.job_id)}
+                >
+                  查看分析
+                </Button>
+              ) : (
+                <Button
+                  type="link"
+                  icon={<RobotOutlined />}
+                  loading={analyzeMutation.isPending && analyzeMutation.variables?.jobId === record.job_id}
+                  onClick={() => handleQuickAnalyze(record.job_id)}
+                >
+                  分析
+                </Button>
+              )}
+            </Space>
+          )}
+        </Space>
       ),
     },
   ]
 
-  // 统计信息
   const stats = {
     total: jobRuns?.length || 0,
     success: jobRuns?.filter((j) => j.conclusion === 'success').length || 0,
@@ -209,7 +321,6 @@ function JobRuns() {
 
   return (
     <div style={{ padding: 24 }}>
-      {/* 返回按钮和标题 */}
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Space>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/ci?tab=job')}>
@@ -236,7 +347,6 @@ function JobRuns() {
         Job 运行历史
       </Title>
 
-      {/* Job 基本信息 */}
       <Card style={{ marginBottom: 24 }}>
         <Descriptions column={4} bordered>
           <Descriptions.Item label="Workflow">
@@ -272,7 +382,6 @@ function JobRuns() {
         </Descriptions>
       </Card>
 
-      {/* 统计卡片 */}
       <Card style={{ marginBottom: 24 }}>
         <Space size="large" style={{ justifyContent: 'space-around', width: '100%' }}>
           <div style={{ textAlign: 'center' }}>
@@ -294,7 +403,6 @@ function JobRuns() {
         </Space>
       </Card>
 
-      {/* 运行记录表格 */}
       <Card title="运行记录">
         <Table
           columns={columns}
@@ -306,7 +414,7 @@ function JobRuns() {
             showSizeChanger: false,
             showTotal: (total) => `共 ${total} 条记录`,
           }}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1600 }}
           onChange={(_, filters) => {
             if (filters.conclusion) {
               setConclusionFilter(filters.conclusion as string[])
@@ -314,12 +422,15 @@ function JobRuns() {
               setConclusionFilter([])
             }
           }}
-          onRow={(record: JobRun) => ({
-            onClick: () => navigate(`/ci/jobs/${record.job_id}`),
-            style: { cursor: 'pointer' },
-          })}
         />
       </Card>
+
+      <FailureAnalysisDetailModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        jobId={selectedJobId}
+        existingAnalysis={selectedAnalysis}
+      />
     </div>
   )
 }

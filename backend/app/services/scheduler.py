@@ -219,6 +219,19 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add resource metrics cleanup job: {e}", exc_info=True)
 
+        # 失败分析兜底定时任务 - 每 30 分钟运行
+        try:
+            self.scheduler.add_job(
+                self._failure_analysis_fallback_job,
+                trigger=IntervalTrigger(minutes=30),
+                id="failure_analysis_fallback",
+                name="Failure Analysis Fallback",
+                replace_existing=True,
+            )
+            logger.info("Failure analysis fallback scheduled every 30 minutes")
+        except Exception as e:
+            logger.error(f"Failed to add failure analysis fallback job: {e}", exc_info=True)
+
         # 每日运行报告邮件推送任务 - 每天早上 8:30 执行（可配置）
         # 与每日总结任务（8:00 AM）错开 30 分钟，确保数据采集先完成
         try:
@@ -323,6 +336,11 @@ class DataSyncScheduler:
                 logger.info("=" * 60)
                 logger.info(f"CI DATA SYNC JOB COMPLETED - Collected {collected} runs")
                 logger.info("=" * 60)
+
+                try:
+                    await self._trigger_failure_analysis_after_sync(db)
+                except Exception as fae:
+                    logger.warning(f"Post-sync failure analysis trigger failed: {fae}")
 
             except Exception as e:
                 logger.error("=" * 60)
@@ -544,6 +562,28 @@ class DataSyncScheduler:
             logger.error("=" * 60)
             logger.error(f"DAILY REPORT EMAIL JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
+
+    async def _trigger_failure_analysis_after_sync(self, db):
+        """CI同步完成后触发失败Job分析"""
+        from app.services.failure_analysis import FailureAnalysisService
+        service = FailureAnalysisService()
+        results = await service.analyze_batch(days_back=7, db=db)
+        logger.info(f"Post-sync failure analysis: processed {len(results)} failed jobs")
+
+    async def _failure_analysis_fallback_job(self) -> None:
+        """失败分析兜底定时任务"""
+        logger.info("=" * 60)
+        logger.info("FAILURE ANALYSIS FALLBACK JOB STARTED")
+        logger.info("=" * 60)
+
+        async with SessionLocal() as db:
+            try:
+                from app.services.failure_analysis import FailureAnalysisService
+                service = FailureAnalysisService()
+                results = await service.analyze_batch(days_back=7, db=db)
+                logger.info(f"FAILURE ANALYSIS FALLBACK JOB COMPLETED - processed {len(results)} jobs")
+            except Exception as e:
+                logger.error(f"FAILURE ANALYSIS FALLBACK JOB FAILED - Error: {e}", exc_info=True)
 
     async def _collect_resource_metrics_job(self) -> None:
         """NPU 指标采集任务"""

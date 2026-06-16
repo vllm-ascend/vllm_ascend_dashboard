@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Card, Table, Space, Statistic, Row, Col, Typography, Tabs } from 'antd'
+import { Card, Table, Space, Statistic, Row, Col, Typography, Tabs, Button, message, Modal } from 'antd'
 import {
   GithubOutlined,
   BarChartOutlined,
+  RobotOutlined,
 } from '@ant-design/icons'
 import { useCIStats, useRuns } from '../hooks/useCI'
+import { useAnalyzeBatch } from '../hooks/useFailureAnalysis'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
@@ -68,6 +70,27 @@ function CIBoard() {
     hardware: hardwareFilter.length > 0 ? hardwareFilter[0] : undefined,
     limit: 50,
   })
+
+  const analyzeBatchMutation = useAnalyzeBatch()
+
+  const handleBatchAnalyze = () => {
+    Modal.confirm({
+      title: '批量失败分析',
+      content: '确定要对最近 7 天的失败 Job 进行批量 AI 分析吗？这可能需要较长时间。',
+      okText: '确认',
+      cancelText: '取消',
+      onOk: () => {
+        analyzeBatchMutation.mutate({ daysBack: 7 }, {
+          onSuccess: (data) => {
+            message.success(data.message || '批量分析完成')
+          },
+          onError: (error: any) => {
+            message.error((error as any)?.response?.data?.detail || '批量分析失败')
+          },
+        })
+      },
+    })
+  }
 
   // 表格列定义
   const columns = [
@@ -210,6 +233,13 @@ function CIBoard() {
                       展示各 Workflow 的运行状态和趋势
                     </Text>
                   </div>
+                  <Button
+                    icon={<RobotOutlined />}
+                    loading={analyzeBatchMutation.isPending}
+                    onClick={handleBatchAnalyze}
+                  >
+                    批量失败分析
+                  </Button>
                 </div>
 
                 {/* 统计卡片 */}
