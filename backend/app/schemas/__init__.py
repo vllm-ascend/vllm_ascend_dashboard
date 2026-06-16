@@ -46,6 +46,8 @@ __all__ = [
     "GenerateSummaryRequest", "FetchDataRequest", "DailySummaryResponse", "DailySummaryListResponse",
     "DailySummaryListItem", "FetchDataResponse", "GenerateSummaryResponse",
     "LLMProviderResponse", "DailySummaryConfigResponse",
+    # Failure Analysis
+    "FailureAnalysisResponse", "FailureAnalysisListResponse", "FailureAnalysisAnalyzeRequest",
     # Common
     "Message", "PaginatedResponse",
 ]
@@ -513,6 +515,44 @@ class ModelSyncConfigResponse(ModelSyncConfigBase):
             except (json.JSONDecodeError, TypeError):
                 return None
         return v
+
+
+# ============ Failure Analysis Schemas ============
+
+class FailureAnalysisResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int
+    run_id: int
+    workflow_name: str
+    job_name: str
+    failure_date: datetime
+    failure_fingerprint: str | None = None
+    reused_analysis_id: int | None = None
+    problem_category: str | None = None
+    root_cause_summary: str | None = None
+    improvement_measures_summary: str | None = None
+    report_file_path: str | None = None
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    generation_time_seconds: float | None = None
+    analysis_status: str = "pending"
+    error_message: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class FailureAnalysisListResponse(BaseModel):
+    total: int
+    items: list[FailureAnalysisResponse]
+
+
+class FailureAnalysisAnalyzeRequest(BaseModel):
+    force: bool = False
+    days_back: int = 7
 
 
 # ============ Common Schemas ============

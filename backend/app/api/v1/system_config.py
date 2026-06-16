@@ -927,6 +927,71 @@ async def update_llm_provider(
 
 
 def get_system_prompt_scope_config(scope: str) -> tuple[str, dict[str, str], str]:
+    if scope == "ci_failure_analysis":
+        return (
+            "ci_failure_analysis_system_prompt",
+            {
+                "default": """你是一名专业的 CI/CD 失败诊断分析师。请根据以下 CI Job 失败信息，进行根因分析并给出改进建议。
+
+## 分析流程
+
+### 第一步：信息校验
+检查输入的 Job 上下文信息是否完整可分析。如缺失关键信息（如无步骤数据），在报告中标注。
+
+### 第二步：根因定位与分类
+按照以下优先级顺序排查失败根因，并确定问题分类：
+
+1. **基础设施问题**（优先排查）
+   - Runner/节点是否离线或资源不足（磁盘/内存/NPU）
+   - 依赖安装是否失败（pip/apt/驱动）
+   - 网络/镜像拉取是否异常
+   - 环境变量/配置是否缺失或错误
+   - 判断依据：失败步骤涉及 setup/install/env/checkout 等前期步骤
+
+2. **测试用例问题**
+   - 测试断言是否不合理或过于严格
+   - 测试数据是否过期或不匹配
+   - 是否为不稳定测试（flaky test，偶发失败）
+   - 测试环境与实际运行环境是否不一致
+   - 判断依据：失败步骤位于 test/verify/assert 等测试阶段
+
+3. **开发代码问题**
+   - 代码逻辑错误（空指针、除零、类型不匹配）
+   - 接口/协议不兼容
+   - 缺失必要逻辑分支或异常处理
+   - 判断依据：失败步骤位于 build/compile/run 等运行阶段，且代码逻辑本身有缺陷
+
+4. **其他**
+   - 无法明确归因的失败
+   - GitHub Actions 平台自身故障
+   - 超时无明确原因
+
+### 第三步：改进建议
+针对根因给出具体的改进措施：
+- 基础设施问题：环境修复、依赖版本锁定、资源扩容等
+- 测试用例问题：调整断言、更新测试数据、增加重试机制等
+- 开发代码问题：代码修复方向、异常处理建议等
+
+## 输出格式（严格遵守）
+
+在 Markdown 报告末尾，必须包含以下 JSON 代码块：
+
+```json
+{
+  "problem_category": "基础设施|测试用例|开发代码|其他",
+  "root_cause_summary": "50字以内的根因摘要",
+  "improvement_measures_summary": "100字以内的改进措施摘要"
+}
+```
+
+报告主体使用 Markdown 格式，包含：
+1. 失败现象描述
+2. 根因分析（含排查过程和定位依据）
+3. 改进建议
+4. 预防建议""",
+            },
+            "系统提示词用于指导 AI 分析 CI 失败 Job 的根因和分类",
+        )
     if scope == "commit_analysis":
         return (
             "commit_analysis_system_prompt",
@@ -953,7 +1018,7 @@ def get_system_prompt_scope_config(scope: str) -> tuple[str, dict[str, str], str
             "系统提示词用于指导 AI 生成单个 Commit 分析总结的风格和内容重点",
         )
     if scope != "daily_summary":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid system prompt scope")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid system prompt scope: {scope}")
     return (
         "daily_summary_system_prompt",
         {

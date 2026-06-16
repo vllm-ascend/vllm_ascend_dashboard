@@ -7,6 +7,8 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons'
 import { useJobStats, useHiddenJobsList } from '../hooks/useJobOwners'
+import { useFailureAnalysisList } from '../hooks/useFailureAnalysis'
+import { PROBLEM_CATEGORY_MAP } from '../services/failureAnalysis'
 import { formatDuration, renderConclusionTag } from '../utils/ciRenderers'
 import { formatTimezone } from '../utils/timezone'
 import type { JobStats } from '../services/jobOwners'
@@ -28,11 +30,22 @@ function JobBoard() {
   })
 
   const { data: hiddenJobsList } = useHiddenJobsList()
+  const { data: analysisData } = useFailureAnalysisList({ days_back: daysFilter === 'all' ? 90 : (daysFilter as number) })
 
   // 构建隐藏 job 的集合
   const hiddenJobs = new Set(
     hiddenJobsList?.filter(v => v.is_hidden).map(v => `${v.workflow_name}-${v.job_name}`) || []
   )
+
+  const categoryMap = new Map<string, string>()
+  if (analysisData?.items) {
+    for (const item of analysisData.items) {
+      if (item.problem_category) {
+        const key = `${item.workflow_name}-${item.job_name}`
+        categoryMap.set(key, item.problem_category)
+      }
+    }
+  }
 
   // 过滤掉已隐藏的 job
   const filteredJobStats = jobStats?.filter(item => {
@@ -215,6 +228,18 @@ function JobBoard() {
       render: (_: any, record: JobStats) => {
         if (!record.last_conclusion) return '-'
         return renderConclusionTag(record.last_conclusion)
+      },
+    },
+    {
+      title: '问题分类',
+      key: 'problem_category',
+      width: 100,
+      render: (_: any, record: JobStats) => {
+        const key = `${record.workflow_name}-${record.job_name}`
+        const category = categoryMap.get(key)
+        if (!category) return '-'
+        const catInfo = PROBLEM_CATEGORY_MAP[category] || { color: '#64748d', label: category }
+        return <Tag color={catInfo.color}>{catInfo.label}</Tag>
       },
     },
   ]

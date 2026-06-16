@@ -143,6 +143,7 @@ function SystemConfig() {
   const [llmProviderForm] = Form.useForm()
   const [systemPromptForm] = Form.useForm()
   const [commitAnalysisPromptForm] = Form.useForm()
+  const [ciFailureAnalysisPromptForm] = Form.useForm()
 
   // 同步配置相关 state
   const [syncActiveTab, setSyncActiveTab] = useState('project_cache')
@@ -191,6 +192,7 @@ function SystemConfig() {
   // 系统提示词配置 hooks
   const { data: systemPromptConfig, isLoading: systemPromptConfigLoading } = useSystemPromptConfig()
   const { data: commitAnalysisPromptConfig } = useSystemPromptConfig('commit_analysis')
+  const { data: ciFailureAnalysisPromptConfig } = useSystemPromptConfig('ci_failure_analysis')
   const updateSystemPromptMutation = useUpdateSystemPromptConfig()
 
   const [isAppConfigModalOpen, setIsAppConfigModalOpen] = useState(false)
@@ -200,6 +202,7 @@ function SystemConfig() {
   const [selectedLLMProvider, setSelectedLLMProvider] = useState<string | null>(null)
   const [isSystemPromptModalOpen, setIsSystemPromptModalOpen] = useState(false)
   const [isCommitAnalysisPromptModalOpen, setIsCommitAnalysisPromptModalOpen] = useState(false)
+  const [isCIFailureAnalysisPromptModalOpen, setIsCIFailureAnalysisPromptModalOpen] = useState(false)
 
   const [activeTabKey, setActiveTabKey] = useState('system')
 
@@ -1168,6 +1171,41 @@ function SystemConfig() {
                 children: (
                   <div style={{ maxHeight: 200, overflow: 'auto' }}>
                     <Text>{commitAnalysisPromptConfig?.prompts?.vllm || '未配置'}</Text>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </div>
+
+        <Divider />
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Title level={5} style={{ margin: 0 }}>
+              <MessageOutlined style={{ marginRight: 8 }} />
+              CI 失败分析系统提示词
+            </Title>
+            {isSuperAdmin && (
+              <Button size="small" icon={<MessageOutlined />} onClick={() => setIsCIFailureAnalysisPromptModalOpen(true)}>
+                编辑
+              </Button>
+            )}
+          </div>
+          <Alert
+            message="说明"
+            description="系统提示词用于指导 AI 分析 CI 失败 Job 的根因分类和改进建议。基于 auto-bug-fixer 技能模板，附加 CI 专属分类附录。"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+            <Collapse
+            items={[
+              {
+                key: 'ci-failure-ascend',
+                label: <Tag color="orange">CI 失败分析提示词（当前配置）</Tag>,
+                children: (
+                  <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                    <Text>{ciFailureAnalysisPromptConfig?.prompts?.default || ciFailureAnalysisPromptConfig?.prompts?.ascend || '未配置（使用默认提示词）'}</Text>
                   </div>
                 ),
               },
@@ -2195,6 +2233,73 @@ function SystemConfig() {
               <Button onClick={() => {
                 setIsCommitAnalysisPromptModalOpen(false)
                 commitAnalysisPromptForm.resetFields()
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit" loading={updateSystemPromptMutation.isPending}>
+                保存
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* CI 失败分析系统提示词编辑弹窗 */}
+      <Modal
+        title="编辑 CI 失败分析系统提示词"
+        open={isCIFailureAnalysisPromptModalOpen}
+        onCancel={() => {
+          setIsCIFailureAnalysisPromptModalOpen(false)
+          ciFailureAnalysisPromptForm.resetFields()
+        }}
+        footer={null}
+        width={800}
+      >
+        <Alert
+          message="说明"
+          description="系统提示词用于指导 AI 分析 CI 失败 Job 的根因分类和改进建议。留空将使用基于 auto-bug-fixer 技能的默认提示词。"
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Form
+          form={ciFailureAnalysisPromptForm}
+          layout="vertical"
+          onFinish={(values) => {
+            updateSystemPromptMutation.mutate({
+              prompts: {
+                default: values.default,
+              },
+              scope: 'ci_failure_analysis',
+            }, {
+              onSuccess: () => {
+                message.success('CI 失败分析系统提示词已更新')
+                setIsCIFailureAnalysisPromptModalOpen(false)
+              },
+              onError: (error: any) => {
+                message.error(error.response?.data?.detail || '更新失败')
+              },
+            })
+          }}
+          initialValues={{
+            default: ciFailureAnalysisPromptConfig?.prompts?.default || '',
+          }}
+        >
+          <Form.Item
+            name="default"
+            label={<Tag color="orange">CI 失败分析提示词</Tag>}
+          >
+            <Input.TextArea
+              rows={10}
+              placeholder="用于 CI 失败 Job 诊断的系统提示词...（留空使用默认 auto-bug-fixer 模板 + CI 分类附录）"
+            />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setIsCIFailureAnalysisPromptModalOpen(false)
+                ciFailureAnalysisPromptForm.resetFields()
               }}>
                 取消
               </Button>

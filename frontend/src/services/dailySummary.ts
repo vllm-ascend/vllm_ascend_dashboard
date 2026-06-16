@@ -49,13 +49,14 @@ export interface LLMProvider {
   api_base_url?: string
 }
 
-export type SystemPromptScope = 'daily_summary' | 'commit_analysis'
+export type SystemPromptScope = 'daily_summary' | 'commit_analysis' | 'ci_failure_analysis'
 
 export interface SystemPromptConfig {
   prompts: {
-    ascend: string
-    vllm: string
-  }
+    ascend?: string
+    vllm?: string
+    default?: string
+  } & Record<string, string>
   description: string
 }
 
