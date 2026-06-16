@@ -360,7 +360,15 @@ class JobFailureAnalysis(Base):
     error_message = Column(String(500))
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
-    logic = Column(String(10), nullable=False, default="AND")  # AND / OR
+
+
+class AlertConditionGroup(Base):
+    """告警条件组表（组间 AND）"""
+    __tablename__ = "alert_condition_groups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rule_id = Column(Integer, ForeignKey("alert_rules.id"), nullable=False, index=True)
+    logic = Column(String(10), nullable=False, default="AND")
     display_order = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
