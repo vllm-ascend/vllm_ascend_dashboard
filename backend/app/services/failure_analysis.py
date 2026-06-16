@@ -209,7 +209,7 @@ class FailureAnalysisService:
             return reused
 
         system_prompt = await self._get_system_prompt(db)
-        user_prompt = self._build_job_context(job)
+        user_prompt = await self._build_job_context(job, db)
         llm_config = await self._get_llm_config(db)
 
         analysis = JobFailureAnalysis(
@@ -292,12 +292,13 @@ class FailureAnalysisService:
                 logger.error(f"Batch analysis failed for job {job.job_id}: {e}")
         return results
 
-    def _build_job_context(self, job: CIJob) -> str:
+    async def _build_job_context(self, job: CIJob, db: AsyncSession) -> str:
         lines = []
         lines.append(f"## CI Job 失败信息\n")
         lines.append(f"- **Workflow**: {job.workflow_name}")
         lines.append(f"- **Job Name**: {job.job_name}")
         lines.append(f"- **Hardware**: {job.hardware or 'unknown'}")
+        lines.append(f"- **Runner**: {job.runner_name or 'unknown'}")
         try:
             labels = json.loads(job.runner_labels) if job.runner_labels else []
             if isinstance(labels, list):
@@ -308,26 +309,82 @@ class FailureAnalysisService:
             lines.append(f"- **Runner Labels**: {job.runner_labels or 'unknown'}")
         lines.append(f"- **Conclusion**: {job.conclusion}")
         lines.append(f"- **Duration**: {job.duration_seconds or 'unknown'}s")
+        lines.append(f"- **Started At**: {job.started_at or 'unknown'}")
+        lines.append(f"- **Completed At**: {job.completed_at or 'unknown'}")
 
         try:
             steps = json.loads(job.steps_data) if job.steps_data else []
             failed_steps = []
+            all_steps_summary = []
             for step in steps:
                 step_name = step.get("name", "unknown")
                 step_conclusion = step.get("conclusion", "")
                 step_number = step.get("number", "")
+                step_started = step.get("started_at", "")
+                step_completed = step.get("completed_at", "")
+                step_status = step.get("status", "")
+
                 if step_conclusion in ("failure", "timed_out", "startup_failure"):
-                    failed_steps.append(f"  - Step #{step_number} `{step_name}` → {step_conclusion}")
+                    duration_info = ""
+                    if step_started and step_completed:
+                        try:
+                            from datetime import datetime as dt
+                            s = dt.fromisoformat(step_started.replace("Z", "+00:00"))
+                            e = dt.fromisoformat(step_completed.replace("Z", "+00:00"))
+                            secs = int((e - s).total_seconds())
+                            duration_info = f" (耗时 {secs}s)"
+                        except Exception:
+                            pass
+                    failed_steps.append(f"  - Step #{step_number} `{step_name}` → {step_conclusion}{duration_info}")
+                elif step_status == "completed" and step_conclusion == "success":
+                    continue
+                else:
+                    all_steps_summary.append(f"  - Step #{step_number} `{step_name}` → status={step_status}, conclusion={step_conclusion}")
+
             if failed_steps:
                 lines.append(f"\n### Failed Steps:\n")
                 lines.extend(failed_steps)
+
+            if all_steps_summary:
+                lines.append(f"\n### Other Non-Success Steps:\n")
+                lines.extend(all_steps_summary)
         except (json.JSONDecodeError, TypeError):
             lines.append(f"- **Steps Data**: (unparseable)")
 
+        annotations = await self._fetch_job_annotations(job.job_id, db)
+        if annotations:
+            lines.append(f"\n### GitHub Actions Annotations (关键错误信息):\n")
+            for ann in annotations:
+                level = ann.get("annotation_level", "notice")
+                title = ann.get("title", "")
+                message = ann.get("message", "")
+                path_info = ann.get("path", "")
+                if title:
+                    lines.append(f"  - [{level}] **{title}**: {message}")
+                else:
+                    lines.append(f"  - [{level}] {message}")
+
         github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}"
         lines.append(f"\n- **GitHub Job URL**: {github_url}")
-        lines.append(f"\n请分析以上 CI Job 失败信息，给出根因分析和改进建议。")
+        lines.append(f"\n请分析以上 CI Job 失败信息，特别关注 Annotations 中的错误提示，给出根因分析和改进建议。")
         return "\n".join(lines)
+
+    async def _fetch_job_annotations(self, job_id: int, db: AsyncSession) -> list[dict]:
+        try:
+            from app.services.github_client import GitHubClient
+            github_token = settings.GITHUB_TOKEN
+            if not github_token:
+                logger.warning("GitHub token not configured, cannot fetch annotations")
+                return []
+            client = GitHubClient(token=github_token, owner=settings.GITHUB_OWNER, repo=settings.GITHUB_REPO)
+            url = f"/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/jobs/{job_id}/annotations"
+            response = await client._request("GET", url)
+            if response and isinstance(response, list):
+                return response
+            return []
+        except Exception as e:
+            logger.warning(f"Failed to fetch annotations for job {job_id}: {e}")
+            return []
 
     @staticmethod
     def compute_failure_fingerprint(job: CIJob) -> str:
