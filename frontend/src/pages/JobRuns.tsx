@@ -181,6 +181,44 @@ function JobRuns() {
       render: (runnerName: string | null) => runnerName || '-',
     },
     {
+      title: '操作',
+      key: 'action',
+      width: 160,
+      render: (_: any, record: JobRun) => (
+        <Space>
+          <Button
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={() => navigate(`/ci/jobs/${record.job_id}`)}
+          >
+            查看详情
+          </Button>
+          {(record.conclusion === 'failure' || record.conclusion === 'cancelled') && (
+            <Space>
+              {analysisMap.get(record.job_id) ? (
+                <Button
+                  type="link"
+                  icon={<FileSearchOutlined />}
+                  onClick={() => handleViewAnalysis(record.job_id)}
+                >
+                  查看分析
+                </Button>
+              ) : (
+                <Button
+                  type="link"
+                  icon={<RobotOutlined />}
+                  loading={analyzeMutation.isPending && analyzeMutation.variables?.jobId === record.job_id}
+                  onClick={() => handleQuickAnalyze(record.job_id)}
+                >
+                  分析
+                </Button>
+              )}
+            </Space>
+          )}
+        </Space>
+      ),
+    },
+    {
       title: '问题分类',
       key: 'problem_category',
       width: 100,
@@ -258,44 +296,6 @@ function JobRuns() {
           </Space>
         )
       },
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 160,
-      render: (_: any, record: JobRun) => (
-        <Space>
-          <Button
-            type="link"
-            icon={<EyeOutlined />}
-            onClick={() => navigate(`/ci/jobs/${record.job_id}`)}
-          >
-            查看详情
-          </Button>
-          {(record.conclusion === 'failure' || record.conclusion === 'cancelled') && (
-            <Space>
-              {analysisMap.get(record.job_id) ? (
-                <Button
-                  type="link"
-                  icon={<FileSearchOutlined />}
-                  onClick={() => handleViewAnalysis(record.job_id)}
-                >
-                  查看分析
-                </Button>
-              ) : (
-                <Button
-                  type="link"
-                  icon={<RobotOutlined />}
-                  loading={analyzeMutation.isPending && analyzeMutation.variables?.jobId === record.job_id}
-                  onClick={() => handleQuickAnalyze(record.job_id)}
-                >
-                  分析
-                </Button>
-              )}
-            </Space>
-          )}
-        </Space>
-      ),
     },
   ]
 

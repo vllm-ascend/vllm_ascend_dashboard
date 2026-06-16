@@ -74,7 +74,7 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
     : null
 
   const renderMarkdownContent = (content: string) => (
-    <div style={{ padding: 16, background: '#fafafa', borderRadius: 8, maxHeight: '400px', overflowY: 'auto' }}>
+    <div style={{ padding: 20, background: '#fafafa', borderRadius: 8, maxHeight: '600px', overflowY: 'auto' }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -112,7 +112,7 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
       }
       open={open}
       onCancel={onClose}
-      width={720}
+      width={960}
       footer={[
         <Button key="close" onClick={onClose}>关闭</Button>,
         currentAnalysis && currentAnalysis.analysis_status !== 'analyzing' && (
