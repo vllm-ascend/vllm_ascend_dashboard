@@ -952,6 +952,15 @@ def get_system_prompt_scope_config(scope: str) -> tuple[str, dict[str, str], str
 ✅ **校验点**：根因精准锁定至具体代码行/文件/步骤，且可复现
 ❌ **中断条件**：信息不足导致根因模糊 → 标注为"其他"分类，说明无法准确定位的原因
 
+#### 优先证据来源（按重要性排序）
+1. **Annotations**（最重要）— GitHub Actions annotations 是官方错误提示，如 "Executing the custom container implementation failed" 明确表示 Runner 容器崩溃、"Process completed with exit code 1" 标注具体进程退出码、"Canceling since a higher priority waiting request" 表明资源抢占。Annotations 是最直接的根因线索，必须优先分析。
+2. **失败步骤特征** — 失败步骤的名称、类型、耗时可以帮助判断问题性质：
+   - setup/install 类前期步骤失败 → 基础设施问题
+   - test/assert 类测试步骤失败 → 测试用例问题
+   - build/compile/run 类运行步骤失败 → 开发代码问题
+   - Stream logs/Watch 类监控步骤失败 → 通常是被监控的主进程异常退出，但需结合 annotations 判断是 Runner 容器崩溃还是业务进程崩溃
+3. **Runner 信息** — 自托管 Runner（如 linux-aarch64-a3-*）名称暗示硬件/环境特征，"Executing the custom container implementation failed" 出现在自托管 Runner 时表示 Runner 容器运行时故障，而非业务代码问题
+
 #### 定位方法：自顶向下追踪法
 1. 分析错误堆栈/日志跟踪，定位抛出异常/触发错误的具体代码行/步骤
 2. 检查该位置的入参、数据流、依赖调用是否符合业务预期
