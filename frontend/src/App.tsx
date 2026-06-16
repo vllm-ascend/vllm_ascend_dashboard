@@ -24,6 +24,8 @@ import ProjectBoardConfig from './pages/ProjectBoardConfig'
 import ResourceDashboard from './pages/ResourceDashboard'
 import ResourceDashboardConfig from './pages/ResourceDashboardConfig'
 import DailyReportConfigPage from './pages/DailyReportConfig'
+import SmtpConfig from './pages/SmtpConfig'
+import AlertRulesManagement from './pages/AlertRulesManagement'
 import { useCurrentUser } from './hooks/useCurrentUser'
 
 const queryClient = new QueryClient({
@@ -133,6 +135,8 @@ function App() {
               <Route path="resources" element={<ResourceDashboard />} />
               {/* 模型每日报告页面 */}
               <Route path="models/reports/:date" element={<ModelDailyReport />} />
+              {/* 告警规则 */}
+              <Route path="alert-rules" element={<AlertRulesManagement />} />
               {/* GitHub 动态详情页面 */}
               <Route path="github-activity/:project" element={<GitHubActivityDetail />} />
               <Route path="github-activity/:project/commits/:sha" element={<CommitAnalysisDetail />} />
@@ -179,6 +183,15 @@ function App() {
                 element={
                   <AdminRoute>
                     <ResourceDashboardConfig />
+                  </AdminRoute>
+                }
+              />
+              {/* SMTP 邮件服务器（管理员） */}
+              <Route
+                path="admin/smtp-config"
+                element={
+                  <AdminRoute>
+                    <SmtpConfig />
                   </AdminRoute>
                 }
               />

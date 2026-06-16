@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import (
+    alert_rules,
     auth,
     ci,
     commit_analysis,
@@ -197,6 +198,7 @@ def create_app() -> FastAPI:
     app.include_router(resource_dashboard.router, prefix="/api/v1/resource-dashboard", tags=["资源看板"])
     app.include_router(resource_metrics.router, prefix="/api/v1/resource-dashboard", tags=["资源看板"])
     app.include_router(daily_report.router, prefix="/api/v1", tags=["每日运行报告"])
+    app.include_router(alert_rules.router, prefix="/api/v1", tags=["告警规则"])
 
     @app.get("/health")
     async def health_check():

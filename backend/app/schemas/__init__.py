@@ -39,6 +39,9 @@ __all__ = [
     # Resource Metrics
     "NpuMetricPoint", "ClusterNpuMetrics", "NpuMetricsResponse",
     "ResourceMetricsConfigResponse", "ResourceMetricsConfigUpdate", "RESOURCE_METRICS_CONFIG_KEY",
+    # Alert Rules
+    "AlertRuleCreate", "AlertRuleUpdate", "AlertRuleResponse",
+    "AlertHistoryResponse",
     # Daily Summary
     "GenerateSummaryRequest", "FetchDataRequest", "DailySummaryResponse", "DailySummaryListResponse",
     "DailySummaryListItem", "FetchDataResponse", "GenerateSummaryResponse",
@@ -731,4 +734,15 @@ from .resource_metrics import (
     ResourceMetricsConfigResponse,
     ResourceMetricsConfigUpdate,
     RESOURCE_METRICS_CONFIG_KEY,
+)
+
+from .alert_rules import (
+    AlertConditionCreate,
+    AlertConditionResponse,
+    AlertConditionGroupCreate,
+    AlertConditionGroupResponse,
+    AlertRuleCreate,
+    AlertRuleUpdate,
+    AlertRuleResponse,
+    AlertHistoryResponse,
 )

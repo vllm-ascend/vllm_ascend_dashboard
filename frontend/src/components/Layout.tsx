@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Layout as AntLayout, Menu, Button, Avatar, Dropdown, Space, Tag, Drawer } from 'antd'
 import {
+  BellOutlined,
   DashboardOutlined,
   CheckCircleOutlined,
   ExperimentOutlined,
@@ -14,6 +15,7 @@ import {
   MenuOutlined,
   CloudServerOutlined,
   MailOutlined,
+  SendOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { logout } from '../services/auth'
@@ -51,6 +53,11 @@ const menuItems: MenuProps['items'] = [
     icon: <CloudServerOutlined />,
     label: '资源看板',
   },
+  {
+    key: '/alert-rules',
+    icon: <BellOutlined />,
+    label: '告警规则',
+  },
 ]
 
 // 仅管理员可见的菜单项
@@ -61,8 +68,13 @@ const adminMenuItems: MenuProps['items'] = [
     label: '系统管理',
   },
   {
-    key: '/admin/daily-report',
+    key: '/admin/smtp-config',
     icon: <MailOutlined />,
+    label: '邮件服务器',
+  },
+  {
+    key: '/admin/daily-report',
+    icon: <SendOutlined />,
     label: '每日报告',
   },
 ]

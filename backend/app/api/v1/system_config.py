@@ -11,9 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.api.deps import get_current_active_super_admin_user, get_current_user, get_db
+from app.api.deps import get_current_active_admin_user, get_current_active_super_admin_user, get_current_user, get_db
 from app.core.config import settings
-from app.models import User
+from app.core.email import SMTP_CONFIG_KEY
+from app.models import ProjectDashboardConfig, User
 
 logger = logging.getLogger(__name__)
 
@@ -1092,3 +1093,123 @@ async def update_system_prompt_config(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"更新系统提示词配置失败：{str(e)}"
         )
+
+
+# ── SMTP 配置（独立于每日报告）──
+
+@router.get("/smtp")
+async def get_smtp_config_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """获取 SMTP 邮件外发服务器配置（admin 权限）"""
+    from app.core.email import get_smtp_config as _read
+    config = await _read(db)
+    return {
+        "smtp_host": config.get("smtp_host", ""),
+        "smtp_port": config.get("smtp_port", 587),
+        "smtp_username": config.get("smtp_username", ""),
+        "smtp_use_tls": config.get("smtp_use_tls", True),
+        "smtp_password_set": bool(config.get("smtp_password", "")),
+        "from_email": config.get("from_email", ""),
+    }
+
+
+@router.put("/smtp")
+async def update_smtp_config(
+    config_update: dict,
+    current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """更新 SMTP 邮件外发服务器配置（super_admin 权限）"""
+    from app.core.email import get_smtp_config as _read
+
+    current = await _read(db)
+    for key in ("smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_use_tls", "from_email"):
+        if key in config_update:
+            val = config_update[key]
+            if key == "smtp_password" and not val:
+                continue
+            current[key] = val
+
+    stmt = select(ProjectDashboardConfig).where(ProjectDashboardConfig.config_key == SMTP_CONFIG_KEY)
+    result = await db.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row:
+        row.config_value = current
+    else:
+        db.add(ProjectDashboardConfig(config_key=SMTP_CONFIG_KEY, config_value=current, description="SMTP 邮件服务器配置"))
+
+    await db.commit()
+    logger.info(f"SMTP config updated by {current_user.username}")
+    return {
+        "success": True,
+        "message": "SMTP 配置已更新",
+        "smtp_host": current.get("smtp_host", ""),
+        "smtp_port": current.get("smtp_port", 587),
+        "smtp_username": current.get("smtp_username", ""),
+        "smtp_use_tls": current.get("smtp_use_tls", True),
+        "smtp_password_set": bool(current.get("smtp_password", "")),
+        "from_email": current.get("from_email", ""),
+    }
+
+
+@router.post("/smtp/test")
+async def test_smtp_connection(
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """测试 SMTP 连通性（admin 权限）"""
+    from app.core.email import get_smtp_config as _read
+    import aiosmtplib
+    from email.mime.text import MIMEText
+
+    config = await _read(db)
+    host = config.get("smtp_host", "")
+    port = int(config.get("smtp_port", 587))
+    username = config.get("smtp_username", "")
+    password = config.get("smtp_password", "")
+    use_tls = bool(config.get("smtp_use_tls", True))
+
+    if not host:
+        raise HTTPException(status_code=400, detail="SMTP 主机未配置")
+
+    use_implicit = use_tls and port == 465
+    use_starttls = use_tls and port != 465
+
+    steps = []
+    try:
+        steps.append(f"连接 {host}:{port}...")
+        smtp = aiosmtplib.SMTP(hostname=host, port=port, use_tls=use_implicit, timeout=15)
+        await smtp.connect()
+        steps.append("✓ 连接成功")
+
+        if use_starttls:
+            steps.append("启动 STARTTLS...")
+            await smtp.starttls(validate_certs=False)
+            steps.append("✓ STARTTLS 成功")
+
+        if username and password:
+            steps.append(f"登录 {username}...")
+            await smtp.login(username, password)
+            steps.append("✓ 登录成功")
+        elif username:
+            steps.append("(跳过登录，未提供密码)")
+
+        steps.append("发送测试邮件...")
+        msg = MIMEText("vLLM Ascend Dashboard SMTP 连通性测试", "plain", "utf-8")
+        msg["Subject"] = "SMTP 连通性测试"
+        msg["From"] = config.get("from_email", username or "test@localhost")
+        msg["To"] = config.get("from_email", username or "test@localhost")
+        await smtp.send_message(msg)
+        steps.append("✓ 测试邮件发送成功")
+
+        await smtp.quit()
+        return {"success": True, "message": "SMTP 连通性测试通过", "steps": steps}
+    except Exception as e:
+        steps.append(f"✗ 失败: {e}")
+        try:
+            await smtp.quit()
+        except Exception:
+            pass
+        return {"success": False, "message": f"测试失败: {e}", "steps": steps}

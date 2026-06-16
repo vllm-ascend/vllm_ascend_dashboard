@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_active_admin_user, get_current_active_super_admin_user, get_current_user, get_db
 from app.core.config import settings
+from app.core.email import DEFAULT_SMTP_CONFIG, SMTP_CONFIG_KEY, get_smtp_config
 from app.models import ProjectDashboardConfig, User
 from app.schemas.daily_report import (
     DailyReportConfigResponse,
@@ -27,6 +28,27 @@ REPORT_CONFIG_KEY = "daily_report_config"
 
 router = APIRouter(prefix="/daily-report", tags=["每日运行报告"])
 
+# SMTP 相关的字段名
+SMTP_FIELDS = {"smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_use_tls", "report_from_email", "from_email"}
+
+
+async def _read_config(db, key: str) -> dict:
+    stmt = select(ProjectDashboardConfig).where(ProjectDashboardConfig.config_key == key)
+    result = await db.execute(stmt)
+    config = result.scalar_one_or_none()
+    return dict(config.config_value) if (config and config.config_value) else {}
+
+
+async def _write_config(db, key: str, value: dict, description: str = ""):
+    stmt = select(ProjectDashboardConfig).where(ProjectDashboardConfig.config_key == key)
+    result = await db.execute(stmt)
+    config = result.scalar_one_or_none()
+    if config:
+        config.config_value = value
+    else:
+        config = ProjectDashboardConfig(config_key=key, config_value=value, description=description)
+        db.add(config)
+
 
 @router.get("/config", response_model=DailyReportConfigResponse)
 async def get_report_config(
@@ -34,24 +56,19 @@ async def get_report_config(
     db: AsyncSession = Depends(get_db),
 ):
     """获取报告邮件推送配置（admin 权限）"""
-    stmt = select(ProjectDashboardConfig).where(
-        ProjectDashboardConfig.config_key == REPORT_CONFIG_KEY
-    )
-    result = await db.execute(stmt)
-    config = result.scalar_one_or_none()
-
-    db_config = config.config_value if config else {}
+    smtp_config = await get_smtp_config(db)
+    report_config = await _read_config(db, REPORT_CONFIG_KEY)
 
     return DailyReportConfigResponse(
-        smtp_host=db_config.get("smtp_host", ""),
-        smtp_port=db_config.get("smtp_port", 587),
-        smtp_username=db_config.get("smtp_username", ""),
-        smtp_use_tls=db_config.get("smtp_use_tls", True),
-        smtp_password_set=bool(db_config.get("smtp_password", "")),
-        report_from_email=db_config.get("report_from_email", ""),
-        report_recipients=db_config.get("report_recipients", ""),
-        report_cc_recipients=db_config.get("report_cc_recipients", ""),
-        report_subject_template=db_config.get("report_subject_template", settings.REPORT_SUBJECT_TEMPLATE),
+        smtp_host=smtp_config.get("smtp_host", ""),
+        smtp_port=smtp_config.get("smtp_port", 587),
+        smtp_username=smtp_config.get("smtp_username", ""),
+        smtp_use_tls=smtp_config.get("smtp_use_tls", True),
+        smtp_password_set=bool(smtp_config.get("smtp_password", "")),
+        report_from_email=smtp_config.get("from_email", ""),
+        report_recipients=report_config.get("report_recipients", ""),
+        report_cc_recipients=report_config.get("report_cc_recipients", ""),
+        report_subject_template=report_config.get("report_subject_template", settings.REPORT_SUBJECT_TEMPLATE),
         report_enabled=settings.REPORT_ENABLED,
         report_schedule_hour=settings.REPORT_SCHEDULE_HOUR,
         report_schedule_minute=settings.REPORT_SCHEDULE_MINUTE,
@@ -66,36 +83,46 @@ async def update_report_config(
 ):
     """更新报告邮件推送配置（super_admin 权限）"""
     try:
-        service = DailyReportService(db)
+        smtp_config = await get_smtp_config(db)
+        report_config = await _read_config(db, REPORT_CONFIG_KEY)
 
-        existing_config = await service._get_report_config()
         updates = config_update.model_dump(exclude_none=True)
 
+        # 字段名映射：report_from_email → from_email
+        if "report_from_email" in updates:
+            updates["from_email"] = updates.pop("report_from_email")
+
+        # 拆分到 smtp_config 和 report_config
         for key, value in updates.items():
             if key == "smtp_password" and value:
-                existing_config["smtp_password"] = value
-            elif key != "smtp_password":
-                existing_config[key] = value
+                smtp_config["smtp_password"] = value
+            elif key in SMTP_FIELDS:
+                smtp_config[key] = value
+            elif key in ("report_recipients", "report_cc_recipients", "report_subject_template"):
+                report_config[key] = value
 
-        await service._update_report_config(existing_config)
+        await _write_config(db, SMTP_CONFIG_KEY, smtp_config, "SMTP 邮件服务器配置")
+        await _write_config(db, REPORT_CONFIG_KEY, report_config, "每日运行报告配置")
         await db.commit()
 
-        logger.info(f"Report config updated by {current_user.username}: {list(updates.keys())}")
+        logger.info(f"Report/SMTP config updated by {current_user.username}: {list(updates.keys())}")
 
         return DailyReportConfigResponse(
-            smtp_host=existing_config.get("smtp_host", ""),
-            smtp_port=existing_config.get("smtp_port", 587),
-            smtp_username=existing_config.get("smtp_username", ""),
-            smtp_use_tls=existing_config.get("smtp_use_tls", True),
-            smtp_password_set=bool(existing_config.get("smtp_password", "")),
-            report_from_email=existing_config.get("report_from_email", ""),
-            report_recipients=existing_config.get("report_recipients", ""),
-            report_cc_recipients=existing_config.get("report_cc_recipients", ""),
-            report_subject_template=existing_config.get("report_subject_template", settings.REPORT_SUBJECT_TEMPLATE),
+            smtp_host=smtp_config.get("smtp_host", ""),
+            smtp_port=smtp_config.get("smtp_port", 587),
+            smtp_username=smtp_config.get("smtp_username", ""),
+            smtp_use_tls=smtp_config.get("smtp_use_tls", True),
+            smtp_password_set=bool(smtp_config.get("smtp_password", "")),
+            report_from_email=smtp_config.get("from_email", ""),
+            report_recipients=report_config.get("report_recipients", ""),
+            report_cc_recipients=report_config.get("report_cc_recipients", ""),
+            report_subject_template=report_config.get("report_subject_template", settings.REPORT_SUBJECT_TEMPLATE),
             report_enabled=settings.REPORT_ENABLED,
             report_schedule_hour=settings.REPORT_SCHEDULE_HOUR,
             report_schedule_minute=settings.REPORT_SCHEDULE_MINUTE,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to update report config: {e}")
         raise HTTPException(
@@ -113,14 +140,15 @@ async def trigger_report(
     """手动触发一次报告生成和发送（super_admin 权限）"""
     try:
         service = DailyReportService(db)
-        report_config = await service._get_report_config()
+        report_config = await _read_config(db, REPORT_CONFIG_KEY)
+        smtp_config = await get_smtp_config(db)
 
         if not report_config.get("report_recipients"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="请先配置收件人（在系统配置页面设置 report_recipients）",
             )
-        if not report_config.get("smtp_host"):
+        if not smtp_config.get("smtp_host"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="请先配置 SMTP 服务器（在系统配置页面设置 smtp_host）",
