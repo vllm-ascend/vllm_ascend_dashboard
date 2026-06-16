@@ -97,6 +97,11 @@ export const getAlertRules = async (): Promise<AlertRule[]> => {
   return response.data
 }
 
+export const getAlertRule = async (ruleId: number): Promise<AlertRule> => {
+  const response = await api.get<AlertRule>(`/alert-rules/${ruleId}`)
+  return response.data
+}
+
 export const createAlertRule = async (data: AlertRuleCreate): Promise<AlertRule> => {
   const response = await api.post<AlertRule>('/alert-rules', data)
   return response.data
