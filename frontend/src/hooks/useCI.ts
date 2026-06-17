@@ -118,3 +118,29 @@ export const useSyncProgress = (enabled: boolean = false) => {
     enabled: enabled,
   })
 }
+
+/**
+ * 获取 job AI 分析结果
+ */
+export const useJobAnalysis = (jobId: number | null) => {
+  return useQuery({
+    queryKey: ['ci-job-analysis', jobId],
+    queryFn: () => jobId ? ciApi.getJobAnalysis(jobId) : Promise.resolve(null),
+    enabled: !!jobId,
+    retry: false, // 404 时不重试（分析可能尚未生成）
+  })
+}
+
+/**
+ * 触发 AI 分析
+ */
+export const useTriggerJobAnalysis = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ciApi.triggerJobAnalysis,
+    onSuccess: (_data, jobId) => {
+      queryClient.invalidateQueries({ queryKey: ['ci-job-analysis', jobId] })
+    },
+  })
+}

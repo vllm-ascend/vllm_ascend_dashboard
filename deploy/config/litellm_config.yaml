@@ -1,0 +1,33 @@
+# LiteLLM Proxy Configuration for vLLM Ascend Dashboard
+#
+# 这个 LiteLLM 实例作为 Claude Code CLI 的 API 翻译网关。
+# Claude Code CLI 发送 Anthropic Messages API 格式的请求到 LiteLLM，
+# LiteLLM 翻译后转发到配置的上游 provider（OpenAI / Qwen / DeepSeek ...）。
+#
+# 模型列表可通过 LiteLLM 的 /model/new API 动态注册，
+# 后端服务在启动时自动同步数据库中的 provider 配置。
+
+general_settings:
+  master_key: ${LITELLM_MASTER_KEY}
+  database_url: "postgresql://llmproxy:dbpassword9090@db:5432/litellm"  # 可选，用于持久化
+  store_model_in_db: true  # 模型配置持久化到数据库
+
+model_list:
+  # 模型列表由 backend 在启动时通过 /model/new API 动态注册。
+  # 不再在此处硬编码 —— provider 配置全部来自数据库中的 LLMProviderConfig。
+
+litellm_settings:
+  # 启用 Anthropic 格式兼容端点
+  drop_params: true
+  # 日志级别
+  success_callback: ["generic"]
+  failure_callback: ["generic"]
+
+router_settings:
+  # 允许的请求格式
+  allowed_routes: ["/v1/messages", "/v1/chat/completions", "/health", "/model/new", "/model/info"]
+  num_retries: 3
+  request_timeout: 600
+  # 熔断器
+  enable_loadbalancing: true
+  enable_fallbacks: true

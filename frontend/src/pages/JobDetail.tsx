@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Button, Space, Typography, Tag, Descriptions, Timeline, Empty, Alert, message } from 'antd'
+import { Card, Button, Space, Typography, Tag, Descriptions, Timeline, Empty, Alert, message, Spin } from 'antd'
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
@@ -7,8 +7,10 @@ import {
   ClockCircleOutlined,
   SyncOutlined,
   GithubOutlined,
+  RobotOutlined,
+  BulbOutlined,
 } from '@ant-design/icons'
-import { useJobDetail } from '../hooks/useCI'
+import { useJobDetail, useJobAnalysis, useTriggerJobAnalysis } from '../hooks/useCI'
 import { useJobOwners } from '../hooks/useJobOwners'
 import { formatTimezone } from '../utils/timezone'
 import { renderStatusTag, renderConclusionTag, formatDuration, renderHardwareTag } from '../utils/ciRenderers'
@@ -41,6 +43,8 @@ function JobDetail() {
 
   const { data: job, isLoading, refetch } = useJobDetail(jobIdNum)
   const { data: jobOwners } = useJobOwners()
+  const { data: analysis, isLoading: analysisLoading } = useJobAnalysis(jobIdNum)
+  const triggerAnalysis = useTriggerJobAnalysis()
 
   // 查找 display_name
   const ownerInfo = jobOwners?.find(
@@ -55,6 +59,18 @@ function JobDetail() {
       message.success('数据已刷新')
     } catch (error) {
       message.error('刷新失败')
+    }
+  }
+
+  // 触发 AI 分析
+  const handleAnalyze = async () => {
+    if (!jobIdNum) return
+    try {
+      await triggerAnalysis.mutateAsync(jobIdNum)
+      message.success('AI 分析完成')
+    } catch (error: any) {
+      const msg = error?.response?.data?.detail || '分析失败'
+      message.error(msg)
     }
   }
 
@@ -216,6 +232,93 @@ function JobDetail() {
           <Empty description="暂无 Steps 信息" />
         )}
       </Card>
+
+      {/* AI 分析结果 — 仅失败 job 显示 */}
+      {(job.conclusion === 'failure' || job.conclusion === 'cancelled') && (
+        <Card
+          title={
+            <Space>
+              <RobotOutlined />
+              <span>AI 失败分析</span>
+              <Tag color="purple">Claude Code CLI</Tag>
+            </Space>
+          }
+          style={{ marginBottom: 24 }}
+        >
+          {analysisLoading ? (
+            <div style={{ textAlign: 'center', padding: 24 }}>
+              <Spin tip="正在加载分析结果..." />
+            </div>
+          ) : analysis ? (
+            <div>
+              <Descriptions column={3} size="small" bordered style={{ marginBottom: 16 }}>
+                <Descriptions.Item label="根因分类">
+                  <Tag color={
+                    analysis.root_cause_category === 'code_bug' ? 'red' :
+                    analysis.root_cause_category === 'env_issue' ? 'orange' :
+                    analysis.root_cause_category === 'infra' ? 'purple' :
+                    analysis.root_cause_category === 'flaky_test' ? 'gold' :
+                    analysis.root_cause_category === 'timeout' ? 'volcano' :
+                    'default'
+                  }>
+                    {analysis.root_cause_category || 'unknown'}
+                  </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="置信度">
+                  {analysis.confidence === 'high' ? '🟢 高' :
+                   analysis.confidence === 'medium' ? '🟡 中' : '🔴 低'}
+                </Descriptions.Item>
+                <Descriptions.Item label="分析时间">
+                  {analysis.analyzed_at ? formatTimezone(analysis.analyzed_at) : '-'}
+                </Descriptions.Item>
+              </Descriptions>
+
+              <Card type="inner" title="根因分析" style={{ marginBottom: 12 }}>
+                <div style={{ whiteSpace: 'pre-wrap' }}>
+                  {analysis.analysis_markdown || '暂无详细分析'}
+                </div>
+              </Card>
+
+              {analysis.suggested_fix && (
+                <Card
+                  type="inner"
+                  title={<Space><BulbOutlined />修复建议</Space>}
+                  style={{ marginBottom: 12, borderLeft: '3px solid #52c41a' }}
+                >
+                  <div style={{ whiteSpace: 'pre-wrap' }}>
+                    {analysis.suggested_fix}
+                  </div>
+                </Card>
+              )}
+
+              {analysis.related_commits && analysis.related_commits.length > 0 && (
+                <Card type="inner" title="相关 Commits" size="small">
+                  <Space wrap>
+                    {analysis.related_commits.map((sha: string) => (
+                      <Tag key={sha} color="blue">
+                        <code>{sha.slice(0, 7)}</code>
+                      </Tag>
+                    ))}
+                  </Space>
+                </Card>
+              )}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: 24 }}>
+              <Empty description="暂无 AI 分析结果">
+                <Button
+                  type="primary"
+                  icon={<RobotOutlined />}
+                  onClick={handleAnalyze}
+                  loading={triggerAnalysis.isPending}
+                >
+                  AI 分析失败原因
+                </Button>
+              </Empty>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   )
 }

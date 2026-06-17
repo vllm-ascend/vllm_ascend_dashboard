@@ -929,3 +929,108 @@ async def get_daily_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate report: {str(e)}"
         )
+
+
+# ============ CI 失败分析 API（Claude Code CLI 驱动）============
+
+
+@router.get("/jobs/{job_id}/analysis")
+async def get_job_analysis(
+    job_id: int,
+    db: DbSession,
+):
+    """获取指定 job 的 AI 分析结果"""
+    from app.models import CIFailureAnalysis
+
+    stmt = select(CIFailureAnalysis).where(CIFailureAnalysis.job_id == job_id)
+    result = await db.execute(stmt)
+    analysis = result.scalar_one_or_none()
+
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No analysis found for job {job_id}",
+        )
+
+    return {
+        "id": analysis.id,
+        "job_id": analysis.job_id,
+        "run_id": analysis.run_id,
+        "workflow_name": analysis.workflow_name,
+        "job_name": analysis.job_name,
+        "root_cause_category": analysis.root_cause_category,
+        "analysis_markdown": analysis.analysis_markdown,
+        "suggested_fix": analysis.suggested_fix,
+        "related_commits": analysis.related_commits,
+        "confidence": analysis.confidence,
+        "claude_model_used": analysis.claude_model_used,
+        "analyzed_at": analysis.analyzed_at.isoformat() if analysis.analyzed_at else None,
+    }
+
+
+@router.post("/jobs/{job_id}/analyze")
+async def trigger_job_analysis(
+    job_id: int,
+    db: DbSession,
+    current_user: CurrentSuperAdminUser,
+):
+    """手动触发单个 job 的 AI 分析（需要 super_admin 权限）"""
+    from app.models import CIJob as CIJobModel
+    from app.services.log_analyzer import LogAnalyzer
+
+    stmt = select(CIJobModel).where(CIJobModel.job_id == job_id)
+    result = await db.execute(stmt)
+    job = result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found",
+        )
+
+    try:
+        analyzer = LogAnalyzer(db)
+        analysis = await analyzer.analyze_failed_job(job)
+        await analyzer._save_analysis(job, analysis)
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "analysis": analysis,
+        }
+    except Exception as e:
+        logger.error(f"Failed to analyze job {job_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Analysis failed: {str(e)}",
+        )
+
+
+@router.post("/analyze-failures")
+async def trigger_batch_analysis(
+    db: DbSession,
+    current_user: CurrentSuperAdminUser,
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    """
+    批量分析最近失败的、尚未分析的 CI jobs（需要 super_admin 权限）
+
+    Args:
+        limit: 最多分析多少个 job
+    """
+    from app.services.log_analyzer import LogAnalyzer
+
+    try:
+        analyzer = LogAnalyzer(db)
+        results = await analyzer.analyze_failed_jobs_batch(limit=limit)
+        return {
+            "success": True,
+            "total_analyzed": len(results),
+            "results": results,
+        }
+    except Exception as e:
+        logger.error(f"Batch analysis failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Batch analysis failed: {str(e)}",
+        )

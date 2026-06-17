@@ -186,3 +186,42 @@ export const getSyncProgress = async (): Promise<SyncProgress> => {
   const response = await api.get<SyncProgress>('/ci/sync/progress')
   return response.data
 }
+
+// ============ CI Failure Analysis Types ============
+
+export interface CIFailureAnalysis {
+  id: number
+  job_id: number
+  run_id: number
+  workflow_name: string
+  job_name: string
+  root_cause_category: string
+  analysis_markdown: string
+  suggested_fix: string
+  related_commits: string[]
+  confidence: string
+  claude_model_used: string
+  analyzed_at: string | null
+}
+
+// ============ CI Failure Analysis API Functions ============
+
+/**
+ * 获取指定 job 的 AI 分析结果
+ */
+export const getJobAnalysis = async (jobId: number): Promise<CIFailureAnalysis> => {
+  const response = await api.get<CIFailureAnalysis>(`/ci/jobs/${jobId}/analysis`)
+  return response.data
+}
+
+/**
+ * 触发单个 job 的 AI 分析
+ */
+export const triggerJobAnalysis = async (jobId: number): Promise<{
+  success: boolean
+  job_id: number
+  analysis: CIFailureAnalysis
+}> => {
+  const response = await api.post(`/ci/jobs/${jobId}/analyze`)
+  return response.data
+}

@@ -27,6 +27,7 @@ __all__ = [
     "DailyReportHistory", "ResourceNpuMetrics",
     "ResourceNodeMetrics",
     "AlertRule", "AlertConditionGroup", "AlertCondition", "AlertHistory",
+    "CIFailureAnalysis",
 ]
 
 
@@ -371,6 +372,26 @@ class AlertHistory(Base):
     triggered_at = Column(TIMESTAMP, nullable=False, default=lambda: datetime.now(UTC), index=True)
     notification_sent = Column(Boolean, default=False)
     notification_error = Column(Text, nullable=True)
+
+
+class CIFailureAnalysis(Base):
+    """CI 失败 Job 分析结果表 — 由 Claude Code CLI 生成"""
+    __tablename__ = "ci_failure_analysis"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(BigInteger, nullable=False, unique=True, index=True)
+    run_id = Column(BigInteger, nullable=False, index=True)
+    workflow_name = Column(String(100), nullable=False, index=True)
+    job_name = Column(String(500))
+    root_cause_category = Column(String(50), index=True)
+    analysis_markdown = Column(Text)
+    suggested_fix = Column(Text)
+    related_commits = Column(JSON)
+    confidence = Column(String(20), default="medium")
+    claude_model_used = Column(String(100))
+    claude_duration_seconds = Column(Integer)
+    analyzed_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
 
 # 导入每日总结相关模型

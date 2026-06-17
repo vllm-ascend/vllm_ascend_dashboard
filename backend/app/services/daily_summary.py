@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.models.daily_summary import DailySummary, DailyPR, DailyIssue, DailyCommit, LLMProviderConfig
 from app.models import ProjectDashboardConfig
 from app.services.github_client import GitHubClient
-from app.services.llm_client import LLMClient, LLMResult
+from app.services.claude_code_cli import run_with_fallback
 from app.services.github_cache import get_github_cache, get_github_cache_for_repo
 from app.services.daily_data_file_store import DailyDataFileStore
 
@@ -74,7 +74,6 @@ class DailySummaryService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.github_client = GitHubClient(token=settings.GITHUB_TOKEN)
-        self.llm_client = LLMClient()
         self.file_store = DailyDataFileStore()
 
     async def refresh_pr_issue_status(
@@ -592,17 +591,20 @@ class DailySummaryService:
             # 3. 构建提示词
             prompt = self._build_prompt(project, daily_data, summary_date)
 
-            # 4. 谔用 LLM API
+            # 4. 调用 Claude Code CLI（自动降级到直接 API）
             llm_config = await self._get_llm_config(llm_provider)
             system_prompt = await self._get_system_prompt(project)
 
-            summary_result = await self.llm_client.generate(
-                provider=llm_config.provider,
-                model=llm_config.default_model,
-                api_key=llm_config.api_key,
-                api_base=llm_config.api_base_url,
+            summary_result = await run_with_fallback(
+                prompt=prompt,
+                provider_config={
+                    "provider": llm_config.provider,
+                    "api_key": llm_config.api_key,
+                    "api_base_url": llm_config.api_base_url,
+                    "default_model": llm_config.default_model,
+                },
                 system_prompt=system_prompt,
-                user_prompt=prompt
+                max_turns=8,
             )
 
             # 5. 保存总结到数据库
@@ -611,10 +613,10 @@ class DailySummaryService:
                 summary_date=summary_date,
                 summary_markdown=summary_result.content,
                 llm_provider=llm_config.provider,
-                llm_model=llm_config.default_model,
-                prompt_tokens=summary_result.prompt_tokens,
-                completion_tokens=summary_result.completion_tokens,
-                generation_time_seconds=summary_result.generation_time,
+                llm_model=summary_result.model_used or llm_config.default_model,
+                prompt_tokens=None,  # CLI 模式下不可用
+                completion_tokens=None,
+                generation_time_seconds=int(summary_result.duration_seconds),
                 has_data=daily_data.has_data,
                 pr_count=len(daily_data.prs),
                 issue_count=len(daily_data.issues),

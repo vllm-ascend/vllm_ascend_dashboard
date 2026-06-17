@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ProjectDashboardConfig
 from app.models.daily_summary import LLMProviderConfig
+from app.services.claude_code_cli import run_with_fallback
 from app.services.commit_analysis_file_store import CommitAnalysisFileStore
 from app.services.daily_data_file_store import DailyDataFileStore
-from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 class CommitAnalysisSummaryService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.llm_client = LLMClient()
         self.analysis_store = CommitAnalysisFileStore()
         self.daily_store = DailyDataFileStore()
 
@@ -38,13 +37,16 @@ class CommitAnalysisSummaryService:
             llm_config = await self._get_llm_config(llm_provider)
             system_prompt = await self._get_system_prompt(project)
 
-            result = await self.llm_client.generate(
-                provider=llm_config.provider,
-                model=llm_config.default_model,
-                api_key=llm_config.api_key,
-                api_base=llm_config.api_base_url,
+            result = await run_with_fallback(
+                prompt=prompt,
+                provider_config={
+                    "provider": llm_config.provider,
+                    "api_key": llm_config.api_key,
+                    "api_base_url": llm_config.api_base_url,
+                    "default_model": llm_config.default_model,
+                },
                 system_prompt=system_prompt,
-                user_prompt=prompt,
+                max_turns=5,
             )
 
             now = self.analysis_store.now()
@@ -54,10 +56,10 @@ class CommitAnalysisSummaryService:
                 "ai_summary_generated_at": now,
                 "ai_summary_generated_by": username,
                 "ai_summary_llm_provider": llm_config.provider,
-                "ai_summary_llm_model": llm_config.default_model,
-                "ai_summary_prompt_tokens": result.prompt_tokens,
-                "ai_summary_completion_tokens": result.completion_tokens,
-                "ai_summary_generation_time_seconds": result.generation_time,
+                "ai_summary_llm_model": result.model_used or llm_config.default_model,
+                "ai_summary_prompt_tokens": None,  # CLI 模式下不可用
+                "ai_summary_completion_tokens": None,
+                "ai_summary_generation_time_seconds": int(result.duration_seconds),
                 "ai_summary_error_message": None,
                 "updated_at": now,
                 "updated_by": username,

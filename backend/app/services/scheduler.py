@@ -247,6 +247,19 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add daily report job: {e}", exc_info=True)
 
+        # CI 失败分析任务 - CI 同步后 15 分钟执行（确保数据已落库）
+        try:
+            self.scheduler.add_job(
+                self._analyze_failures_scheduled_job,
+                trigger=IntervalTrigger(minutes=30),
+                id="ci_failure_analysis",
+                name="CI Failure Analysis (Claude Code CLI)",
+                replace_existing=True,
+            )
+            logger.info(f"CI failure analysis scheduled every 30 minutes")
+        except Exception as e:
+            logger.error(f"Failed to add CI failure analysis job: {e}", exc_info=True)
+
     def stop(self) -> None:
         """停止调度器"""
         if self.scheduler.running:
@@ -319,6 +332,12 @@ class DataSyncScheduler:
                     .values(last_sync_at=datetime.now(UTC))
                 )
                 await db.commit()
+
+                # 同步完成后，分析新发现的失败 jobs
+                try:
+                    await self._analyze_failed_jobs(db)
+                except Exception as analyze_err:
+                    logger.warning(f"Failed to analyze CI failures (non-fatal): {analyze_err}")
 
                 logger.info("=" * 60)
                 logger.info(f"CI DATA SYNC JOB COMPLETED - Collected {collected} runs")
@@ -572,6 +591,44 @@ class DataSyncScheduler:
             logger.error("=" * 60)
             logger.error(f"RESOURCE METRICS COLLECT JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
+
+    async def _analyze_failed_jobs(self, db=None) -> int:
+        """
+        分析最近失败的、尚未分析的 CI jobs。
+
+        Args:
+            db: 可选的外部 session。若未提供则自行创建。
+
+        Returns:
+            分析的 job 数量
+        """
+        try:
+            from app.services.log_analyzer import LogAnalyzer
+
+            if db is not None:
+                analyzer = LogAnalyzer(db)
+                results = await analyzer.analyze_failed_jobs_batch(limit=5)
+                return len(results)
+
+            async with SessionLocal() as session:
+                analyzer = LogAnalyzer(session)
+                results = await analyzer.analyze_failed_jobs_batch(limit=5)
+                return len(results)
+        except Exception as e:
+            logger.warning(f"Failed job analysis error (non-fatal): {e}")
+            return 0
+
+    async def _analyze_failures_scheduled_job(self) -> None:
+        """定时分析失败 CI jobs 的独立任务"""
+        logger.info("=" * 60)
+        logger.info("CI FAILURE ANALYSIS JOB STARTED")
+        logger.info("=" * 60)
+
+        try:
+            count = await self._analyze_failed_jobs(db=None)
+            logger.info(f"CI FAILURE ANALYSIS JOB COMPLETED - Analyzed {count} jobs")
+        except Exception as e:
+            logger.error(f"CI FAILURE ANALYSIS JOB FAILED: {e}", exc_info=True)
 
     async def _cleanup_resource_metrics_job(self) -> None:
         """NPU 指标数据清理任务"""
