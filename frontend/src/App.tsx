@@ -21,6 +21,8 @@ import GitHubActivityDetail from './pages/GitHubActivityDetail'
 import CommitAnalysisDetail from './pages/CommitAnalysisDetail'
 import ProjectBoard from './pages/ProjectBoard'
 import ProjectBoardConfig from './pages/ProjectBoardConfig'
+import PRPipelineBoard from './pages/PRPipelineBoard'
+import PRDetail from './pages/PRDetail'
 import ResourceDashboard from './pages/ResourceDashboard'
 import ResourceDashboardConfig from './pages/ResourceDashboardConfig'
 import DailyReportConfigPage from './pages/DailyReportConfig'
@@ -140,6 +142,9 @@ function App() {
               {/* GitHub 动态详情页面 */}
               <Route path="github-activity/:project" element={<GitHubActivityDetail />} />
               <Route path="github-activity/:project/commits/:sha" element={<CommitAnalysisDetail />} />
+              {/* PR Pipeline Kanban */}
+              <Route path="pr-pipeline" element={<PRPipelineBoard />} />
+              <Route path="pr-pipeline/:prNumber" element={<PRDetail />} />
 
               {/* 仅管理员访问的路由 */}
               <Route
