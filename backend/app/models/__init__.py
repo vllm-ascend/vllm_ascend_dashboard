@@ -28,6 +28,7 @@ __all__ = [
     "ResourceNodeMetrics",
     "AlertRule", "AlertConditionGroup", "AlertCondition", "AlertHistory",
     "JobFailureAnalysis",
+    "PullRequest",
 ]
 
 
@@ -407,3 +408,50 @@ class AlertHistory(Base):
 
 # 导入每日总结相关模型
 from .daily_summary import DailyPR, DailyIssue, DailyCommit, DailySummary, LLMProviderConfig
+
+
+class PullRequest(Base):
+    """PR 全生命周期数据"""
+    __tablename__ = "pull_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pr_number = Column(BigInteger, nullable=False, index=True)
+    owner = Column(String(100), nullable=False, index=True)
+    repo = Column(String(100), nullable=False, index=True)
+
+    title = Column(String(500), nullable=False)
+    author = Column(String(100), nullable=False, index=True)
+    author_avatar_url = Column(String(500))
+    html_url = Column(String(500))
+    state = Column(String(20), nullable=False, index=True)
+    is_draft = Column(Boolean, default=False, index=True)
+    labels = Column(JSON, default=list)
+
+    head_branch = Column(String(200))
+    head_sha = Column(String(40), index=True)
+    base_branch = Column(String(200))
+
+    additions = Column(Integer, default=0)
+    deletions = Column(Integer, default=0)
+    changed_files = Column(Integer, default=0)
+
+    pipeline_stage = Column(String(20), index=True)
+    review_status = Column(String(20), index=True)
+    reviewers = Column(JSON, default=list)
+    ci_status = Column(String(20), index=True)
+    ci_workflow_run_id = Column(BigInteger)
+
+    first_review_at = Column(TIMESTAMP)
+    first_approved_at = Column(TIMESTAMP)
+    ci_started_at = Column(TIMESTAMP)
+    ci_completed_at = Column(TIMESTAMP)
+    merged_at = Column(TIMESTAMP)
+    closed_at = Column(TIMESTAMP)
+    created_at = Column(TIMESTAMP, nullable=False, index=True, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    data = Column(JSON)
+
+    __table_args__ = (
+        UniqueConstraint("pr_number", "owner", "repo", name="uq_pr_owner_repo"),
+    )
