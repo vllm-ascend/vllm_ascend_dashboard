@@ -42,6 +42,8 @@ import {
   ExperimentOutlined,
   MergeOutlined,
   PlusOutlined,
+  RocketOutlined,
+  CodeOutlined,
 } from '@ant-design/icons'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCurrentUser } from '../hooks/useCurrentUser'
@@ -58,6 +60,7 @@ import api from '../services/api'
 import { formatTimezone } from '../utils/timezone'
 import { useSyncProgress } from '../hooks/useCI'
 import { getGitCacheStatus, syncGitCache, type GitCacheStatus } from '../services/systemConfig'
+import { listSkills, getSkillDetail, refreshSkills, type SkillInfo, type SkillDetail } from '../services/skills'
 import {
   getDashboardConfig,
   updateLocalCache,
@@ -143,6 +146,7 @@ function SystemConfig() {
   const [llmProviderForm] = Form.useForm()
   const [systemPromptForm] = Form.useForm()
   const [commitAnalysisPromptForm] = Form.useForm()
+  const [ciFailureAnalysisPromptForm] = Form.useForm()
 
   // 同步配置相关 state
   const [syncActiveTab, setSyncActiveTab] = useState('project_cache')
@@ -191,6 +195,7 @@ function SystemConfig() {
   // 系统提示词配置 hooks
   const { data: systemPromptConfig, isLoading: systemPromptConfigLoading } = useSystemPromptConfig()
   const { data: commitAnalysisPromptConfig } = useSystemPromptConfig('commit_analysis')
+  const { data: ciFailureAnalysisPromptConfig } = useSystemPromptConfig('ci_failure_analysis')
   const updateSystemPromptMutation = useUpdateSystemPromptConfig()
 
   const [isAppConfigModalOpen, setIsAppConfigModalOpen] = useState(false)
@@ -200,6 +205,7 @@ function SystemConfig() {
   const [selectedLLMProvider, setSelectedLLMProvider] = useState<string | null>(null)
   const [isSystemPromptModalOpen, setIsSystemPromptModalOpen] = useState(false)
   const [isCommitAnalysisPromptModalOpen, setIsCommitAnalysisPromptModalOpen] = useState(false)
+  const [isCIFailureAnalysisPromptModalOpen, setIsCIFailureAnalysisPromptModalOpen] = useState(false)
 
   const [activeTabKey, setActiveTabKey] = useState('system')
 
@@ -1174,8 +1180,203 @@ function SystemConfig() {
             ]}
           />
         </div>
+
+        <Divider />
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Title level={5} style={{ margin: 0 }}>
+              <MessageOutlined style={{ marginRight: 8 }} />
+              CI 失败分析系统提示词
+            </Title>
+            {isSuperAdmin && (
+              <Button size="small" icon={<MessageOutlined />} onClick={() => setIsCIFailureAnalysisPromptModalOpen(true)}>
+                编辑
+              </Button>
+            )}
+          </div>
+          <Alert
+            message="说明"
+            description="系统提示词用于指导 AI 分析 CI 失败 Job 的根因分类和改进建议。基于 auto-bug-fixer 技能模板，附加 CI 专属分类附录。"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+            <Collapse
+            items={[
+              {
+                key: 'ci-failure-ascend',
+                label: <Tag color="orange">CI 失败分析提示词（当前配置）</Tag>,
+                children: (
+                  <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                    <Text>{ciFailureAnalysisPromptConfig?.prompts?.default || ciFailureAnalysisPromptConfig?.prompts?.ascend || '未配置（使用默认提示词）'}</Text>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </div>
       </Space>
     </Card>
+  )
+
+  const [skillsList, setSkillsList] = useState<SkillInfo[]>([])
+  const [skillsLoading, setSkillsLoading] = useState(false)
+  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null)
+  const [skillDetail, setSkillDetail] = useState<SkillDetail | null>(null)
+  const [skillDetailLoading, setSkillDetailLoading] = useState(false)
+  const [skillRefreshing, setSkillRefreshing] = useState(false)
+
+  const loadSkills = async () => {
+    setSkillsLoading(true)
+    try {
+      const data = await listSkills()
+      setSkillsList(data)
+    } catch (error) {
+      message.error('加载 Skills 失败')
+    } finally {
+      setSkillsLoading(false)
+    }
+  }
+
+  const loadSkillDetail = async (name: string) => {
+    setSelectedSkillName(name)
+    setSkillDetailLoading(true)
+    try {
+      const data = await getSkillDetail(name)
+      setSkillDetail(data)
+    } catch (error) {
+      message.error('加载 Skill 详情失败')
+    } finally {
+      setSkillDetailLoading(false)
+    }
+  }
+
+  const handleRefreshSkills = async () => {
+    setSkillRefreshing(true)
+    try {
+      const result = await refreshSkills()
+      message.success(result.message)
+      await loadSkills()
+    } catch (error) {
+      message.error('刷新 Skills 失败')
+    } finally {
+      setSkillRefreshing(false)
+    }
+  }
+
+  useEffect(() => {
+    if (activeTabKey === 'skills') {
+      loadSkills()
+    }
+  }, [activeTabKey])
+
+  const renderSkillsTab = () => (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Card
+        title="已安装的 Skills"
+        extra={
+          <Button
+            icon={<ReloadOutlined />}
+            loading={skillRefreshing}
+            onClick={handleRefreshSkills}
+          >
+            刷新
+          </Button>
+        }
+      >
+        <Table
+          dataSource={skillsList}
+          loading={skillsLoading}
+          rowKey="name"
+          pagination={false}
+          columns={[
+            {
+              title: 'Skill 名称',
+              dataIndex: 'name',
+              key: 'name',
+              render: (name: string) => (
+                <Button type="link" onClick={() => loadSkillDetail(name)} style={{ padding: 0 }}>
+                  <CodeOutlined style={{ marginRight: 4 }} />
+                  {name}
+                </Button>
+              ),
+            },
+            {
+              title: '描述',
+              dataIndex: 'description',
+              key: 'description',
+              ellipsis: true,
+            },
+            {
+              title: '关联 Scope',
+              dataIndex: 'scope',
+              key: 'scope',
+              render: (scope: string | null) => scope ? <Tag color="blue">{scope}</Tag> : '-',
+            },
+            {
+              title: '内容长度',
+              dataIndex: 'content_length',
+              key: 'content_length',
+              render: (len: number) => len > 0 ? `${len} 字符` : '-',
+            },
+            {
+              title: '加载时间',
+              dataIndex: 'loaded_at',
+              key: 'loaded_at',
+              render: (at: string) => at ? dayjs(at).format('YYYY-MM-DD HH:mm:ss') : '-',
+            },
+          ]}
+        />
+        {skillsList.length === 0 && !skillsLoading && (
+          <Alert
+            message="未安装任何 Skill"
+            description="请将 Skill 文件（SKILL.md）放到 data/skills/<skill_name>/ 目录下，然后点击刷新按钮加载"
+            type="info"
+            showIcon
+            style={{ marginTop: 16 }}
+          />
+        )}
+      </Card>
+
+      {selectedSkillName && (
+        <Card
+          title={<Space><CodeOutlined /> Skill 详情: {selectedSkillName}</Space>}
+          loading={skillDetailLoading}
+        >
+          {skillDetail && (
+            <Descriptions column={1} bordered size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="名称">{skillDetail.name}</Descriptions.Item>
+              <Descriptions.Item label="描述">{skillDetail.description}</Descriptions.Item>
+              <Descriptions.Item label="关联 Scope">
+                {skillDetail.scope ? <Tag color="blue">{skillDetail.scope}</Tag> : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="文件路径">
+                <Text copyable style={{ fontFamily: 'monospace', fontSize: 12 }}>{skillDetail.file_path}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="加载时间">{skillDetail.loaded_at}</Descriptions.Item>
+            </Descriptions>
+          )}
+          {skillDetail?.content && (
+            <div style={{ marginTop: 16 }}>
+              <Text strong style={{ marginBottom: 8, display: 'block' }}>Skill 内容（SKILL.md）</Text>
+              <div style={{
+                padding: 16,
+                background: '#fafafa',
+                borderRadius: 8,
+                maxHeight: '500px',
+                overflowY: 'auto',
+                fontSize: 13,
+                fontFamily: 'monospace',
+                whiteSpace: 'pre-wrap',
+                lineHeight: 1.6,
+              }}>
+                {skillDetail.content}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+    </Space>
   )
 
   const tabItems = [
@@ -1218,6 +1419,16 @@ function SystemConfig() {
         </Space>
       ),
       children: null, // Will be added separately
+    },
+    {
+      key: 'skills',
+      label: (
+        <Space>
+          <RocketOutlined />
+          Skills 管理
+        </Space>
+      ),
+      children: renderSkillsTab(),
     },
   ]
 
@@ -2195,6 +2406,73 @@ function SystemConfig() {
               <Button onClick={() => {
                 setIsCommitAnalysisPromptModalOpen(false)
                 commitAnalysisPromptForm.resetFields()
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit" loading={updateSystemPromptMutation.isPending}>
+                保存
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* CI 失败分析系统提示词编辑弹窗 */}
+      <Modal
+        title="编辑 CI 失败分析系统提示词"
+        open={isCIFailureAnalysisPromptModalOpen}
+        onCancel={() => {
+          setIsCIFailureAnalysisPromptModalOpen(false)
+          ciFailureAnalysisPromptForm.resetFields()
+        }}
+        footer={null}
+        width={800}
+      >
+        <Alert
+          message="说明"
+          description="系统提示词用于指导 AI 分析 CI 失败 Job 的根因分类和改进建议。留空将使用基于 auto-bug-fixer 技能的默认提示词。"
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Form
+          form={ciFailureAnalysisPromptForm}
+          layout="vertical"
+          onFinish={(values) => {
+            updateSystemPromptMutation.mutate({
+              prompts: {
+                default: values.default,
+              },
+              scope: 'ci_failure_analysis',
+            }, {
+              onSuccess: () => {
+                message.success('CI 失败分析系统提示词已更新')
+                setIsCIFailureAnalysisPromptModalOpen(false)
+              },
+              onError: (error: any) => {
+                message.error(error.response?.data?.detail || '更新失败')
+              },
+            })
+          }}
+          initialValues={{
+            default: ciFailureAnalysisPromptConfig?.prompts?.default || '',
+          }}
+        >
+          <Form.Item
+            name="default"
+            label={<Tag color="orange">CI 失败分析提示词</Tag>}
+          >
+            <Input.TextArea
+              rows={10}
+              placeholder="用于 CI 失败 Job 诊断的系统提示词...（留空使用默认 auto-bug-fixer 模板 + CI 分类附录）"
+            />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setIsCIFailureAnalysisPromptModalOpen(false)
+                ciFailureAnalysisPromptForm.resetFields()
               }}>
                 取消
               </Button>

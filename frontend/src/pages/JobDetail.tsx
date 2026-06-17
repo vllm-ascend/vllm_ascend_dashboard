@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Button, Space, Typography, Tag, Descriptions, Timeline, Empty, Alert, message, Spin } from 'antd'
+import { Card, Button, Space, Typography, Tag, Descriptions, Timeline, Empty, Alert, message, Spin, Tooltip } from 'antd'
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
@@ -8,16 +8,20 @@ import {
   SyncOutlined,
   GithubOutlined,
   RobotOutlined,
-  BulbOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons'
-import { useJobDetail, useJobAnalysis, useTriggerJobAnalysis } from '../hooks/useCI'
+import { useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { useJobDetail } from '../hooks/useCI'
 import { useJobOwners } from '../hooks/useJobOwners'
+import { useJobFailureAnalysis, useFailureAnalysisReport, useAnalyzeFailedJob } from '../hooks/useFailureAnalysis'
+import { PROBLEM_CATEGORY_MAP, ANALYSIS_STATUS_MAP } from '../services/failureAnalysis'
 import { formatTimezone } from '../utils/timezone'
 import { renderStatusTag, renderConclusionTag, formatDuration, renderHardwareTag } from '../utils/ciRenderers'
 
 const { Title, Text } = Typography
 
-// Step 状态标签
 const renderStepStatus = (status: string, conclusion: string | null) => {
   if (status === 'completed') {
     if (conclusion === 'success') {
@@ -43,16 +47,34 @@ function JobDetail() {
 
   const { data: job, isLoading, refetch } = useJobDetail(jobIdNum)
   const { data: jobOwners } = useJobOwners()
-  const { data: analysis, isLoading: analysisLoading } = useJobAnalysis(jobIdNum)
-  const triggerAnalysis = useTriggerJobAnalysis()
+  const { data: analysis, isLoading: analysisLoading } = useJobFailureAnalysis(jobIdNum)
+  const { data: reportData, isLoading: reportLoading } = useFailureAnalysisReport(
+    analysis?.analysis_status === 'completed' ? analysis?.id : null
+  )
+  const analyzeMutation = useAnalyzeFailedJob()
 
-  // 查找 display_name
+  const [showFullReport, setShowFullReport] = useState(false)
+
   const ownerInfo = jobOwners?.find(
     (o) => o.workflow_name === job?.workflow_name && o.job_name === job?.job_name
   )
   const displayName = ownerInfo?.display_name
 
-  // 刷新数据
+  useEffect(() => {
+    if (analyzeMutation.isSuccess && analyzeMutation.data) {
+      message.success('分析完成')
+      refetch()
+    }
+  }, [analyzeMutation.isSuccess, analyzeMutation.data, refetch])
+
+  useEffect(() => {
+    if (analyzeMutation.isError) {
+      const errorMsg = (analyzeMutation.error as any)?.response?.data?.detail ||
+        (analyzeMutation.error as any)?.message || '分析失败，请稍后重试'
+      message.error(errorMsg)
+    }
+  }, [analyzeMutation.isError, analyzeMutation.error])
+
   const handleRefresh = async () => {
     try {
       await refetch()
@@ -62,17 +84,25 @@ function JobDetail() {
     }
   }
 
-  // 触发 AI 分析
-  const handleAnalyze = async () => {
+  const handleAnalyze = () => {
     if (!jobIdNum) return
-    try {
-      await triggerAnalysis.mutateAsync(jobIdNum)
-      message.success('AI 分析完成')
-    } catch (error: any) {
-      const msg = error?.response?.data?.detail || '分析失败'
-      message.error(msg)
-    }
+    analyzeMutation.mutate({ jobId: jobIdNum, force: !analysis })
   }
+
+  const handleReAnalyze = () => {
+    if (!jobIdNum) return
+    analyzeMutation.mutate({ jobId: jobIdNum, force: true })
+  }
+
+  const isFailed = job?.conclusion === 'failure' || job?.conclusion === 'cancelled'
+
+  const statusInfo = analysis
+    ? ANALYSIS_STATUS_MAP[analysis.analysis_status] || { color: '#64748d', label: analysis.analysis_status }
+    : null
+
+  const categoryInfo = analysis?.problem_category
+    ? PROBLEM_CATEGORY_MAP[analysis.problem_category] || { color: '#64748d', label: analysis.problem_category }
+    : null
 
   if (isLoading) {
     return (
@@ -100,7 +130,6 @@ function JobDetail() {
 
   return (
     <div style={{ padding: 24 }}>
-      {/* 返回按钮和标题 */}
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/ci/runs/${job.run_id}`)}>
           返回 Workflow 详情
@@ -115,13 +144,15 @@ function JobDetail() {
             在 GitHub 上查看
           </Button>
         )}
+        <Button icon={<SyncOutlined />} onClick={handleRefresh}>
+          刷新
+        </Button>
       </Space>
 
       <Title level={2} style={{ marginBottom: 24 }}>
         Job 详情
       </Title>
 
-      {/* Job 基本信息 */}
       <Card style={{ marginBottom: 24 }}>
         <Descriptions column={4} bordered>
           <Descriptions.Item label="Job 名称" span={2}>
@@ -167,7 +198,6 @@ function JobDetail() {
         </Descriptions>
       </Card>
 
-      {/* Runner 标签 */}
       {job.runner_labels && job.runner_labels.length > 0 && (
         <Card title="Runner 标签" style={{ marginBottom: 24 }}>
           <Space wrap>
@@ -178,7 +208,158 @@ function JobDetail() {
         </Card>
       )}
 
-      {/* Steps 详情 */}
+      {isFailed && (
+        <Card
+          title={
+            <Space>
+              <FileSearchOutlined />
+              <span>失败智能诊断</span>
+              {statusInfo && <Tag color={statusInfo.color}>{statusInfo.label}</Tag>}
+              {categoryInfo && <Tag color={categoryInfo.color}>{categoryInfo.label}</Tag>
+              }
+            </Space>
+          }
+          style={{ marginBottom: 24 }}
+          extra={
+            <Space>
+              <Button
+                icon={<RobotOutlined />}
+                loading={analyzeMutation.isPending}
+                onClick={analysis ? handleReAnalyze : handleAnalyze}
+                type="primary"
+                size="small"
+              >
+                {analysis ? '重新分析' : '开始分析'}
+              </Button>
+            </Space>
+          }
+        >
+          {analyzeMutation.isPending && (
+            <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <Spin size="large" />
+              <div style={{ marginTop: 16, color: '#8c8c8c' }}>
+                <p>AI 正在分析失败原因，请耐心等待...</p>
+              </div>
+            </div>
+          )}
+
+          {!analyzeMutation.isPending && !analysis && (
+            <Empty
+              description="该失败 Job 尚未进行智能诊断分析"
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            >
+              <Button type="primary" icon={<RobotOutlined />} onClick={handleAnalyze}>
+                开始分析
+              </Button>
+            </Empty>
+          )}
+
+          {!analyzeMutation.isPending && analysis && (
+            <div>
+              <Descriptions column={2} bordered size="small">
+                <Descriptions.Item label="问题分类">
+                  {categoryInfo ? (
+                    <Tag color={categoryInfo.color}>{categoryInfo.label}</Tag>
+                  ) : '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="分析状态">
+                  {statusInfo ? (
+                    <Tag color={statusInfo.color}>{statusInfo.label}</Tag>
+                  ) : '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="根因摘要" span={2}>
+                  {analysis.root_cause_summary || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="改进建议" span={2}>
+                  {analysis.improvement_measures_summary || '-'}
+                </Descriptions.Item>
+                {analysis.llm_provider && (
+                  <Descriptions.Item label="LLM">
+                    {analysis.llm_provider}/{analysis.llm_model || '-'}
+                  </Descriptions.Item>
+                )}
+                {analysis.generation_time_seconds && (
+                  <Descriptions.Item label="耗时">
+                    {analysis.generation_time_seconds.toFixed(1)}s
+                  </Descriptions.Item>
+                )}
+                {analysis.reused_analysis_id && (
+                  <Descriptions.Item label="复用分析" span={2}>
+                    <Text type="secondary">复用分析 #{analysis.reused_analysis_id}（相同失败指纹）</Text>
+                  </Descriptions.Item>
+                )}
+                {analysis.error_message && (
+                  <Descriptions.Item label="错误信息" span={2}>
+                    <Text type="danger">{analysis.error_message}</Text>
+                  </Descriptions.Item>
+                )}
+              </Descriptions>
+
+              {analysis.analysis_status === 'completed' && reportData?.content && (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <Text strong>详细分析报告</Text>
+                    <Button
+                      size="small"
+                      type="link"
+                      onClick={() => setShowFullReport(!showFullReport)}
+                    >
+                      {showFullReport ? '收起' : '展开完整报告'}
+                    </Button>
+                  </div>
+                  {showFullReport && (
+                    <div style={{ padding: 16, background: '#fafafa', borderRadius: 8, maxHeight: '500px', overflowY: 'auto' }}>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          table: ({ node, ...props }) => (
+                            <div style={{ overflowX: 'auto', marginBottom: 16 }}>
+                              <table style={{ borderCollapse: 'collapse', width: '100%' }} {...props} />
+                            </div>
+                          ),
+                          th: ({ node, ...props }) => (
+                            <th style={{ border: '1px solid #d9d9d9', padding: '8px 12px', background: '#f5f5f5', textAlign: 'left' }} {...props} />
+                          ),
+                          td: ({ node, ...props }) => (
+                            <td style={{ border: '1px solid #d9d9d9', padding: '8px 12px', verticalAlign: 'top' }} {...props} />
+                          ),
+                        }}
+                      >
+                        {reportData.content}
+                      </ReactMarkdown>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {analysis.analysis_status === 'analyzing' && (
+                <div style={{ textAlign: 'center', padding: 20 }}>
+                  <Spin tip="分析进行中..." />
+                  <div style={{ marginTop: 12, color: '#8c8c8c' }}>
+                    <p>系统正在自动分析中，请稍后刷新查看结果</p>
+                  </div>
+                </div>
+              )}
+
+              {analysis.analysis_status === 'failed' && (
+                <Alert
+                  message="分析失败"
+                  description={analysis.error_message || '请点击重新分析按钮重试'}
+                  type="error"
+                  showIcon
+                  style={{ marginTop: 16 }}
+                  action={
+                    <Button size="small" onClick={handleReAnalyze} loading={analyzeMutation.isPending}>
+                      重新分析
+                    </Button>
+                  }
+                />
+              )}
+            </div>
+          )}
+        </Card>
+      )}
+
       <Card title="Steps 详情" style={{ marginBottom: 24 }}>
         {job.steps_data && job.steps_data.length > 0 ? (
           <Timeline
@@ -232,93 +413,6 @@ function JobDetail() {
           <Empty description="暂无 Steps 信息" />
         )}
       </Card>
-
-      {/* AI 分析结果 — 仅失败 job 显示 */}
-      {(job.conclusion === 'failure' || job.conclusion === 'cancelled') && (
-        <Card
-          title={
-            <Space>
-              <RobotOutlined />
-              <span>AI 失败分析</span>
-              <Tag color="purple">Claude Code CLI</Tag>
-            </Space>
-          }
-          style={{ marginBottom: 24 }}
-        >
-          {analysisLoading ? (
-            <div style={{ textAlign: 'center', padding: 24 }}>
-              <Spin tip="正在加载分析结果..." />
-            </div>
-          ) : analysis ? (
-            <div>
-              <Descriptions column={3} size="small" bordered style={{ marginBottom: 16 }}>
-                <Descriptions.Item label="根因分类">
-                  <Tag color={
-                    analysis.root_cause_category === 'code_bug' ? 'red' :
-                    analysis.root_cause_category === 'env_issue' ? 'orange' :
-                    analysis.root_cause_category === 'infra' ? 'purple' :
-                    analysis.root_cause_category === 'flaky_test' ? 'gold' :
-                    analysis.root_cause_category === 'timeout' ? 'volcano' :
-                    'default'
-                  }>
-                    {analysis.root_cause_category || 'unknown'}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="置信度">
-                  {analysis.confidence === 'high' ? '🟢 高' :
-                   analysis.confidence === 'medium' ? '🟡 中' : '🔴 低'}
-                </Descriptions.Item>
-                <Descriptions.Item label="分析时间">
-                  {analysis.analyzed_at ? formatTimezone(analysis.analyzed_at) : '-'}
-                </Descriptions.Item>
-              </Descriptions>
-
-              <Card type="inner" title="根因分析" style={{ marginBottom: 12 }}>
-                <div style={{ whiteSpace: 'pre-wrap' }}>
-                  {analysis.analysis_markdown || '暂无详细分析'}
-                </div>
-              </Card>
-
-              {analysis.suggested_fix && (
-                <Card
-                  type="inner"
-                  title={<Space><BulbOutlined />修复建议</Space>}
-                  style={{ marginBottom: 12, borderLeft: '3px solid #52c41a' }}
-                >
-                  <div style={{ whiteSpace: 'pre-wrap' }}>
-                    {analysis.suggested_fix}
-                  </div>
-                </Card>
-              )}
-
-              {analysis.related_commits && analysis.related_commits.length > 0 && (
-                <Card type="inner" title="相关 Commits" size="small">
-                  <Space wrap>
-                    {analysis.related_commits.map((sha: string) => (
-                      <Tag key={sha} color="blue">
-                        <code>{sha.slice(0, 7)}</code>
-                      </Tag>
-                    ))}
-                  </Space>
-                </Card>
-              )}
-            </div>
-          ) : (
-            <div style={{ textAlign: 'center', padding: 24 }}>
-              <Empty description="暂无 AI 分析结果">
-                <Button
-                  type="primary"
-                  icon={<RobotOutlined />}
-                  onClick={handleAnalyze}
-                  loading={triggerAnalysis.isPending}
-                >
-                  AI 分析失败原因
-                </Button>
-              </Empty>
-            </div>
-          )}
-        </Card>
-      )}
     </div>
   )
 }

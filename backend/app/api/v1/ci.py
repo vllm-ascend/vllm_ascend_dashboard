@@ -11,9 +11,9 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import CurrentSuperAdminUser, DbSession
+from app.api.deps import CurrentSuperAdminUser, DbSession, CurrentAdminUser
 from app.core.config import settings
-from app.models import CIJob, CIResult, JobOwner, User, WorkflowConfig
+from app.models import CIJob, CIResult, JobOwner, User, WorkflowConfig, JobFailureAnalysis
 from app.schemas import (
     CIDailyReport,
     CIJobDetailResponse,
@@ -23,6 +23,8 @@ from app.schemas import (
     CISyncResponse,
     CITrend,
     WorkflowLatestResult,
+    FailureAnalysisResponse,
+    FailureAnalysisListResponse,
 )
 from app.services.scheduler import get_scheduler
 from app.services.sync_progress import get_sync_progress
@@ -931,106 +933,110 @@ async def get_daily_report(
         )
 
 
-# ============ CI 失败分析 API（Claude Code CLI 驱动）============
+# ============ Failure Analysis API ============
 
-
-@router.get("/jobs/{job_id}/analysis")
-async def get_job_analysis(
+@router.post("/failure-analysis/analyze/{job_id}", response_model=FailureAnalysisResponse)
+async def analyze_failed_job(
     job_id: int,
+    current_user: CurrentAdminUser,
     db: DbSession,
+    force: bool = Query(default=False, description="强制重新分析"),
 ):
-    """获取指定 job 的 AI 分析结果"""
-    from app.models import CIFailureAnalysis
-
-    stmt = select(CIFailureAnalysis).where(CIFailureAnalysis.job_id == job_id)
-    result = await db.execute(stmt)
-    analysis = result.scalar_one_or_none()
-
-    if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No analysis found for job {job_id}",
-        )
-
-    return {
-        "id": analysis.id,
-        "job_id": analysis.job_id,
-        "run_id": analysis.run_id,
-        "workflow_name": analysis.workflow_name,
-        "job_name": analysis.job_name,
-        "root_cause_category": analysis.root_cause_category,
-        "analysis_markdown": analysis.analysis_markdown,
-        "suggested_fix": analysis.suggested_fix,
-        "related_commits": analysis.related_commits,
-        "confidence": analysis.confidence,
-        "claude_model_used": analysis.claude_model_used,
-        "analyzed_at": analysis.analyzed_at.isoformat() if analysis.analyzed_at else None,
-    }
-
-
-@router.post("/jobs/{job_id}/analyze")
-async def trigger_job_analysis(
-    job_id: int,
-    db: DbSession,
-    current_user: CurrentSuperAdminUser,
-):
-    """手动触发单个 job 的 AI 分析（需要 super_admin 权限）"""
-    from app.models import CIJob as CIJobModel
-    from app.services.log_analyzer import LogAnalyzer
-
-    stmt = select(CIJobModel).where(CIJobModel.job_id == job_id)
-    result = await db.execute(stmt)
-    job = result.scalar_one_or_none()
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {job_id} not found",
-        )
-
+    from app.services.failure_analysis import FailureAnalysisService
+    service = FailureAnalysisService()
     try:
-        analyzer = LogAnalyzer(db)
-        analysis = await analyzer.analyze_failed_job(job)
-        await analyzer._save_analysis(job, analysis)
-
-        return {
-            "success": True,
-            "job_id": job_id,
-            "analysis": analysis,
-        }
+        analysis = await service.analyze_failed_job(job_id=job_id, db=db, force=force)
+        return analysis
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to analyze job {job_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Analysis failed: {str(e)}",
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"分析失败: {str(e)}")
 
 
-@router.post("/analyze-failures")
-async def trigger_batch_analysis(
+@router.post("/failure-analysis/analyze-batch")
+async def analyze_batch(
+    current_user: CurrentAdminUser,
     db: DbSession,
-    current_user: CurrentSuperAdminUser,
-    limit: int = Query(default=10, ge=1, le=50),
+    days_back: int = Query(default=7, description="分析最近N天的失败Job"),
 ):
-    """
-    批量分析最近失败的、尚未分析的 CI jobs（需要 super_admin 权限）
-
-    Args:
-        limit: 最多分析多少个 job
-    """
-    from app.services.log_analyzer import LogAnalyzer
-
+    from app.services.failure_analysis import FailureAnalysisService
+    service = FailureAnalysisService()
     try:
-        analyzer = LogAnalyzer(db)
-        results = await analyzer.analyze_failed_jobs_batch(limit=limit)
+        results = await service.analyze_batch(days_back=days_back, db=db)
         return {
             "success": True,
-            "total_analyzed": len(results),
-            "results": results,
+            "message": f"分析完成，共处理 {len(results)} 个失败Job",
+            "count": len(results),
         }
     except Exception as e:
-        logger.error(f"Batch analysis failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Batch analysis failed: {str(e)}",
-        )
+        logger.error(f"Failed to analyze batch: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"批量分析失败: {str(e)}")
+
+
+@router.get("/failure-analysis/list", response_model=FailureAnalysisListResponse)
+async def list_failure_analyses(
+    problem_category: str | None = Query(default=None),
+    analysis_status_filter: str | None = Query(default=None, alias="analysis_status"),
+    workflow_name: str | None = Query(default=None),
+    days_back: int | None = Query(default=7),
+    db: DbSession = None,
+):
+    from app.services.failure_analysis import FailureAnalysisService
+    service = FailureAnalysisService()
+    filters = {}
+    if problem_category:
+        filters["problem_category"] = problem_category
+    if analysis_status_filter:
+        filters["analysis_status"] = analysis_status_filter
+    if workflow_name:
+        filters["workflow_name"] = workflow_name
+    if days_back:
+        filters["days_back"] = days_back
+    return await service.list_analyses(filters=filters, db=db)
+
+
+@router.get("/failure-analysis/{analysis_id}", response_model=FailureAnalysisResponse)
+async def get_failure_analysis(
+    analysis_id: int,
+    db: DbSession,
+):
+    from app.services.failure_analysis import FailureAnalysisService
+    service = FailureAnalysisService()
+    analysis = await service.get_analysis(analysis_id=analysis_id, db=db)
+    if not analysis:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分析记录不存在")
+    return analysis
+
+
+@router.get("/failure-analysis/{analysis_id}/report")
+async def get_failure_analysis_report(
+    analysis_id: int,
+    db: DbSession,
+):
+    from app.services.failure_analysis import FailureAnalysisService
+    service = FailureAnalysisService()
+    analysis = await service.get_analysis(analysis_id=analysis_id, db=db)
+    if not analysis:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分析记录不存在")
+    if not analysis.report_file_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告文件不存在")
+    from app.services.failure_analysis_file_store import FailureAnalysisFileStore
+    file_store = FailureAnalysisFileStore()
+    content = await file_store.read_report_by_path(analysis.report_file_path)
+    if not content:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告文件读取失败")
+    return {"content": content, "analysis_id": analysis_id}
+
+
+@router.get("/jobs/{job_id}/failure-analysis", response_model=FailureAnalysisResponse | None)
+async def get_job_failure_analysis(
+    job_id: int,
+    db: DbSession,
+):
+    from app.services.failure_analysis import FailureAnalysisService
+    service = FailureAnalysisService()
+    analysis = await service.get_analysis_by_job_id(job_id=job_id, db=db)
+    if not analysis:
+        return None
+    return analysis

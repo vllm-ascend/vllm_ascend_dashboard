@@ -24,10 +24,10 @@ __all__ = [
     "WorkflowConfig", "PerformanceData", "JobOwner",
     "ModelSyncConfig", "ProjectDashboardConfig", "KubernetesClusterConfig",
     "DailyPR", "DailyIssue", "DailyCommit", "DailySummary", "LLMProviderConfig",
-    "DailyReportHistory", "ResourceNpuMetrics",
+    "DailyReportHistory", "ResourceNpuMetrics", "JobFailureAnalysis",
     "ResourceNodeMetrics",
     "AlertRule", "AlertConditionGroup", "AlertCondition", "AlertHistory",
-    "CIFailureAnalysis",
+    "JobFailureAnalysis",
 ]
 
 
@@ -332,13 +332,44 @@ class AlertRule(Base):
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
+class JobFailureAnalysis(Base):
+    """CI Job 失败分析表"""
+    __tablename__ = "job_failure_analysis"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(BigInteger, nullable=False, unique=True, index=True)
+    run_id = Column(BigInteger, nullable=False, index=True)
+    workflow_name = Column(String(100), nullable=False, index=True)
+    job_name = Column(String(500), nullable=False)
+    failure_date = Column(TIMESTAMP, nullable=False, index=True)
+
+    failure_fingerprint = Column(String(32), index=True)
+    reused_analysis_id = Column(Integer)
+
+    problem_category = Column(String(20), index=True)
+    root_cause_summary = Column(String(500))
+    improvement_measures_summary = Column(String(500))
+    report_file_path = Column(String(200))
+
+    llm_provider = Column(String(50))
+    llm_model = Column(String(100))
+    prompt_tokens = Column(Integer)
+    completion_tokens = Column(Integer)
+    generation_time_seconds = Column(Float)
+
+    analysis_status = Column(String(20), default="pending", index=True)
+    error_message = Column(String(500))
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
 class AlertConditionGroup(Base):
     """告警条件组表（组间 AND）"""
     __tablename__ = "alert_condition_groups"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     rule_id = Column(Integer, ForeignKey("alert_rules.id"), nullable=False, index=True)
-    logic = Column(String(10), nullable=False, default="AND")  # AND / OR
+    logic = Column(String(10), nullable=False, default="AND")
     display_order = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
@@ -372,26 +403,6 @@ class AlertHistory(Base):
     triggered_at = Column(TIMESTAMP, nullable=False, default=lambda: datetime.now(UTC), index=True)
     notification_sent = Column(Boolean, default=False)
     notification_error = Column(Text, nullable=True)
-
-
-class CIFailureAnalysis(Base):
-    """CI 失败 Job 分析结果表 — 由 Claude Code CLI 生成"""
-    __tablename__ = "ci_failure_analysis"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(BigInteger, nullable=False, unique=True, index=True)
-    run_id = Column(BigInteger, nullable=False, index=True)
-    workflow_name = Column(String(100), nullable=False, index=True)
-    job_name = Column(String(500))
-    root_cause_category = Column(String(50), index=True)
-    analysis_markdown = Column(Text)
-    suggested_fix = Column(Text)
-    related_commits = Column(JSON)
-    confidence = Column(String(20), default="medium")
-    claude_model_used = Column(String(100))
-    claude_duration_seconds = Column(Integer)
-    analyzed_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
-    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
 
 # 导入每日总结相关模型

@@ -927,6 +927,16 @@ async def update_llm_provider(
 
 
 def get_system_prompt_scope_config(scope: str) -> tuple[str, dict[str, str], str]:
+    if scope == "ci_failure_analysis":
+        from app.services.skill_registry import get_skill_registry
+        registry = get_skill_registry()
+        skill = registry.get_skill_by_scope("ci_failure_analysis")
+        default_prompt = skill.content if skill and skill.content else "你是一名专业的 CI/CD 失败诊断分析师。请根据提供的 CI Job 失败信息，进行根因分析并给出改进建议。"
+        return (
+            "ci_failure_analysis_system_prompt",
+            {"default": default_prompt},
+            "系统提示词用于指导 AI 分析 CI 失败 Job 的根因和分类（基于 auto-bug-fixer 技能方法论 + CI 专属分类附录）",
+        )
     if scope == "commit_analysis":
         return (
             "commit_analysis_system_prompt",
@@ -953,7 +963,7 @@ def get_system_prompt_scope_config(scope: str) -> tuple[str, dict[str, str], str
             "系统提示词用于指导 AI 生成单个 Commit 分析总结的风格和内容重点",
         )
     if scope != "daily_summary":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid system prompt scope")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid system prompt scope: {scope}")
     return (
         "daily_summary_system_prompt",
         {
@@ -1093,6 +1103,65 @@ async def update_system_prompt_config(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"更新系统提示词配置失败：{str(e)}"
         )
+
+
+# ============ Skill 管理 API ============
+
+
+@router.get("/skills")
+async def list_skills(
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
+):
+    from app.services.skill_registry import get_skill_registry
+    registry = get_skill_registry()
+    skills = registry.list_skills()
+    return [
+        {
+            "name": s.name,
+            "description": s.description,
+            "scope": s.scope,
+            "file_path": s.file_path,
+            "loaded_at": s.loaded_at,
+            "content_length": len(s.content),
+        }
+        for s in skills
+    ]
+
+
+@router.post("/skills/refresh")
+async def refresh_skills(
+    current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
+):
+    from app.services.skill_registry import refresh_skill_registry
+    count = refresh_skill_registry()
+    return {
+        "success": True,
+        "message": f"Skills refreshed, {count} skills loaded",
+        "count": count,
+    }
+
+
+@router.get("/skills/{skill_name}")
+async def get_skill_detail(
+    skill_name: str,
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
+):
+    from app.services.skill_registry import get_skill_registry
+    registry = get_skill_registry()
+    skill = registry.get_skill(skill_name)
+    if not skill:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill '{skill_name}' not found",
+        )
+    return {
+        "name": skill.name,
+        "description": skill.description,
+        "scope": skill.scope,
+        "content": skill.content,
+        "file_path": skill.file_path,
+        "loaded_at": skill.loaded_at,
+    }
 
 
 # ── SMTP 配置（独立于每日报告）──

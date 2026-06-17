@@ -219,6 +219,19 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add resource metrics cleanup job: {e}", exc_info=True)
 
+        # 失败分析兜底定时任务 - 每 30 分钟运行
+        try:
+            self.scheduler.add_job(
+                self._failure_analysis_fallback_job,
+                trigger=IntervalTrigger(minutes=30),
+                id="failure_analysis_fallback",
+                name="Failure Analysis Fallback",
+                replace_existing=True,
+            )
+            logger.info("Failure analysis fallback scheduled every 30 minutes")
+        except Exception as e:
+            logger.error(f"Failed to add failure analysis fallback job: {e}", exc_info=True)
+
         # 每日运行报告邮件推送任务 - 每天早上 8:30 执行（可配置）
         # 与每日总结任务（8:00 AM）错开 30 分钟，确保数据采集先完成
         try:
@@ -342,6 +355,11 @@ class DataSyncScheduler:
                 logger.info("=" * 60)
                 logger.info(f"CI DATA SYNC JOB COMPLETED - Collected {collected} runs")
                 logger.info("=" * 60)
+
+                try:
+                    await self._trigger_failure_analysis_after_sync(db)
+                except Exception as fae:
+                    logger.warning(f"Post-sync failure analysis trigger failed: {fae}")
 
             except Exception as e:
                 logger.error("=" * 60)
@@ -564,6 +582,28 @@ class DataSyncScheduler:
             logger.error(f"DAILY REPORT EMAIL JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
 
+    async def _trigger_failure_analysis_after_sync(self, db):
+        """CI同步完成后触发失败Job分析"""
+        from app.services.failure_analysis import FailureAnalysisService
+        service = FailureAnalysisService()
+        results = await service.analyze_batch(days_back=7, db=db)
+        logger.info(f"Post-sync failure analysis: processed {len(results)} failed jobs")
+
+    async def _failure_analysis_fallback_job(self) -> None:
+        """失败分析兜底定时任务"""
+        logger.info("=" * 60)
+        logger.info("FAILURE ANALYSIS FALLBACK JOB STARTED")
+        logger.info("=" * 60)
+
+        async with SessionLocal() as db:
+            try:
+                from app.services.failure_analysis import FailureAnalysisService
+                service = FailureAnalysisService()
+                results = await service.analyze_batch(days_back=7, db=db)
+                logger.info(f"FAILURE ANALYSIS FALLBACK JOB COMPLETED - processed {len(results)} jobs")
+            except Exception as e:
+                logger.error(f"FAILURE ANALYSIS FALLBACK JOB FAILED - Error: {e}", exc_info=True)
+
     async def _collect_resource_metrics_job(self) -> None:
         """NPU 指标采集任务"""
         logger.info("=" * 60)
@@ -595,25 +635,59 @@ class DataSyncScheduler:
     async def _analyze_failed_jobs(self, db=None) -> int:
         """
         分析最近失败的、尚未分析的 CI jobs。
-
-        Args:
-            db: 可选的外部 session。若未提供则自行创建。
-
-        Returns:
-            分析的 job 数量
+        使用 FailureAnalysisService（含 fingerprint 去重）。
         """
         try:
-            from app.services.log_analyzer import LogAnalyzer
+            from sqlalchemy import select
+
+            from app.models import CIJob, JobFailureAnalysis
+            from app.services.failure_analysis import FailureAnalysisService
+
+            svc = FailureAnalysisService()
+            count = 0
 
             if db is not None:
-                analyzer = LogAnalyzer(db)
-                results = await analyzer.analyze_failed_jobs_batch(limit=5)
-                return len(results)
+                # 查找未分析的失败 jobs
+                analyzed_subq = select(JobFailureAnalysis.job_id)
+                stmt = (
+                    select(CIJob)
+                    .where(
+                        CIJob.conclusion.in_(["failure", "cancelled"]),
+                        CIJob.job_id.notin_(analyzed_subq),
+                    )
+                    .order_by(CIJob.completed_at.desc().nulls_last())
+                    .limit(5)
+                )
+                result = await db.execute(stmt)
+                jobs = result.scalars().all()
+                for job in jobs:
+                    try:
+                        await svc.analyze_failed_job(job.job_id, db)
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Analysis failed for job {job.job_id}: {e}")
+            else:
+                async with SessionLocal() as session:
+                    analyzed_subq = select(JobFailureAnalysis.job_id)
+                    stmt = (
+                        select(CIJob)
+                        .where(
+                            CIJob.conclusion.in_(["failure", "cancelled"]),
+                            CIJob.job_id.notin_(analyzed_subq),
+                        )
+                        .order_by(CIJob.completed_at.desc().nulls_last())
+                        .limit(5)
+                    )
+                    result = await session.execute(stmt)
+                    jobs = result.scalars().all()
+                    for job in jobs:
+                        try:
+                            await svc.analyze_failed_job(job.job_id, session)
+                            count += 1
+                        except Exception as e:
+                            logger.warning(f"Analysis failed for job {job.job_id}: {e}")
 
-            async with SessionLocal() as session:
-                analyzer = LogAnalyzer(session)
-                results = await analyzer.analyze_failed_jobs_batch(limit=5)
-                return len(results)
+            return count
         except Exception as e:
             logger.warning(f"Failed job analysis error (non-fatal): {e}")
             return 0
