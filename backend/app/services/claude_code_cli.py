@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -159,12 +160,21 @@ class ClaudeCodeCLI:
             )
 
         # ── 执行 CLI ──
+        # root 用户不允许 --dangerously-skip-permissions，通过 su -m 切到 appuser
+        if os.geteuid() == 0:
+            cmd_str = " ".join(
+                [shlex.quote(cli_path)] + [shlex.quote(a) for a in args]
+            )
+            # su -m: preserve environment（保留 ANTHROPIC_* 等环境变量）
+            cmd = ["su", "-m", "appuser", "-c", cmd_str]
+        else:
+            cmd = [cli_path] + args
+
         start = time.monotonic()
         try:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    cli_path,
-                    *args,
+                    *cmd,
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -323,7 +333,7 @@ class ClaudeCodeCLI:
         if system_prompt:
             args.extend(["--system-prompt", system_prompt])
 
-        # 在容器/无人值守环境中跳过权限确认
+        # 跳过权限确认（仅非 root 用户可用）
         args.append("--dangerously-skip-permissions")
 
         return args
