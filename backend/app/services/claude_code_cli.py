@@ -222,6 +222,24 @@ class ClaudeCodeCLI:
         except Exception:
             return False
 
+    async def ensure_initialized(self, provider_config: dict) -> bool:
+        """
+        确保 Claude Code CLI 已初始化（首次使用时可能被 login 阻塞）。
+
+        用最小 prompt 做一次热启动，验证 API key 有效且 CLI 可以正常响应。
+        """
+        try:
+            result = await self.run(
+                prompt="reply 'ok'",
+                provider_config=provider_config,
+                max_turns=1,
+                output_format="text",
+            )
+            return result.exit_code == 0 and len(result.content) > 0
+        except Exception as e:
+            logger.warning("Claude Code CLI initialization check failed: %s", e)
+            return False
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -281,6 +299,7 @@ class ClaudeCodeCLI:
 
         env["CLAUDE_CODE_TELEMETRY_DISABLED"] = "1"
         env["CLAUDE_CODE_NO_INTERACTIVE"] = "1"
+        env["CLAUDE_CODE_HEADLESS"] = "1"
 
         return env
 

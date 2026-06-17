@@ -59,9 +59,47 @@ async def init_db():
 
         # 同步 provider 配置到 LiteLLM 网关（生产环境）
         await _sync_litellm_providers()
+
+        # Claude Code CLI 预热检查（验证 API key + CLI 可用性）
+        await _warmup_claude_code_cli()
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}", exc_info=True)
         raise
+
+
+async def _warmup_claude_code_cli():
+    """Claude Code CLI 预热：验证 CLI 可用 + API key 有效"""
+    try:
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        from app.models.daily_summary import LLMProviderConfig
+        from app.services.claude_code_cli import ClaudeCodeCLI
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
+            result = await db.execute(stmt)
+            config = result.scalar_one_or_none()
+
+        if not config or not config.api_key:
+            logger.warning("No active LLM provider configured, skipping CLI warmup")
+            return
+
+        cli = ClaudeCodeCLI()
+        ok = await cli.ensure_initialized({
+            "provider": config.provider,
+            "api_key": config.api_key,
+            "api_base_url": config.api_base_url or "",
+            "default_model": config.default_model,
+        })
+
+        if ok:
+            logger.info("Claude Code CLI warmup successful")
+        else:
+            logger.warning("Claude Code CLI warmup failed — analysis will fallback to direct API")
+    except Exception as e:
+        logger.warning("Claude Code CLI warmup error (non-fatal): %s", e)
 
 
 async def _sync_litellm_providers():
