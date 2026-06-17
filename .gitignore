@@ -108,6 +108,11 @@ PROJECT_STRUCTURE.md
 # Claude Code local settings
 .claude/
 
+# Agent local data (logs, sessions, etc.)
+.agents/*
+!.agents/skills/
+!.agents/skills/**/SKILL.md
+
 # Database files (SQLite)
 *.db
 
