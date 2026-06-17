@@ -369,9 +369,11 @@ backup_data() {
             return 1
         fi
     else
-        log_error "No backup data created"
+        # 容器不在运行或没有可备份的数据：不阻塞升级
+        log_warn "No containers found or no data to backup"
+        log_warn "Docker volumes are persistent and will survive the upgrade"
         rm -rf "$backup_path"
-        return 1
+        return 0
     fi
 }
 
