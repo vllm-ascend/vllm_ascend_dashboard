@@ -85,10 +85,8 @@ function GitHubActivityDetail() {
   // 获取每日数据
   const { data, isLoading, refetch } = useDailyData(project || '', selectedDate)
 
-  // 获取 LLM 提供商列表
   const { data: llmProviders } = useLLMProviders()
 
-  // 获取趋势数据
   const { data: trendData, isLoading: isTrendLoading } = useTrendData(project || '', trendDays)
 
   // 判断当天是否已有数据
@@ -547,7 +545,7 @@ function GitHubActivityDetail() {
               children: (
                 <div style={{ padding: '16px 0' }}>
                   <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text type="secondary">近 {trendDays} 天 PR/Issue/Commit 数量趋势</Text>
+                    <Text type="secondary">近 {trendDays} 天 PR/Issue/Commit 数量趋势（点击下方标签可切换线条显示/隐藏）</Text>
                     <Segmented
                       options={[
                         { label: '7天', value: 7 },
@@ -565,7 +563,7 @@ function GitHubActivityDetail() {
                     </div>
                   ) : trendData?.data && trendData.data.length > 0 ? (
                     <ResponsiveContainer width="100%" height={400}>
-                      <LineChart data={trendData.data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                      <LineChart data={trendData.data} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis
                           dataKey="date"
@@ -579,13 +577,21 @@ function GitHubActivityDetail() {
                             return [value, labels[name] || name]
                           }}
                         />
-                        <Legend formatter={(value: string) => {
-                          const labels: Record<string, string> = { pr_count: 'PR', issue_count: 'Issue', commit_count: 'Commit' }
-                          return labels[value] || value
-                        }} />
-                        <Line type="monotone" dataKey="pr_count" stroke="#1890ff" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                        <Line type="monotone" dataKey="issue_count" stroke="#fa8c16" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                        <Line type="monotone" dataKey="commit_count" stroke="#52c41a" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                        <Legend
+                          formatter={(value: string) => {
+                            const labels: Record<string, string> = { pr_count: 'PR', issue_count: 'Issue', commit_count: 'Commit' }
+                            return labels[value] || value
+                          }}
+                        />
+                        <Line type="monotone" dataKey="pr_count" stroke="#1890ff" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }}
+                          label={({ x, y, value, index }: any) => value > 0 ? <text key={`pr-${index}`} x={x} y={y - 12} fill="#1890ff" fontSize={11} textAnchor="middle" fontWeight={500}>{value}</text> : <g key={`pr-empty-${index}`} />}
+                        />
+                        <Line type="monotone" dataKey="issue_count" stroke="#fa8c16" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }}
+                          label={({ x, y, value, index }: any) => value > 0 ? <text key={`issue-${index}`} x={x} y={y - 12} fill="#fa8c16" fontSize={11} textAnchor="middle" fontWeight={500}>{value}</text> : <g key={`issue-empty-${index}`} />}
+                        />
+                        <Line type="monotone" dataKey="commit_count" stroke="#52c41a" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }}
+                          label={({ x, y, value, index }: any) => value > 0 ? <text key={`commit-${index}`} x={x} y={y - 12} fill="#52c41a" fontSize={11} textAnchor="middle" fontWeight={500}>{value}</text> : <g key={`commit-empty-${index}`} />}
+                        />
                       </LineChart>
                     </ResponsiveContainer>
                   ) : (
