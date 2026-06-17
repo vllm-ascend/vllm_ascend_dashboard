@@ -152,8 +152,12 @@ export const getList = async (params?: {
   state?: string
   pipeline_stage?: string
   author?: string
-  reviewer?: string
+  review_status?: string
+  ci_status?: string
   is_draft?: boolean
+  base_branch?: string
+  date_from?: string
+  date_to?: string
   label?: string
   search?: string
   sort_by?: string
@@ -187,8 +191,8 @@ export const getTrends = async (days?: number): Promise<PRPipelineTrendsResponse
 }
 
 export const syncPRPipeline = async (daysBack?: number): Promise<{ message: string }> => {
-  const response = await api.post<{ message: string }>('/pr-pipeline/sync', null, {
-    params: { days_back: daysBack },
+  const response = await api.post<{ message: string }>('/pr-pipeline/sync', {
+    days_back: daysBack,
   })
   return response.data
 }

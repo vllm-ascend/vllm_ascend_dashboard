@@ -19,8 +19,12 @@ export const usePRPipelineList = (params?: {
   state?: string
   pipeline_stage?: string
   author?: string
-  reviewer?: string
+  review_status?: string
+  ci_status?: string
   is_draft?: boolean
+  base_branch?: string
+  date_from?: string
+  date_to?: string
   label?: string
   search?: string
   sort_by?: string

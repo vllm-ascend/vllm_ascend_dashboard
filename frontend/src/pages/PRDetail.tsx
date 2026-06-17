@@ -372,7 +372,7 @@ const PRDetail = () => {
           <Space direction="vertical" style={{ width: '100%' }}>
             {pr.reviewers.map((reviewer) => (
               <Space key={reviewer.login} size="middle">
-                <Avatar size="small" style={{ backgroundColor: '#1677ff' }}>
+                <Avatar size="small" src={reviewer.avatar_url} style={{ backgroundColor: '#1677ff' }}>
                   {reviewer.login[0]?.toUpperCase()}
                 </Avatar>
                 <Text>{reviewer.login}</Text>
