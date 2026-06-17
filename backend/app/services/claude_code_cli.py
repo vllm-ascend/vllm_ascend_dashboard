@@ -123,7 +123,7 @@ class ClaudeCodeCLI:
         if litellm_url and provider != "anthropic":
             # 生产环境：非 Anthropic → LiteLLM 网关
             env = self._build_env_direct(
-                api_key="LITELLM_MANAGED",
+                api_key="sk-litellm-master-key-change-me",
                 api_base=litellm_url,
                 model=model,
             )

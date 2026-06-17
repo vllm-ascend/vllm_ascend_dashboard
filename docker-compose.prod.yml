@@ -18,7 +18,7 @@ services:
     entrypoint: []
     command: ["litellm", "--config", "/app/config.yaml", "--port", "4000"]
     volumes:
-      - ./deploy/config/litellm_config.yaml:/app/config.yaml:ro
+      - ./deploy/config/litellm_config.yaml:/app/config.yaml
     expose:
       - "4000"
     networks:
@@ -56,10 +56,10 @@ services:
       # Persistent data directory - survives container restarts
       # This includes /app/data/repos for git cache
       - backend_data:/app/data
+      # LiteLLM config shared volume
+      - ./deploy/config/litellm_config.yaml:/app/litellm_config.yaml
       # Log files
       - backend_logs:/app/logs
-      # Note: Using environment variables from .env.production instead of external config file
-      # - ./deploy/config/backend.env:/app/.env:ro  # Commented out - use .env.production instead
     # Do NOT expose backend port to public - only accessible via nginx proxy
     # ports:
     #   - "${BACKEND_PORT:-8000}:8000"

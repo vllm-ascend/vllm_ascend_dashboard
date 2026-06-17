@@ -1,16 +1,77 @@
 """
 LiteLLM Provider 同步服务
 
-在 backend 启动时将数据库中启用的 LLM provider 注册到 LiteLLM 网关，
-保证 Claude Code CLI 的请求能正确路由到用户配置的 provider。
+从数据库读取启用的 LLM provider，生成 LiteLLM 配置文件，
+写入共享卷后触发热加载。前台页面修改 provider 后重启 backend 即可生效。
 """
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+# provider → LiteLLM model 前缀映射
+_PROVIDER_PREFIX = {
+    "openai": "openai",
+    "qwen": "openai",
+    "anthropic": "anthropic",
+    "deepseek": "deepseek",
+    "zhipu": "openai",
+    "glm": "openai",
+}
+
+
+def _detect_prefix(provider: str, api_base: str) -> str:
+    """根据 provider 类型和 api_base_url 推测正确的 LiteLLM 前缀"""
+    if provider in _PROVIDER_PREFIX:
+        return _PROVIDER_PREFIX[provider]
+    base_lower = (api_base or "").lower()
+    # 按 api_base 特征匹配（优先级从高到低）
+    if "deepseek" in base_lower:
+        return "deepseek"
+    if "bigmodel" in base_lower or "zhipu" in base_lower:
+        return "openai"      # 智谱：OpenAI 兼容 Chat Completions
+    if "dashscope" in base_lower or "aliyuncs" in base_lower:
+        return "openai"
+    if "openai" in base_lower:
+        return "openai"
+    if "anthropic" in base_lower:
+        return "anthropic"
+    return "openai"
+
+# config 写入路径（通过 LITELLM_CONFIG_FILE 环境变量指定）
+_CONFIG_FILE = os.environ.get("LITELLM_CONFIG_FILE", "/app/litellm_config.yaml")
+
+
+def _model_to_yaml(model_list: list[dict]) -> str:
+    """将 model_list 转为 YAML 片段"""
+    lines = ["model_list:"]
+    for m in model_list:
+        lines.append(f"  - model_name: {m['model_name']}")
+        lines.append("    litellm_params:")
+        for k, v in m["litellm_params"].items():
+            lines.append(f"      {k}: {v}")
+    return "\n".join(lines)
+
+
+def _build_config_yaml(model_list: list[dict]) -> str:
+    """生成完整 LiteLLM 配置"""
+    models_yaml = _model_to_yaml(model_list)
+    return f"""general_settings:
+  master_key: sk-litellm-master-key-change-me
+
+{models_yaml}
+
+litellm_settings:
+  drop_params: true
+
+router_settings:
+  num_retries: 1
+  request_timeout: 600
+"""
 
 
 class LiteLLMSync:
@@ -25,98 +86,83 @@ class LiteLLMSync:
         return bool(self.litellm_url)
 
     async def health_check(self) -> bool:
-        """检查 LiteLLM 是否可用"""
         if not self.available:
             return False
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.litellm_url}/health", timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    return resp.status == 200
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{self.litellm_url}/health", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    return r.status == 200
         except Exception:
             return False
 
-    async def register_provider(self, provider: str, api_key: str, api_base: str, model: str) -> bool:
-        """
-        注册一个 provider 到 LiteLLM。
-
-        将 openai / qwen 等 provider 映射为 LiteLLM 的 model 配置。
-        这样 Claude Code CLI 请求 model=xxx 时 LiteLLM 知道转发到哪个上游。
-        """
-        if not self.available:
-            return False
-
-        # 将我们的 provider 映射为 LiteLLM 的 model 名
-        litellm_model = f"openai/{model}"
-        if api_base and "openai.com" not in api_base and "anthropic.com" not in api_base:
-            # 对于第三方端点，使用 openai/ 前缀 + 自定义 api_base
-            pass
-
-        payload = {
-            "model_name": model,
-            "litellm_params": {
-                "model": litellm_model,
-                "api_key": api_key,
-            },
-        }
-        if api_base:
-            payload["litellm_params"]["api_base"] = api_base
-
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.master_key}",
-                "Content-Type": "application/json",
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.litellm_url}/model/new",
-                    json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    if resp.status in (200, 201):
-                        logger.info("Registered model '%s' with LiteLLM → %s", model, litellm_model)
-                        return True
-                    else:
-                        body = await resp.text()
-                        logger.warning("Failed to register model '%s' with LiteLLM: %d %s", model, resp.status, body[:200])
-                        return False
-        except Exception as e:
-            logger.warning("LiteLLM sync error for model '%s': %s", model, e)
-            return False
-
     async def sync_from_db(self, db_session) -> int:
-        """
-        从数据库同步所有启用的 provider 到 LiteLLM。
-
-        Returns:
-            成功注册的 provider 数量
-        """
+        """从 DB 读取 provider → 生成 YAML → 写入文件 → 热加载"""
         from sqlalchemy import select
-
         from app.models.daily_summary import LLMProviderConfig
 
         stmt = select(LLMProviderConfig).where(LLMProviderConfig.enabled == True)
         result = await db_session.execute(stmt)
         configs = result.scalars().all()
 
-        count = 0
-        for config in configs:
-            if not config.api_key:
+        if not configs:
+            logger.warning("No enabled LLM providers found in DB")
+            return 0
+
+        model_list = []
+        for c in configs:
+            if not c.api_key:
                 continue
-            ok = await self.register_provider(
-                provider=config.provider,
-                api_key=config.api_key,
-                api_base=config.api_base_url or "",
-                model=config.default_model,
-            )
-            if ok:
-                count += 1
+            prefix = _detect_prefix(c.provider, c.api_base_url or "")
+            model_list.append({
+                "model_name": c.default_model,
+                "litellm_params": {
+                    "model": f"{prefix}/{c.default_model}",
+                    "api_key": c.api_key,
+                    "api_base": c.api_base_url or "",
+                },
+            })
 
-        logger.info("LiteLLM sync: %d/%d providers registered", count, len(configs))
-        return count
+        if not model_list:
+            logger.warning("No providers with API keys configured")
+            return 0
+
+        content = _build_config_yaml(model_list)
+
+        try:
+            Path(_CONFIG_FILE).write_text(content, encoding="utf-8")
+            logger.info("LiteLLM config written to %s (%d models)", _CONFIG_FILE, len(model_list))
+        except Exception as e:
+            logger.error("Failed to write LiteLLM config: %s", e)
+            return 0
+
+        if self.litellm_url:
+            await self._reload()
+
+        logger.info("LiteLLM sync: %d providers configured", len(model_list))
+        return len(model_list)
+
+    async def _reload(self) -> bool:
+        """热加载 LiteLLM 配置"""
+        try:
+            headers = {"Authorization": f"Bearer {self.master_key}"}
+            async with aiohttp.ClientSession() as s:
+                async with s.post(
+                    f"{self.litellm_url}/config/reload",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as r:
+                    ok = r.status in (200, 202)
+                    if ok:
+                        logger.info("LiteLLM config reloaded")
+                    else:
+                        body = await r.text()
+                        logger.warning("LiteLLM reload: %d %s", r.status, body[:200])
+                    return ok
+        except Exception as e:
+            logger.warning("LiteLLM reload error (will need restart): %s", e)
+            return False
 
 
-# 全局单例
 _litellm_sync: Optional[LiteLLMSync] = None
 
 
