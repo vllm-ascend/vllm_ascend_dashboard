@@ -120,8 +120,8 @@ class ClaudeCodeCLI:
         litellm_url = os.environ.get("LITELLM_PROXY_URL", "")
 
         # ── 路由决策 ──
-        if litellm_url:
-            # 生产环境：使用 LiteLLM 网关
+        if litellm_url and provider != "anthropic":
+            # 生产环境：非 Anthropic → LiteLLM 网关
             env = self._build_env_direct(
                 api_key="LITELLM_MANAGED",
                 api_base=litellm_url,

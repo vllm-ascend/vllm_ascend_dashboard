@@ -14,11 +14,11 @@ services:
     container_name: vllm-dashboard-litellm
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
-      - DATABASE_URL=sqlite:///app/data/litellm.db
-      - STORE_MODEL_IN_DB=true
+      - STORE_MODEL_IN_DB=false
+    entrypoint: []
+    command: ["litellm", "--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - ./deploy/config/litellm_config.yaml:/app/config.yaml:ro
-      - litellm_data:/app/data
     expose:
       - "4000"
     networks:
@@ -170,10 +170,6 @@ services:
 
 # Named Volumes - Data persists outside container lifecycle
 volumes:
-  # LiteLLM data
-  litellm_data:
-    driver: local
-
   # Backend application data (SQLite database, cache, etc.)
   # Git repository cache is stored in /app/data/repos (subdirectory of backend_data)
   backend_data:
