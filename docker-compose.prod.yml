@@ -17,6 +17,7 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - ./deploy/config/litellm_config.yaml:/app/config.yaml:ro
+      - litellm_data:/app/data
     expose:
       - "4000"
     networks:
