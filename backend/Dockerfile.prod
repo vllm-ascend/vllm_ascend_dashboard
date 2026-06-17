@@ -45,6 +45,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy application code
 COPY app/ ./app/
 
+# Copy skills/agents
+COPY .agents/ ./.agents/
+
 # Copy scripts directory
 COPY scripts/ ./scripts/
 
