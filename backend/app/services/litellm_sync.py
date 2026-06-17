@@ -25,22 +25,25 @@ _PROVIDER_PREFIX = {
 
 
 def _detect_prefix(provider: str, api_base: str) -> str:
-    """根据 provider 类型和 api_base_url 推测正确的 LiteLLM 前缀"""
-    if provider in _PROVIDER_PREFIX:
-        return _PROVIDER_PREFIX[provider]
+    """根据 provider 类型和 api_base_url 推测正确的 LiteLLM 前缀
+
+    api_base 优先级更高 —— 比如 provider=openai 但 api_base=api.deepseek.com，
+    应该用 deepseek/ 前缀，否则 LiteLLM 走 OpenAI Responses API 会报错。
+    """
     base_lower = (api_base or "").lower()
-    # 按 api_base 特征匹配（优先级从高到低）
+    # 按 api_base 特征匹配
     if "deepseek" in base_lower:
         return "deepseek"
     if "bigmodel" in base_lower or "zhipu" in base_lower:
-        return "openai"      # 智谱：OpenAI 兼容 Chat Completions
+        return "openai"
     if "dashscope" in base_lower or "aliyuncs" in base_lower:
         return "openai"
     if "openai" in base_lower:
         return "openai"
     if "anthropic" in base_lower:
         return "anthropic"
-    return "openai"
+    # fallback: 按 provider 名匹配
+    return _PROVIDER_PREFIX.get(provider, "openai")
 
 # config 写入路径（通过 LITELLM_CONFIG_FILE 环境变量指定）
 _CONFIG_FILE = os.environ.get("LITELLM_CONFIG_FILE", "/app/litellm_config.yaml")

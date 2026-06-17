@@ -903,6 +903,15 @@ async def update_llm_provider(
 
         await db.commit()
 
+        # 同步到 LiteLLM 网关
+        try:
+            from app.services.litellm_sync import get_litellm_sync
+            sync = get_litellm_sync()
+            if sync.available:
+                await sync.sync_from_db(db)
+        except Exception as e:
+            logger.warning("LiteLLM sync after provider update failed: %s", e)
+
         return {
             "success": True,
             "message": f"LLM 提供商 {provider} 配置已更新",
