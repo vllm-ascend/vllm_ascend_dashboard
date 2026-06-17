@@ -14,6 +14,7 @@ from app.schemas.daily_summary import (
     GenerateSummaryRequest, FetchDataRequest,
     DailySummaryResponse, DailySummaryListResponse, DailySummaryListItem,
     FetchDataResponse, GenerateSummaryResponse,
+    TrendDataResponse, TrendDataItem,
 )
 from app.services.daily_summary import DailySummaryService
 from app.services.daily_data_file_store import DailyDataFileStore
@@ -408,6 +409,68 @@ async def get_available_dates(
         )
 
 
+@router.get("/{project}/trend", response_model=TrendDataResponse)
+async def get_trend_data(
+    project: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    days: int = Query(7, ge=1, le=90),
+):
+    """
+    获取项目社区趋势数据（PR/Issue/Commit 每日计数）
+
+    所有登录用户可访问
+
+    返回最近 N 天的 PR/Issue/Commit 每日数量趋势
+    """
+    try:
+        file_store = DailyDataFileStore()
+        available_dates = await file_store.list_available_dates(project, limit=days)
+
+        trend_data = []
+        for date_str in available_dates:
+            data_date = DateType.fromisoformat(date_str)
+            daily_data = await file_store.load_daily_data(project, data_date)
+
+            if daily_data:
+                counts = daily_data.get("counts", {})
+                trend_data.append(TrendDataItem(
+                    date=date_str,
+                    pr_count=counts.get("prs", 0),
+                    issue_count=counts.get("issues", 0),
+                    commit_count=counts.get("commits", 0),
+                ))
+            else:
+                summary_meta = await file_store.load_summary(project, data_date)
+                if summary_meta:
+                    trend_data.append(TrendDataItem(
+                        date=date_str,
+                        pr_count=summary_meta.get("pr_count", 0),
+                        issue_count=summary_meta.get("issue_count", 0),
+                        commit_count=summary_meta.get("commit_count", 0),
+                    ))
+                else:
+                    trend_data.append(TrendDataItem(
+                        date=date_str,
+                        pr_count=0,
+                        issue_count=0,
+                        commit_count=0,
+                    ))
+
+        trend_data.sort(key=lambda x: x.date)
+
+        return TrendDataResponse(
+            project=project,
+            days=days,
+            data=trend_data,
+        )
+    except Exception as e:
+        logger.error(f"Failed to get trend data: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取趋势数据失败：{str(e)}"
+        )
+
+
 @router.get("/{project}/{date}", response_model=DailySummaryResponse)
 async def get_daily_summary(
     project: str,
@@ -426,10 +489,8 @@ async def get_daily_summary(
         summary_date = DateType.fromisoformat(date)
         file_store = DailyDataFileStore()
 
-        # 从文件加载总结
         summary_data = await file_store.load_summary(project, summary_date)
 
-        # 如果总结尚未生成，返回空状态响应
         if not summary_data:
             return {
                 "project": project,
