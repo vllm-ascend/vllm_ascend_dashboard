@@ -160,13 +160,13 @@ class ClaudeCodeCLI:
             )
 
         # ── 执行 CLI ──
-        # root 用户不允许 --dangerously-skip-permissions，通过 su -m 切到 appuser
+        # root 用户不允许 --dangerously-skip-permissions，通过 su 切到 appuser
         if os.geteuid() == 0:
             cmd_str = " ".join(
                 [shlex.quote(cli_path)] + [shlex.quote(a) for a in args]
             )
-            # su -m: preserve environment（保留 ANTHROPIC_* 等环境变量）
-            cmd = ["su", "-m", "appuser", "-c", cmd_str]
+            # su -m: preserve environment + 显式设置 HOME，避免 CLI 找 /.agents/skills
+            cmd = ["su", "-m", "appuser", "-c", f"export HOME=/home/appuser; {cmd_str}"]
         else:
             cmd = [cli_path] + args
 
@@ -310,6 +310,10 @@ class ClaudeCodeCLI:
         env["CLAUDE_CODE_TELEMETRY_DISABLED"] = "1"
         env["CLAUDE_CODE_NO_INTERACTIVE"] = "1"
         env["CLAUDE_CODE_HEADLESS"] = "1"
+
+        # 确保 HOME 正确设置，CLI 会用它找配置目录
+        if "HOME" not in env or not env["HOME"]:
+            env["HOME"] = "/home/appuser"
 
         return env
 
