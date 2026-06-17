@@ -162,9 +162,9 @@ class FailureAnalysisService:
             analysis.report_file_path = report_path
             analysis.llm_provider = llm_config.provider
             analysis.llm_model = llm_config.default_model
-            analysis.prompt_tokens = llm_result.prompt_tokens
-            analysis.completion_tokens = llm_result.completion_tokens
-            analysis.generation_time_seconds = llm_result.generation_time
+            analysis.prompt_tokens = None  # CLI 模式不可用
+            analysis.completion_tokens = None
+            analysis.generation_time_seconds = int(llm_result.duration_seconds)
 
             await db.commit()
             await db.refresh(analysis)
