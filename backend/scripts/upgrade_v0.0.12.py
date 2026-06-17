@@ -115,32 +115,36 @@ async def upgrade():
         print("  ✓ alert_conditions already exists")
 
     # ── 3. Migrate existing rule data ──
-    async with SessionLocal() as db:
-        old_rows = (await db.execute(text("SELECT id, metric_field, operator, threshold FROM alert_rules"))).fetchall()
-        migrated = 0
-        for row in old_rows:
-            rule_id, mf, oper, thresh = row[0], row[1], row[2], row[3]
-            # Insert group
-            result = await db.execute(
-                text("INSERT INTO alert_condition_groups (rule_id, logic, display_order) VALUES (:rid, 'AND', 0)"),
-                {"rid": rule_id},
-            )
-            group_id = result.lastrowid
-            if not group_id and is_mysql:
-                group_id = (await db.execute(text("SELECT LAST_INSERT_ID()"))).scalar()
-            elif not group_id:
-                group_id = (await db.execute(text("SELECT last_insert_rowid()"))).scalar()
-            # Insert condition
-            await db.execute(
-                text("INSERT INTO alert_conditions (group_id, metric_field, operator, threshold, is_exclude, display_order) VALUES (:gid, :mf, :op, :th, 0, 0)"),
-                {"gid": group_id, "mf": mf, "op": oper, "th": thresh},
-            )
-            migrated += 1
-        if migrated > 0:
-            await db.commit()
-            print(f"  ✅ Migrated {migrated} existing alert rules to condition-group model")
-        else:
-            print("  ℹ️  No existing rules to migrate")
+    has_old_columns = await check_column_exists("alert_rules", "metric_field")
+    if has_old_columns:
+        async with SessionLocal() as db:
+            old_rows = (await db.execute(text("SELECT id, metric_field, operator, threshold FROM alert_rules"))).fetchall()
+            migrated = 0
+            for row in old_rows:
+                rule_id, mf, oper, thresh = row[0], row[1], row[2], row[3]
+                # Insert group
+                result = await db.execute(
+                    text("INSERT INTO alert_condition_groups (rule_id, logic, display_order) VALUES (:rid, 'AND', 0)"),
+                    {"rid": rule_id},
+                )
+                group_id = result.lastrowid
+                if not group_id and is_mysql:
+                    group_id = (await db.execute(text("SELECT LAST_INSERT_ID()"))).scalar()
+                elif not group_id:
+                    group_id = (await db.execute(text("SELECT last_insert_rowid()"))).scalar()
+                # Insert condition
+                await db.execute(
+                    text("INSERT INTO alert_conditions (group_id, metric_field, operator, threshold, is_exclude, display_order) VALUES (:gid, :mf, :op, :th, 0, 0)"),
+                    {"gid": group_id, "mf": mf, "op": oper, "th": thresh},
+                )
+                migrated += 1
+            if migrated > 0:
+                await db.commit()
+                print(f"  ✅ Migrated {migrated} existing alert rules to condition-group model")
+            else:
+                print("  ℹ️  No existing rules to migrate")
+    else:
+        print("  ℹ️  alert_rules already uses new schema, skipping data migration")
 
     # ── 4. Remove old columns from alert_rules ──
     for col in ["metric_field", "operator", "threshold"]:
