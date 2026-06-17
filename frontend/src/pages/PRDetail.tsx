@@ -39,11 +39,51 @@ const ciStatusColorMap: Record<string, string> = {
   cancelled: 'warning',
 }
 
+const stageLabelMap: Record<string, string> = {
+  submitted: '已提交',
+  reviewing: '评审中',
+  approved: '已通过',
+  ci_running: 'CI 运行中',
+  ci_passed: 'CI 通过',
+  ci_failed: 'CI 失败',
+  merging: '合并中',
+  merged: '已合并',
+  closed: '已关闭',
+}
+
+const stateLabelMap: Record<string, string> = {
+  open: '开启',
+  merged: '已合并',
+  closed: '已关闭',
+}
+
+const reviewStatusLabelMap: Record<string, string> = {
+  none: '无',
+  reviewing: '评审中',
+  approved: '已通过',
+  changes_requested: '要求修改',
+}
+
+const ciStatusLabelMap: Record<string, string> = {
+  success: '通过',
+  failure: '失败',
+  in_progress: '运行中',
+  queued: '排队中',
+  cancelled: '已取消',
+}
+
 const reviewerStateColorMap: Record<string, string> = {
   APPROVED: 'success',
   CHANGES_REQUESTED: 'warning',
   PENDING: 'default',
   COMMENTED: 'processing',
+}
+
+const reviewerStateLabelMap: Record<string, string> = {
+  APPROVED: '已通过',
+  CHANGES_REQUESTED: '要求修改',
+  PENDING: '等待中',
+  COMMENTED: '已评论',
 }
 
 const stageIconMap: Record<string, typeof CheckCircleOutlined> = {
@@ -73,7 +113,7 @@ const PRDetail = () => {
             <Title level={4}>无效的 PR 编号</Title>
             <Text>请提供有效的 PR 编号</Text>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/pr-pipeline')}>
-              返回 PR Pipeline
+              返回 PR 流水线
             </Button>
           </Space>
         </Card>
@@ -90,7 +130,7 @@ const PRDetail = () => {
             <Title level={4}>加载失败</Title>
             <Text>{(error as any)?.message || '无法获取 PR 详情'}</Text>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/pr-pipeline')}>
-              返回 PR Pipeline
+              返回 PR 流水线
             </Button>
           </Space>
         </Card>
@@ -115,7 +155,7 @@ const PRDetail = () => {
             <Title level={4}>PR 不存在</Title>
             <Text>找不到该 PR 的信息</Text>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/pr-pipeline')}>
-              返回 PR Pipeline
+              返回 PR 流水线
             </Button>
           </Space>
         </Card>
@@ -260,7 +300,7 @@ const PRDetail = () => {
           </Title>
           <Tag color="#108ee9">#{pr.pr_number}</Tag>
           <Tag color={stateColorMap[pr.state] || 'default'}>
-            {pr.state}
+            {stateLabelMap[pr.state] || pr.state}
           </Tag>
         </Space>
       </div>
@@ -292,26 +332,26 @@ const PRDetail = () => {
             <Space>
               <Text style={{ color: '#52c41a' }}>+{pr.additions}</Text>
               <Text style={{ color: '#ff4d4f' }}>-{pr.deletions}</Text>
-              <Text type="secondary">{pr.changed_files} files</Text>
+              <Text type="secondary">{pr.changed_files} 个文件</Text>
             </Space>
           </Descriptions.Item>
-          <Descriptions.Item label="Pipeline 阶段">
+          <Descriptions.Item label="流水线阶段">
             <Tag color={stageColorMap[pr.pipeline_stage || ''] || 'default'}>
-              {pr.pipeline_stage || '-'}
+              {stageLabelMap[pr.pipeline_stage || ''] || pr.pipeline_stage || '-'}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="Review 状态">
             <Tag color={reviewStatusColorMap[pr.review_status || ''] || 'default'}>
-              {pr.review_status || '-'}
+              {reviewStatusLabelMap[pr.review_status || ''] || pr.review_status || '-'}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="CI 状态">
             <Tag color={ciStatusColorMap[pr.ci_status || ''] || 'default'}>
-              {pr.ci_status || '-'}
+              {ciStatusLabelMap[pr.ci_status || ''] || pr.ci_status || '-'}
             </Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="Draft">
-            <Badge status={pr.is_draft ? 'warning' : 'success'} text={pr.is_draft ? 'Yes' : 'No'} />
+          <Descriptions.Item label="草稿">
+            <Badge status={pr.is_draft ? 'warning' : 'success'} text={pr.is_draft ? '是' : '否'} />
           </Descriptions.Item>
         </Descriptions>
       </Card>
@@ -368,7 +408,7 @@ const PRDetail = () => {
       </Row>
 
       {pr.reviewers && pr.reviewers.length > 0 && (
-        <Card title="Reviewers" style={{ marginBottom: 24 }}>
+        <Card title="评审人" style={{ marginBottom: 24 }}>
           <Space direction="vertical" style={{ width: '100%' }}>
             {pr.reviewers.map((reviewer) => (
               <Space key={reviewer.login} size="middle">
@@ -377,7 +417,7 @@ const PRDetail = () => {
                 </Avatar>
                 <Text>{reviewer.login}</Text>
                 <Tag color={reviewerStateColorMap[reviewer.state] || 'default'}>
-                  {reviewer.state}
+                  {reviewerStateLabelMap[reviewer.state] || reviewer.state}
                 </Tag>
               </Space>
             ))}
