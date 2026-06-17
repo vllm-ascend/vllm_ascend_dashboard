@@ -1,6 +1,7 @@
 """
 vLLM Ascend Dashboard - Backend Application
 """
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -60,8 +61,8 @@ async def init_db():
         # 同步 provider 配置到 LiteLLM 网关（生产环境）
         await _sync_litellm_providers()
 
-        # Claude Code CLI 预热检查（验证 API key + CLI 可用性）
-        await _warmup_claude_code_cli()
+        # Claude Code CLI 预热检查 —— 后台执行，不阻塞启动
+        asyncio.create_task(_warmup_claude_code_cli())
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}", exc_info=True)
         raise
