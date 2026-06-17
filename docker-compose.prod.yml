@@ -12,15 +12,13 @@ services:
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: vllm-dashboard-litellm
-    env_file:
-      - .env.production
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - ./deploy/config/litellm_config.yaml:/app/config.yaml:ro
-      - litellm_data:/app/data
-    ports:
-      - "4000:4000"  # 仅内部网络使用，生产环境可移除对外端口
+    expose:
+      - "4000"
     networks:
       - dashboard-network
     restart: unless-stopped
@@ -29,15 +27,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
     deploy:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
+          memory: 2G
 
   # Backend API Service
   backend:
@@ -50,9 +45,8 @@ services:
     environment:
       # Database connection (MySQL)
       - DATABASE_URL=mysql+aiomysql://${MYSQL_USER:-dashboard}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-vllm_dashboard}
-      # LiteLLM API Gateway
+      # LiteLLM gateway
       - LITELLM_PROXY_URL=http://litellm:4000
-      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
       # Runtime overrides
       - ENVIRONMENT=production
       - DEBUG=false
@@ -174,7 +168,7 @@ services:
 
 # Named Volumes - Data persists outside container lifecycle
 volumes:
-  # LiteLLM data (model configs, usage logs)
+  # LiteLLM data
   litellm_data:
     driver: local
 
