@@ -1,4 +1,5 @@
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -438,29 +439,23 @@ class PRPipelineService:
         days: int,
     ) -> float | None:
         since = datetime.now(UTC) - timedelta(days=days)
+        end_attr = getattr(PullRequest, end_col)
+        start_attr = getattr(PullRequest, start_col)
+
         stmt = select(
-            PullRequest.id,
-            getattr(PullRequest, end_col),
-            getattr(PullRequest, start_col),
+            func.avg(
+                func.extract("epoch", end_attr - start_attr) / 3600
+            )
         ).where(
             PullRequest.owner == owner,
             PullRequest.repo == repo,
-            getattr(PullRequest, end_col).isnot(None),
-            getattr(PullRequest, start_col).isnot(None),
+            end_attr.isnot(None),
+            start_attr.isnot(None),
             PullRequest.created_at >= since,
         )
         result = await db.execute(stmt)
-        rows = result.all()
-        if not rows:
-            return None
-        hours_list = [
-            (row[1] - row[2]).total_seconds() / 3600
-            for row in rows
-            if row[1] is not None and row[2] is not None
-        ]
-        if not hours_list:
-            return None
-        return round(sum(hours_list) / len(hours_list), 1)
+        avg = result.scalar()
+        return round(avg, 1) if avg else None
 
     async def _percentile(
         self,
@@ -478,18 +473,10 @@ class PRPipelineService:
             conditions.append(PullRequest.state == require_state)
 
         stmt = select(
-            PullRequest.id,
-            end_attr,
-            start_attr,
-        ).where(*conditions)
+            (func.extract("epoch", end_attr - start_attr) / 3600).label("hours")
+        ).where(*conditions).order_by("hours")
         result = await db.execute(stmt)
-        rows = result.all()
-
-        values = [
-            (row[1] - row[2]).total_seconds() / 3600
-            for row in rows
-            if row[1] is not None and row[2] is not None
-        ]
+        values = [row[0] for row in result.all() if row[0] is not None]
 
         if not values:
             return PRPipelinePercentileMetric(p50=None, p90=None, avg=None, count=0)
