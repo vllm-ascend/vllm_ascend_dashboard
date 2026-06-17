@@ -12,6 +12,7 @@ import {
   LoginOutlined,
   LockOutlined,
   GithubOutlined,
+  PullRequestOutlined,
   MenuOutlined,
   CloudServerOutlined,
   MailOutlined,
@@ -37,6 +38,11 @@ const menuItems: MenuProps['items'] = [
     key: '/project',
     icon: <GithubOutlined />,
     label: '项目看板',
+  },
+  {
+    key: '/pr-pipeline',
+    icon: <PullRequestOutlined />,
+    label: 'PR 流水线',
   },
   {
     key: '/ci',
