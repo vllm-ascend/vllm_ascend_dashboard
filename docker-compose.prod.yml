@@ -14,6 +14,8 @@ services:
     container_name: vllm-dashboard-litellm
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
+      - DATABASE_URL=sqlite:///app/data/litellm.db
+      - STORE_MODEL_IN_DB=true
     volumes:
       - ./deploy/config/litellm_config.yaml:/app/config.yaml:ro
       - litellm_data:/app/data
