@@ -178,7 +178,7 @@ const OverviewTab = ({ period }: { period: number }) => {
 
       <Card title="Pipeline Stage Distribution" style={{ marginBottom: 24 }}>
         <Space size={[8, 12]} wrap>
-          {Object.entries(data.pipeline_stage_distribution || {}).map(([stage, count]) => (
+          {Object.entries(data.pipeline_stage_distribution || {}).map(([stage, count]: [string, number]) => (
             <Tag key={stage} color={PIPELINE_STAGE_COLORS[stage] || 'default'} style={{ fontSize: 14, padding: '4px 12px' }}>
               {STAGE_LABELS[stage] || stage}: {count}
             </Tag>
@@ -291,7 +291,7 @@ const KanbanTab = () => {
                       No PRs
                     </Text>
                   )}
-                  {prs.map((pr) => (
+                  {prs.map((pr: PullRequestResponse) => (
                     <Card
                       key={pr.id}
                       size="small"
@@ -316,7 +316,7 @@ const KanbanTab = () => {
                           {pr.is_draft && <Tag color="gold" style={{ fontSize: 11 }}>Draft</Tag>}
                           {pr.review_status && <Tag color={REVIEW_STATUS_COLORS[pr.review_status] || 'default'} style={{ fontSize: 11 }}>{pr.review_status}</Tag>}
                           {pr.ci_status && <Tag color={CI_STATUS_COLORS[pr.ci_status] || 'default'} style={{ fontSize: 11 }}>{pr.ci_status}</Tag>}
-                          {pr.labels?.slice(0, 2).map((label) => (
+                          {pr.labels?.slice(0, 2).map((label: string) => (
                             <Tag key={label} style={{ fontSize: 11 }}>{label}</Tag>
                           ))}
                         </Space>
@@ -601,7 +601,7 @@ const MetricsTab = ({ period }: { period: number }) => {
       {data.survival_distribution && data.survival_distribution.length > 0 && (
         <Card title="Survival Distribution">
           <Space direction="vertical" size={8}>
-            {data.survival_distribution.map((point) => (
+            {data.survival_distribution.map((point: { day: number; hours_threshold: number; cumulative_percent: number; count: number }) => (
               <div key={point.day} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Text strong>{Math.round(point.cumulative_percent)}%</Text>
                 <Text type="secondary">of PRs merged within</Text>
@@ -623,20 +623,20 @@ const MetricsTab = ({ period }: { period: number }) => {
 }
 
 const ContributorsTab = ({ period }: { period: number }) => {
-  const [contributorType, setContributorType] = useState<string | null>(null)
+  const [contributorType, setContributorType] = useState<string | undefined>(undefined)
   const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, 20)
 
   if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
 
-  const authors = (data || []).filter((c) => c.type === 'author' || c.pr_count > 0)
-  const reviewers = (data || []).filter((c) => c.type === 'reviewer' || c.review_count > 0)
+  const authors = (data || []).filter((c: PRPipelineContributor) => c.type === 'author' || c.pr_count > 0)
+  const reviewers = (data || []).filter((c: PRPipelineContributor) => c.type === 'reviewer' || c.review_count > 0)
 
   const authorColumns = [
     {
       title: 'Author',
       key: 'username',
       width: 180,
-      render: (_, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
+      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
     },
     {
       title: 'PR Count',
@@ -673,7 +673,7 @@ const ContributorsTab = ({ period }: { period: number }) => {
       title: 'Reviewer',
       key: 'username',
       width: 180,
-      render: (_, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
+      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
     },
     {
       title: 'Review Count',
