@@ -593,6 +593,50 @@ class GitHubClient:
 
         return commits
 
+    async def get_workflow_run_history(
+        self,
+        workflow_id_or_name: str,
+        per_page: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        获取 workflow 最近 N 次运行记录（用于失败分析的历史对比）
+
+        Args:
+            workflow_id_or_name: workflow ID 或文件名
+            per_page: 获取最近几次运行（默认10）
+
+        Returns:
+            workflow runs 列表，每个包含 id, run_number, status, conclusion, head_sha, head_commit, created_at, event
+        """
+        url = f"/repos/{self.owner}/{self.repo}/actions/workflows/{workflow_id_or_name}/runs"
+        params = {
+            "per_page": min(per_page, 100),
+            "page": 1,
+            "status": "completed",
+        }
+        logger.info(f"Fetching workflow run history for {workflow_id_or_name} (per_page={per_page})")
+        result = await self._request("GET", url, params=params)
+        return result.get("workflow_runs", [])
+
+    async def get_compare_commits(
+        self,
+        base_sha: str,
+        head_sha: str,
+    ) -> dict[str, Any]:
+        """
+        获取两个 commit 之间的对比信息
+
+        Args:
+            base_sha: 基准 commit SHA
+            head_sha: 目标 commit SHA
+
+        Returns:
+            compare 结果，包含 commits 列表和 files 变更
+        """
+        url = f"/repos/{self.owner}/{self.repo}/compare/{base_sha}...{head_sha}"
+        logger.info(f"Fetching compare between {base_sha}...{head_sha}")
+        return await self._request("GET", url)
+
     # ============ 每日总结相关 API ============
 
     async def get_pull_requests_by_date_range(

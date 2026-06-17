@@ -69,16 +69,16 @@ export const analyzeBatch = async (daysBack: number = 7): Promise<{ success: boo
 }
 
 export const PROBLEM_CATEGORY_MAP: Record<string, { color: string; label: string }> = {
-  infrastructure: { color: '#faad14', label: '基础设施' },
-  test_case: { color: '#1890ff', label: '测试用例' },
-  development_code: { color: '#ff4d4f', label: '开发代码' },
-  other: { color: '#64748d', label: '其他' },
+  '基础设施': { color: '#faad14', label: '基础设施' },
+  '测试用例': { color: '#1890ff', label: '测试用例' },
+  '开发代码': { color: '#ff4d4f', label: '开发代码' },
+  '其他': { color: '#64748b', label: '其他' },
 }
 
 export const ANALYSIS_STATUS_MAP: Record<string, { color: string; label: string }> = {
-  pending: { color: '#64748d', label: '待分析' },
+  pending: { color: '#64748b', label: '待分析' },
   analyzing: { color: '#1890ff', label: '分析中' },
   completed: { color: '#15be53', label: '已完成' },
+  reused: { color: '#8c8c8c', label: '复用分析' },
   failed: { color: '#ff4d4f', label: '分析失败' },
-  skipped: { color: '#faad14', label: '已跳过' },
 }

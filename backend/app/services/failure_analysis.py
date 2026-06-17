@@ -5,10 +5,10 @@ import re
 from datetime import datetime, timedelta, UTC
 from typing import Optional
 
-from sqlalchemy import select, delete, and_, func
+from sqlalchemy import select, delete, and_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import CIJob, ProjectDashboardConfig, JobFailureAnalysis
+from app.models import CIJob, CIResult, ProjectDashboardConfig, JobFailureAnalysis
 from app.models.daily_summary import LLMProviderConfig
 from app.services.claude_code_cli import run_with_fallback
 from app.services.failure_analysis_file_store import FailureAnalysisFileStore
@@ -168,7 +168,7 @@ class FailureAnalysisService:
 
             await db.commit()
             await db.refresh(analysis)
-        except (LLMError, Exception) as e:
+        except Exception as e:
             analysis.analysis_status = "failed"
             analysis.error_message = str(e)
             await db.commit()
@@ -277,9 +277,17 @@ class FailureAnalysisService:
                 else:
                     lines.append(f"  - [{level}] {message}")
 
+        historical_comparison = await self._fetch_historical_run_comparison(job, db)
+        if historical_comparison:
+            lines.append(historical_comparison)
+
+        commit_diff = await self._fetch_commit_diff(job, db)
+        if commit_diff:
+            lines.append(commit_diff)
+
         github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}"
         lines.append(f"\n- **GitHub Job URL**: {github_url}")
-        lines.append(f"\n请分析以上 CI Job 失败信息，特别关注 Annotations 中的错误提示，给出根因分析和改进建议。")
+        lines.append(f"\n请严格按照「CI 失败分析报告模板」的章节结构输出分析报告，包括：基本信息表、问题分类、根因分析（证据来源按优先级排序+根因链路）、影响范围、修复建议表（含优先级和负责方）、关联PR、结论。报告末尾必须包含 JSON 代码块。")
         return "\n".join(lines)
 
     async def _fetch_job_annotations(self, job_id: int, db: AsyncSession) -> list[dict]:
@@ -300,6 +308,148 @@ class FailureAnalysisService:
         except Exception as e:
             logger.warning(f"Failed to fetch annotations for job {job_id}: {e}")
             return []
+
+    async def _fetch_historical_run_comparison(self, job: CIJob, db: AsyncSession) -> str:
+        stmt = select(CIResult).where(
+            and_(
+                CIResult.workflow_name == job.workflow_name,
+                CIResult.conclusion.in_(["success", "failure", "cancelled"]),
+            )
+        ).order_by(desc(CIResult.completed_at)).limit(10)
+        result = await db.execute(stmt)
+        recent_runs = result.scalars().all()
+
+        if not recent_runs:
+            return "（无历史运行数据）"
+
+        lines = []
+        lines.append(f"\n### 历史运行对比（同 Workflow 最近 10 次运行中此 Job 的状态）\n")
+
+        current_run_id = job.run_id
+        for run in recent_runs:
+            job_stmt = select(CIJob).where(
+                and_(
+                    CIJob.run_id == run.run_id,
+                    CIJob.job_name == job.job_name,
+                )
+            ).limit(1)
+            job_result = await db.execute(job_stmt)
+            historical_job = job_result.scalar_one_or_none()
+
+            is_current = run.run_id == current_run_id
+            marker = " ← **当前失败**" if is_current else ""
+
+            run_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{run.run_id}"
+            if historical_job:
+                job_conclusion = historical_job.conclusion or "unknown"
+                lines.append(
+                    f"- Run #{run.run_number} (SHA `{run.head_sha[:7]}`) → "
+                    f"workflow结论={run.conclusion}, 此job={job_conclusion}"
+                    f"{marker}  [链接]({run_url})"
+                )
+            else:
+                lines.append(
+                    f"- Run #{run.run_number} (SHA `{run.head_sha[:7]}`) → "
+                    f"workflow结论={run.conclusion}, 此job=未记录"
+                    f"{marker}  [链接]({run_url})"
+                )
+
+        last_success = None
+        for run in recent_runs:
+            if run.conclusion == "success" and run.run_id != current_run_id:
+                last_success = run
+                break
+
+        skipped_count = 0
+        executed_count = 0
+        for run in recent_runs:
+            job_stmt = select(CIJob).where(
+                and_(
+                    CIJob.run_id == run.run_id,
+                    CIJob.job_name == job.job_name,
+                )
+            ).limit(1)
+            job_result = await db.execute(job_stmt)
+            h_job = job_result.scalar_one_or_none()
+            if h_job:
+                if h_job.conclusion == "skipped":
+                    skipped_count += 1
+                else:
+                    executed_count += 1
+
+        if skipped_count > 0 and executed_count <= 1:
+            lines.append(f"\n**注意**: 此 Job 在最近的 {skipped_count} 次运行中均为 skipped 状态，本次是首次实际执行。")
+
+        if last_success:
+            lines.append(f"\n**上次成功运行**: Run #{last_success.run_number} (SHA `{last_success.head_sha[:7]}`, {last_success.completed_at})")
+
+        return "\n".join(lines)
+
+    async def _fetch_commit_diff(self, job: CIJob, db: AsyncSession) -> str:
+        current_run_stmt = select(CIResult).where(CIResult.run_id == job.run_id).limit(1)
+        current_run_result = await db.execute(current_run_stmt)
+        current_run = current_run_result.scalar_one_or_none()
+
+        if not current_run:
+            return ""
+
+        last_success_stmt = select(CIResult).where(
+            and_(
+                CIResult.workflow_name == job.workflow_name,
+                CIResult.conclusion == "success",
+                CIResult.completed_at < current_run.completed_at,
+            )
+        ).order_by(desc(CIResult.completed_at)).limit(1)
+        last_success_result = await db.execute(last_success_stmt)
+        last_success = last_success_result.scalar_one_or_none()
+
+        if not last_success:
+            return "\n### Commit 对比\n（无上次成功运行记录，无法进行 commit 对比）"
+
+        base_sha = last_success.head_sha
+        head_sha = current_run.head_sha
+
+        if base_sha == head_sha:
+            return "\n### Commit 对比\n（当前失败 run 与上次成功 run 的 head SHA 相同，无代码变更）"
+
+        lines = []
+        lines.append(f"\n### Commit 对比（上次成功 `{base_sha[:7]}` → 当前失败 `{head_sha[:7]}`）\n")
+
+        try:
+            from app.services.github_client import GitHubClient
+            github_token = settings.GITHUB_TOKEN
+            if not github_token:
+                lines.append("（GitHub Token 未配置，无法获取 commit 对比详情）")
+                return "\n".join(lines)
+
+            client = GitHubClient(token=github_token, owner=settings.GITHUB_OWNER, repo=settings.GITHUB_REPO)
+            compare = await client.get_compare_commits(base_sha, head_sha)
+
+            commits = compare.get("commits", [])
+            if commits:
+                lines.append(f"共 {len(commits)} 个 commit 被合入：\n")
+                for c in commits[:15]:
+                    sha_short = c.get("sha", "")[:7]
+                    message = c.get("commit", {}).get("message", "").split("\n")[0]
+                    lines.append(f"- `{sha_short}` {message}")
+
+                if len(commits) > 15:
+                    lines.append(f"- ... 共 {len(commits)} 个 commit（仅显示前 15 个）")
+            else:
+                lines.append("（无中间 commit 信息）")
+
+            files = compare.get("files", [])
+            if files:
+                changed_paths = [f.get("filename", "") for f in files[:10]]
+                lines.append(f"\n变更文件（共 {len(files)} 个，显示前 10 个）：")
+                for p in changed_paths:
+                    lines.append(f"- `{p}`")
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch commit comparison: {e}")
+            lines.append(f"（获取 commit 对比失败: {e}）")
+
+        return "\n".join(lines)
 
     @staticmethod
     def compute_failure_fingerprint(job: CIJob) -> str:
