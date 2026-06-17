@@ -61,6 +61,7 @@ frontend/dist/
 frontend/build/
 frontend/.next/
 frontend/.nuxt/
+frontend/pnpm-workspace.yaml
 
 # Docker
 *.log
@@ -97,3 +98,24 @@ coverage/
 
 # vllm-ascend source code
 data/
+
+# Auto-generated docs
+PROJECT_STRUCTURE.md
+
+# Playwright MCP
+.playwright-mcp/
+
+# Claude Code local settings
+.claude/
+
+# Database files (SQLite)
+*.db
+
+# Screenshots
+docs/screenshots/
+
+# Mock / testing only
+*mock*
+
+# Temporary notes
+\# GitHub *

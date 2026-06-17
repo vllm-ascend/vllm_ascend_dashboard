@@ -27,6 +27,7 @@ __all__ = [
     "DailyReportHistory", "ResourceNpuMetrics", "JobFailureAnalysis",
     "ResourceNodeMetrics",
     "AlertRule", "AlertConditionGroup", "AlertCondition", "AlertHistory",
+    "JobFailureAnalysis",
 ]
 
 

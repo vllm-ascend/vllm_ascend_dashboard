@@ -56,9 +56,35 @@ async def init_db():
 
         # 初始化 LLM 提供商默认配置
         await _init_llm_provider_configs()
+
+        # 同步 provider 配置到 LiteLLM 网关（生产环境）
+        await _sync_litellm_providers()
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}", exc_info=True)
         raise
+
+
+async def _sync_litellm_providers():
+    """同步启用的 LLM provider 到 LiteLLM 网关"""
+    try:
+        from app.services.litellm_sync import get_litellm_sync
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        sync = get_litellm_sync()
+        if not sync.available:
+            logger.info("LiteLLM not configured (LITELLM_PROXY_URL not set), skipping sync")
+            return
+
+        if not await sync.health_check():
+            logger.warning("LiteLLM health check failed, skipping provider sync")
+            return
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            count = await sync.sync_from_db(db)
+            logger.info(f"Synced {count} providers to LiteLLM")
+    except Exception as e:
+        logger.warning(f"LiteLLM provider sync failed (non-fatal): {e}")
 
 
 async def _init_llm_provider_configs():

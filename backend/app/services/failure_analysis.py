@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CIJob, ProjectDashboardConfig, JobFailureAnalysis
 from app.models.daily_summary import LLMProviderConfig
-from app.services.llm_client import LLMClient, LLMError
+from app.services.claude_code_cli import run_with_fallback
 from app.services.failure_analysis_file_store import FailureAnalysisFileStore
 from app.core.config import settings
 
@@ -30,7 +30,6 @@ CATEGORY_KEYWORDS = {
 class FailureAnalysisService:
 
     def __init__(self):
-        self.llm_client = LLMClient()
         self.file_store = FailureAnalysisFileStore()
 
     async def _get_llm_config(self, db: AsyncSession):
@@ -139,15 +138,16 @@ class FailureAnalysisService:
         await db.refresh(analysis)
 
         try:
-            llm_result = await self.llm_client.generate(
-                provider=llm_config.provider,
-                model=llm_config.default_model,
-                api_key=llm_config.api_key,
-                api_base=llm_config.api_base_url,
+            llm_result = await run_with_fallback(
+                prompt=user_prompt,
+                provider_config={
+                    "provider": llm_config.provider,
+                    "api_key": llm_config.api_key,
+                    "api_base_url": llm_config.api_base_url,
+                    "default_model": llm_config.default_model,
+                },
                 system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=0.3,
-                max_tokens=8192,
+                max_turns=12,
             )
             parsed = self.parse_llm_response(llm_result.content)
             report_content = parsed.get("full_report", llm_result.content)

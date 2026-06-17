@@ -260,6 +260,19 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add daily report job: {e}", exc_info=True)
 
+        # CI 失败分析任务 - CI 同步后 15 分钟执行（确保数据已落库）
+        try:
+            self.scheduler.add_job(
+                self._analyze_failures_scheduled_job,
+                trigger=IntervalTrigger(minutes=30),
+                id="ci_failure_analysis",
+                name="CI Failure Analysis (Claude Code CLI)",
+                replace_existing=True,
+            )
+            logger.info(f"CI failure analysis scheduled every 30 minutes")
+        except Exception as e:
+            logger.error(f"Failed to add CI failure analysis job: {e}", exc_info=True)
+
     def stop(self) -> None:
         """停止调度器"""
         if self.scheduler.running:
@@ -332,6 +345,12 @@ class DataSyncScheduler:
                     .values(last_sync_at=datetime.now(UTC))
                 )
                 await db.commit()
+
+                # 同步完成后，分析新发现的失败 jobs
+                try:
+                    await self._analyze_failed_jobs(db)
+                except Exception as analyze_err:
+                    logger.warning(f"Failed to analyze CI failures (non-fatal): {analyze_err}")
 
                 logger.info("=" * 60)
                 logger.info(f"CI DATA SYNC JOB COMPLETED - Collected {collected} runs")
@@ -612,6 +631,78 @@ class DataSyncScheduler:
             logger.error("=" * 60)
             logger.error(f"RESOURCE METRICS COLLECT JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
+
+    async def _analyze_failed_jobs(self, db=None) -> int:
+        """
+        分析最近失败的、尚未分析的 CI jobs。
+        使用 FailureAnalysisService（含 fingerprint 去重）。
+        """
+        try:
+            from sqlalchemy import select
+
+            from app.models import CIJob, JobFailureAnalysis
+            from app.services.failure_analysis import FailureAnalysisService
+
+            svc = FailureAnalysisService()
+            count = 0
+
+            if db is not None:
+                # 查找未分析的失败 jobs
+                analyzed_subq = select(JobFailureAnalysis.job_id)
+                stmt = (
+                    select(CIJob)
+                    .where(
+                        CIJob.conclusion.in_(["failure", "cancelled"]),
+                        CIJob.job_id.notin_(analyzed_subq),
+                    )
+                    .order_by(CIJob.completed_at.desc().nulls_last())
+                    .limit(5)
+                )
+                result = await db.execute(stmt)
+                jobs = result.scalars().all()
+                for job in jobs:
+                    try:
+                        await svc.analyze_failed_job(job.job_id, db)
+                        count += 1
+                    except Exception as e:
+                        logger.warning(f"Analysis failed for job {job.job_id}: {e}")
+            else:
+                async with SessionLocal() as session:
+                    analyzed_subq = select(JobFailureAnalysis.job_id)
+                    stmt = (
+                        select(CIJob)
+                        .where(
+                            CIJob.conclusion.in_(["failure", "cancelled"]),
+                            CIJob.job_id.notin_(analyzed_subq),
+                        )
+                        .order_by(CIJob.completed_at.desc().nulls_last())
+                        .limit(5)
+                    )
+                    result = await session.execute(stmt)
+                    jobs = result.scalars().all()
+                    for job in jobs:
+                        try:
+                            await svc.analyze_failed_job(job.job_id, session)
+                            count += 1
+                        except Exception as e:
+                            logger.warning(f"Analysis failed for job {job.job_id}: {e}")
+
+            return count
+        except Exception as e:
+            logger.warning(f"Failed job analysis error (non-fatal): {e}")
+            return 0
+
+    async def _analyze_failures_scheduled_job(self) -> None:
+        """定时分析失败 CI jobs 的独立任务"""
+        logger.info("=" * 60)
+        logger.info("CI FAILURE ANALYSIS JOB STARTED")
+        logger.info("=" * 60)
+
+        try:
+            count = await self._analyze_failed_jobs(db=None)
+            logger.info(f"CI FAILURE ANALYSIS JOB COMPLETED - Analyzed {count} jobs")
+        except Exception as e:
+            logger.error(f"CI FAILURE ANALYSIS JOB FAILED: {e}", exc_info=True)
 
     async def _cleanup_resource_metrics_job(self) -> None:
         """NPU 指标数据清理任务"""
