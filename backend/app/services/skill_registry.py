@@ -20,9 +20,20 @@ class SkillRegistry:
 
     def __init__(self):
         self._skills: dict[str, SkillInfo] = {}
-        self._builtin_dir = Path(__file__).parent.parent / "resources" / "skills"
+        self._builtin_dir = self._resolve_builtin_skills_dir()
         self._data_dir: Path = self._resolve_data_skills_dir()
         self._load_all()
+
+    def _resolve_builtin_skills_dir(self) -> Path:
+        project_root = Path(__file__).parent.parent.parent.parent
+        agents_skills_dir = project_root / ".agents" / "skills"
+        if agents_skills_dir.exists():
+            return agents_skills_dir
+        fallback = Path(__file__).parent.parent / "resources" / "skills"
+        if fallback.exists():
+            logger.info(f"Builtin skills dir not found at {agents_skills_dir}, falling back to {fallback}")
+            return fallback
+        return agents_skills_dir
 
     def _resolve_data_skills_dir(self) -> Path:
         from app.core.config import settings
