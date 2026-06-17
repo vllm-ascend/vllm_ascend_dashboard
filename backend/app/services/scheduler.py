@@ -273,6 +273,19 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add CI failure analysis job: {e}", exc_info=True)
 
+        pr_pipeline_interval = getattr(settings, 'PR_PIPELINE_SYNC_INTERVAL_MINUTES', 30)
+        try:
+            self.scheduler.add_job(
+                self._sync_pr_pipeline_job,
+                trigger=IntervalTrigger(minutes=pr_pipeline_interval),
+                id="pr_pipeline_sync",
+                name="PR Pipeline Sync",
+                replace_existing=True,
+            )
+            logger.info(f"PR pipeline sync scheduled every {pr_pipeline_interval} minutes")
+        except Exception as e:
+            logger.error(f"Failed to add PR pipeline sync job: {e}", exc_info=True)
+
     def stop(self) -> None:
         """停止调度器"""
         if self.scheduler.running:
@@ -366,6 +379,32 @@ class DataSyncScheduler:
                 logger.error(f"CI DATA SYNC JOB FAILED - Error: {e}", exc_info=True)
                 logger.error("=" * 60)
                 # async with 会自动 rollback 和 close
+                raise
+
+    async def _sync_pr_pipeline_job(self) -> None:
+        logger.info("PR PIPELINE SYNC JOB STARTED")
+
+        if not self.github_client:
+            self._initialize_github_client()
+
+        async with SessionLocal() as db:
+            try:
+                from app.services.pr_pipeline_collector import PRPipelineCollector
+
+                collector = PRPipelineCollector(
+                    github_client=self.github_client,
+                    db_session=db,
+                )
+
+                days_back = getattr(settings, 'PR_PIPELINE_DAYS_BACK', 7)
+                owner = settings.GITHUB_OWNER
+                repo = settings.GITHUB_REPO
+
+                collected = await collector.collect_prs(owner, repo, days_back=days_back)
+
+                logger.info(f"PR PIPELINE SYNC JOB COMPLETED - Collected {collected} PRs")
+            except Exception as e:
+                logger.error(f"PR PIPELINE SYNC JOB FAILED - Error: {e}", exc_info=True)
                 raise
 
     def _update_project_dashboard_cache_job(self) -> None:
