@@ -14,7 +14,6 @@ services:
     container_name: vllm-dashboard-litellm
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - ./deploy/config/litellm_config.yaml:/app/config.yaml:ro
       - litellm_data:/app/data
