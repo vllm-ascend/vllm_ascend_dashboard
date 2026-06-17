@@ -8,13 +8,9 @@
 # 后端服务在启动时自动同步数据库中的 provider 配置。
 
 general_settings:
-  master_key: ${LITELLM_MASTER_KEY}
-  database_url: "postgresql://llmproxy:dbpassword9090@db:5432/litellm"  # 可选，用于持久化
-  store_model_in_db: true  # 模型配置持久化到数据库
+  master_key: sk-litellm-master-key-change-me
 
-model_list:
-  # 模型列表由 backend 在启动时通过 /model/new API 动态注册。
-  # 不再在此处硬编码 —— provider 配置全部来自数据库中的 LLMProviderConfig。
+model_list: []
 
 litellm_settings:
   # 启用 Anthropic 格式兼容端点

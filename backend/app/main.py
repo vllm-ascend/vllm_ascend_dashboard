@@ -1,6 +1,7 @@
 """
 vLLM Ascend Dashboard - Backend Application
 """
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -60,8 +61,8 @@ async def init_db():
         # 同步 provider 配置到 LiteLLM 网关（生产环境）
         await _sync_litellm_providers()
 
-        # Claude Code CLI 预热检查（验证 API key + CLI 可用性）
-        await _warmup_claude_code_cli()
+        # Claude Code CLI 预热检查 —— 后台执行，不阻塞启动
+        asyncio.create_task(_warmup_claude_code_cli())
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}", exc_info=True)
         raise
@@ -113,10 +114,8 @@ async def _sync_litellm_providers():
             logger.info("LiteLLM not configured (LITELLM_PROXY_URL not set), skipping sync")
             return
 
-        if not await sync.health_check():
-            logger.warning("LiteLLM health check failed, skipping provider sync")
-            return
-
+        # 直接写配置文件，不依赖 health check
+        # LiteLLM 可能还没就绪，但文件写入后下次启动就会读取
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
             count = await sync.sync_from_db(db)
