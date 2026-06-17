@@ -139,6 +139,7 @@ class PRPipelineCollector:
             if user:
                 reviewers_list.append({
                     "login": user.get("login", ""),
+                    "avatar_url": user.get("avatar_url", ""),
                     "state": review.get("state", ""),
                 })
 

@@ -104,6 +104,7 @@ class PRPipelineOverview(BaseModel):
     closed_count: int
     draft_count: int
     backlog_index: float
+    backlog_level: str
     merge_rate: float
     avg_time_to_first_review_hours: float | None = None
     avg_time_to_merge_hours: float | None = None

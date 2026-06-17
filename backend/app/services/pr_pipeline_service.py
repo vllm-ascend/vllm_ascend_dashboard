@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.types import Unicode
 
 from app.models import PullRequest
 from app.schemas.pr_pipeline import (
@@ -64,6 +65,7 @@ class PRPipelineService:
         recent_merged = await self._count_since(db, owner, repo, "merged", since)
 
         backlog_index = round(open_count / max(recent_merged + recent_opened, 1), 1)
+        backlog_level = "green" if backlog_index < 5 else ("yellow" if backlog_index < 15 else "red")
         merge_rate = round(merged_count / max(merged_count + closed_count, 1), 2)
 
         avg_first_review = await self._avg_hours(db, owner, repo, "first_review_at", "created_at", days)
@@ -82,6 +84,7 @@ class PRPipelineService:
             closed_count=closed_count,
             draft_count=draft_count,
             backlog_index=backlog_index,
+            backlog_level=backlog_level,
             merge_rate=merge_rate,
             avg_time_to_first_review_hours=avg_first_review,
             avg_time_to_merge_hours=avg_merge,
@@ -141,6 +144,8 @@ class PRPipelineService:
         base_branch: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        label: str | None = None,
+        search: str | None = None,
         sort_by: str = "updated_at",
         sort_order: str = "desc",
         page: int = 1,
@@ -164,6 +169,10 @@ class PRPipelineService:
             conditions.append(PullRequest.is_draft == is_draft)
         if base_branch:
             conditions.append(PullRequest.base_branch == base_branch)
+        if label:
+            conditions.append(PullRequest.labels.cast(Unicode).like(f"%{label}%"))
+        if search:
+            conditions.append(PullRequest.title.ilike(f"%{search}%"))
         if date_from:
             try:
                 df = datetime.fromisoformat(date_from).replace(tzinfo=UTC)

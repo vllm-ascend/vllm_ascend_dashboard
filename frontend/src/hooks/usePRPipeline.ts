@@ -21,6 +21,7 @@ export const usePRPipelineList = (params?: {
   author?: string
   reviewer?: string
   is_draft?: boolean
+  label?: string
   search?: string
   sort_by?: string
   sort_order?: string

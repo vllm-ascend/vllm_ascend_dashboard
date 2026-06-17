@@ -63,6 +63,8 @@ async def get_list(
     base_branch: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
+    label: str | None = Query(default=None),
+    search: str | None = Query(default=None),
     sort_by: str = Query(default="updated_at"),
     sort_order: str = Query(default="desc"),
     page: int = Query(default=1, ge=1),
@@ -74,6 +76,7 @@ async def get_list(
         review_status=review_status, ci_status=ci_status,
         is_draft=is_draft, base_branch=base_branch,
         date_from=date_from, date_to=date_to,
+        label=label, search=search,
         sort_by=sort_by, sort_order=sort_order,
         page=page, page_size=page_size,
     )

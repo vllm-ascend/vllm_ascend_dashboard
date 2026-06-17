@@ -20,7 +20,7 @@ export interface PullRequestResponse {
   changed_files: number
   pipeline_stage: string | null
   review_status: string | null
-  reviewers: { login: string; state: string }[]
+  reviewers: { login: string; avatar_url: string; state: string }[]
   ci_status: string | null
   ci_workflow_run_id: number | null
   first_review_at: string | null
@@ -45,6 +45,7 @@ export interface PRPipelineOverview {
   closed_count: number
   draft_count: number
   backlog_index: number
+  backlog_level: string
   merge_rate: number
   avg_time_to_first_review_hours: number | null
   avg_time_to_merge_hours: number | null
@@ -153,6 +154,7 @@ export const getList = async (params?: {
   author?: string
   reviewer?: string
   is_draft?: boolean
+  label?: string
   search?: string
   sort_by?: string
   sort_order?: string
