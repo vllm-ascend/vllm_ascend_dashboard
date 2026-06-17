@@ -760,6 +760,90 @@ class GitHubClient:
         logger.info(f"Fetching PR #{pr_number} detail")
         return await self._request("GET", url)
 
+    async def get_pr_reviews(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        """
+        获取指定 PR 的所有 reviews
+
+        Args:
+            owner: GitHub 组织名
+            repo: 仓库名
+            pr_number: PR 编号
+
+        Returns:
+            reviews 列表
+        """
+        url = f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
+        params = {"per_page": 100}
+        logger.info(f"Fetching reviews for PR #{pr_number}")
+
+        all_reviews = []
+        page = 1
+
+        while True:
+            params["page"] = page
+            result = await self._request("GET", url, params=params)
+            reviews = result if isinstance(result, list) else result.get("reviews", result.get("items", []))
+
+            if not reviews:
+                break
+
+            all_reviews.extend(reviews)
+
+            if len(reviews) < 100:
+                break
+
+            page += 1
+
+        logger.info(f"Total {len(all_reviews)} reviews fetched for PR #{pr_number}")
+        return all_reviews
+
+    async def get_pr_files(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> list[dict[str, Any]]:
+        """
+        获取指定 PR 的所有变更文件
+
+        Args:
+            owner: GitHub 组织名
+            repo: 仓库名
+            pr_number: PR 编号
+
+        Returns:
+            files 列表，每个包含 filename, additions, deletions, changes, status 等
+        """
+        url = f"/repos/{owner}/{repo}/pulls/{pr_number}/files"
+        params = {"per_page": 100}
+        logger.info(f"Fetching files for PR #{pr_number}")
+
+        all_files = []
+        page = 1
+
+        while True:
+            params["page"] = page
+            result = await self._request("GET", url, params=params)
+            files = result if isinstance(result, list) else []
+
+            if not files:
+                break
+
+            all_files.extend(files)
+
+            if len(files) < 100:
+                break
+
+            page += 1
+
+        logger.info(f"Total {len(all_files)} files fetched for PR #{pr_number}")
+        return all_files
+
     async def get_issue(
         self,
         owner: str,
