@@ -9,6 +9,7 @@
 
 general_settings:
   master_key: ${LITELLM_MASTER_KEY}
+  database_url: "sqlite:///app/data/litellm.db"
 
 model_list: []
 
