@@ -2,11 +2,12 @@
 # Multi-stage build for optimized image size
 
 # Stage 1: Install dependencies
-FROM python:3.11-slim AS dependencies
+# 国内网络环境使用镜像加速
+FROM docker.m.daocloud.io/library/python:3.11-slim AS dependencies
 
 WORKDIR /app
 
-# Install uv
+# Install uv (ghcr.io 通常可从国内访问，若不行可换为 pip install uv)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Copy pyproject.toml and README.md (required by hatchling)
@@ -19,7 +20,7 @@ RUN python -m venv /opt/venv && \
 
 
 # Stage 2: Production
-FROM python:3.11-slim AS production
+FROM docker.m.daocloud.io/library/python:3.11-slim AS production
 
 WORKDIR /app
 
