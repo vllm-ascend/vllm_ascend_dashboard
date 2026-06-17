@@ -114,10 +114,8 @@ async def _sync_litellm_providers():
             logger.info("LiteLLM not configured (LITELLM_PROXY_URL not set), skipping sync")
             return
 
-        if not await sync.health_check():
-            logger.warning("LiteLLM health check failed, skipping provider sync")
-            return
-
+        # 直接写配置文件，不依赖 health check
+        # LiteLLM 可能还没就绪，但文件写入后下次启动就会读取
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
             count = await sync.sync_from_db(db)
