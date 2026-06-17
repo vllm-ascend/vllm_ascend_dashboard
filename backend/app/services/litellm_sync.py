@@ -145,24 +145,28 @@ class LiteLLMSync:
         return len(model_list)
 
     async def _reload(self) -> bool:
-        """热加载 LiteLLM 配置"""
+        """通过 Docker socket 重启 LiteLLM 容器"""
+        import aiohttp
+        socket_path = "/var/run/docker.sock"
+        if not os.path.exists(socket_path):
+            logger.warning("Docker socket not available, LiteLLM needs manual restart")
+            return False
         try:
-            headers = {"Authorization": f"Bearer {self.master_key}"}
-            async with aiohttp.ClientSession() as s:
+            conn = aiohttp.UnixConnector(path=socket_path)
+            async with aiohttp.ClientSession(connector=conn) as s:
                 async with s.post(
-                    f"{self.litellm_url}/config/reload",
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=5),
+                    "http://localhost/containers/vllm-dashboard-litellm/restart",
+                    timeout=aiohttp.ClientTimeout(total=10),
                 ) as r:
-                    ok = r.status in (200, 202)
+                    ok = r.status in (204, 200)
                     if ok:
-                        logger.info("LiteLLM config reloaded")
+                        logger.info("LiteLLM container restarted via Docker API")
                     else:
                         body = await r.text()
-                        logger.warning("LiteLLM reload: %d %s", r.status, body[:200])
+                        logger.warning("LiteLLM restart: %d %s", r.status, body[:200])
                     return ok
         except Exception as e:
-            logger.warning("LiteLLM reload error (will need restart): %s", e)
+            logger.warning("LiteLLM restart error: %s", e)
             return False
 
 

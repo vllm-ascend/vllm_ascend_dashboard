@@ -58,6 +58,8 @@ services:
       - backend_data:/app/data
       # LiteLLM config shared volume
       - ./deploy/config/litellm_config.yaml:/app/litellm_config.yaml
+      # Docker socket (for LiteLLM restart on provider change)
+      - /var/run/docker.sock:/var/run/docker.sock
       # Log files
       - backend_logs:/app/logs
     # Do NOT expose backend port to public - only accessible via nginx proxy
