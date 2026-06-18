@@ -232,7 +232,14 @@ class FailureAnalysisService:
         lines.append(f"- **Completed At**: {job.completed_at or 'unknown'}")
         if job.logs_url:
             lines.append(f"- **Logs URL**: {job.logs_url}")
-            lines.append("  提示：如果日志较大，可以用 `curl` 配合 GITHUB_TOKEN 拉取失败步骤附近的关键日志。")
+            lines.append("")
+            lines.append("**你必须执行以下命令获取失败日志的详细内容：**")
+            lines.append(f"```bash")
+            lines.append(f"curl -s -H \"Authorization: Bearer $GITHUB_TOKEN\" \"{job.logs_url}\" 2>/dev/null | tail -200")
+            lines.append(f"```")
+            lines.append("- 执行后仔细阅读日志内容，定位具体的错误信息和调用栈")
+            lines.append("- 不要仅根据 annotations 的表面信息下结论")
+            lines.append("- 日志中可能有具体的 Python 异常、assert 失败、或 import 错误")
 
         try:
             steps = json.loads(job.steps_data) if job.steps_data else []
