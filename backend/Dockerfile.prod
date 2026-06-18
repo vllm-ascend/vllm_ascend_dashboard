@@ -48,6 +48,11 @@ COPY app/ ./app/
 # Copy skills/agents
 COPY .agents/ ./.agents/
 
+# Install skills for Claude Code CLI (so CLI finds them natively)
+RUN mkdir -p /home/appuser/.claude/skills \
+    && cp -r ./.agents/skills/* /home/appuser/.claude/skills/ \
+    && chown -R appuser:appuser /home/appuser/.claude
+
 # Copy scripts directory
 COPY scripts/ ./scripts/
 
