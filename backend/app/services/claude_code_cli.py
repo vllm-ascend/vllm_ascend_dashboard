@@ -313,6 +313,11 @@ class ClaudeCodeCLI:
         env["CLAUDE_CODE_NO_INTERACTIVE"] = "1"
         env["CLAUDE_CODE_HEADLESS"] = "1"
 
+        # 传递 GITHUB_TOKEN，CLI 可以用 curl 拉 CI 日志
+        from app.core.config import settings
+        if settings.GITHUB_TOKEN:
+            env["GITHUB_TOKEN"] = settings.GITHUB_TOKEN
+
         # 确保 HOME 正确设置，CLI 会用它找配置目录
         if "HOME" not in env or not env["HOME"]:
             env["HOME"] = "/home/appuser"
