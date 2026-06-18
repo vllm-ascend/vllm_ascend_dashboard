@@ -230,6 +230,9 @@ class FailureAnalysisService:
         lines.append(f"- **Duration**: {job.duration_seconds or 'unknown'}s")
         lines.append(f"- **Started At**: {job.started_at or 'unknown'}")
         lines.append(f"- **Completed At**: {job.completed_at or 'unknown'}")
+        if job.logs_url:
+            lines.append(f"- **Logs URL**: {job.logs_url}")
+            lines.append("  提示：如果日志较大，可以用 `curl` 配合 GITHUB_TOKEN 拉取失败步骤附近的关键日志。")
 
         try:
             steps = json.loads(job.steps_data) if job.steps_data else []
