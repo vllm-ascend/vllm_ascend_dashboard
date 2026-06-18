@@ -580,7 +580,7 @@ class CICollector:
                 runner_name=job.get("runner_name"),  # GitHub API 直接返回 runner_name 字段
                 runner_labels=json.dumps(runner_labels),
                 steps_data=json.dumps(steps_summary),
-                logs_url=job.get("logs_url", ""),
+                logs_url=f"https://api.github.com/repos/{self.github.owner}/{self.github.repo}/actions/jobs/{job['id']}/logs",
                 data=json.dumps(job),
             )
 
