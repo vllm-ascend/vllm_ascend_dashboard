@@ -15,6 +15,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useJobDetail } from '../hooks/useCI'
 import { useJobOwners } from '../hooks/useJobOwners'
+import { useCurrentUser } from '../hooks/useCurrentUser'
 import { useJobFailureAnalysis, useFailureAnalysisReport, useAnalyzeFailedJob } from '../hooks/useFailureAnalysis'
 import { PROBLEM_CATEGORY_MAP, ANALYSIS_STATUS_MAP } from '../services/failureAnalysis'
 import { formatTimezone } from '../utils/timezone'
@@ -52,6 +53,8 @@ function JobDetail() {
     analysis?.analysis_status === 'completed' ? analysis?.id : null
   )
   const analyzeMutation = useAnalyzeFailedJob()
+  const { data: currentUser } = useCurrentUser()
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin'
 
   const [showFullReport, setShowFullReport] = useState(false)
 
@@ -221,17 +224,19 @@ function JobDetail() {
           }
           style={{ marginBottom: 24 }}
           extra={
-            <Space>
-              <Button
-                icon={<RobotOutlined />}
-                loading={analyzeMutation.isPending}
-                onClick={analysis ? handleReAnalyze : handleAnalyze}
-                type="primary"
-                size="small"
-              >
-                {analysis ? '重新分析' : '开始分析'}
-              </Button>
-            </Space>
+            isAdmin ? (
+              <Space>
+                <Button
+                  icon={<RobotOutlined />}
+                  loading={analyzeMutation.isPending}
+                  onClick={analysis ? handleReAnalyze : handleAnalyze}
+                  type="primary"
+                  size="small"
+                >
+                  {analysis ? '重新分析' : '开始分析'}
+                </Button>
+              </Space>
+            ) : null
           }
         >
           {analyzeMutation.isPending && (
@@ -245,12 +250,14 @@ function JobDetail() {
 
           {!analyzeMutation.isPending && !analysis && (
             <Empty
-              description="该失败 Job 尚未进行智能诊断分析"
+              description={isAdmin ? "该失败 Job 尚未进行智能诊断分析" : "暂无分析结果（仅管理员可触发分析）"}
               image={Empty.PRESENTED_IMAGE_SIMPLE}
             >
-              <Button type="primary" icon={<RobotOutlined />} onClick={handleAnalyze}>
-                开始分析
-              </Button>
+              {isAdmin && (
+                <Button type="primary" icon={<RobotOutlined />} onClick={handleAnalyze}>
+                  开始分析
+                </Button>
+              )}
             </Empty>
           )}
 
