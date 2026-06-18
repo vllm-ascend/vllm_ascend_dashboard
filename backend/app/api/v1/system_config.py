@@ -3,6 +3,7 @@
 提供系统配置的查看和更新功能
 """
 import logging
+import re
 from datetime import UTC
 from typing import Annotated
 
@@ -930,6 +931,77 @@ async def update_llm_provider(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"更新 LLM 提供商失败：{str(e)}"
         )
+
+
+@router.post("/llm-providers", status_code=status.HTTP_201_CREATED)
+async def create_llm_provider(
+    config: dict,
+    current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """创建新的 LLM 提供商（需 super_admin）"""
+    from app.models.daily_summary import LLMProviderConfig
+
+    provider_name = config.get("provider", "").strip()
+    if not provider_name:
+        raise HTTPException(status_code=400, detail="provider name is required")
+    if not re.match(r'^[a-zA-Z0-9_-]+$', provider_name):
+        raise HTTPException(status_code=400, detail="provider name 只能包含字母、数字、下划线和连字符")
+
+    stmt = select(LLMProviderConfig).where(LLMProviderConfig.provider == provider_name)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail=f"LLM 提供商 {provider_name} 已存在")
+
+    new_config = LLMProviderConfig(
+        provider=provider_name,
+        display_name=config.get("display_name", provider_name),
+        api_key=config.get("api_key", ""),
+        api_base_url=config.get("api_base_url", ""),
+        default_model=config.get("default_model", ""),
+        enabled=config.get("enabled", True),
+        is_active=config.get("is_active", False),
+        display_order=config.get("display_order", 999),
+    )
+
+    if new_config.is_active:
+        deactivate_stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True)
+        deactivate_result = await db.execute(deactivate_stmt)
+        for active_p in deactivate_result.scalars().all():
+            active_p.is_active = False
+
+    db.add(new_config)
+    await db.commit()
+    await db.refresh(new_config)
+
+    logger.info(f"LLM provider created: {provider_name} by {current_user.username}")
+    return {"success": True, "message": f"LLM 提供商 {provider_name} 已创建", "provider": provider_name}
+
+
+@router.delete("/llm-providers/{provider}")
+async def delete_llm_provider(
+    provider: str,
+    current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
+    db: AsyncSession = Depends(get_db)
+):
+    """删除 LLM 提供商（需 super_admin）"""
+    from app.models.daily_summary import LLMProviderConfig
+
+    stmt = select(LLMProviderConfig).where(LLMProviderConfig.provider == provider)
+    result = await db.execute(stmt)
+    config = result.scalar_one_or_none()
+
+    if not config:
+        raise HTTPException(status_code=404, detail=f"LLM 提供商 {provider} 不存在")
+
+    if config.is_active:
+        raise HTTPException(status_code=400, detail="不能删除当前激活的提供商，请先切换激活状态")
+
+    await db.delete(config)
+    await db.commit()
+
+    logger.info(f"LLM provider deleted: {provider} by {current_user.username}")
+    return {"success": True, "message": f"LLM 提供商 {provider} 已删除"}
 
 
 # ============ 系统提示词配置 API ============
