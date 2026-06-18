@@ -172,21 +172,23 @@ class ClaudeCodeCLI:
 
         start = time.monotonic()
         try:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=env,
-                    cwd=work_dir or os.getcwd(),
-                )
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd=work_dir or os.getcwd(),
+            )
 
+            try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(),
                     timeout=self._timeout,
                 )
             except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
                 raise ClaudeCLITimeout(
                     f"Claude Code CLI timed out after {self._timeout}s"
                 )
