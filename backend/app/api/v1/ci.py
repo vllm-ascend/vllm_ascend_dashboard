@@ -4,7 +4,9 @@ Phase 2: 实现数据采集和展示
 """
 import json
 import logging
+import os
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -1040,3 +1042,55 @@ async def get_job_failure_analysis(
     if not analysis:
         return None
     return analysis
+
+
+# ============ Claude Code CLI 日志 ============
+
+
+@router.get("/claude-logs")
+async def list_claude_logs(
+    current_user: CurrentAdminUser,
+    days: int = Query(default=7, ge=1, le=30),
+):
+    """列出最近 N 天的 Claude Code CLI 调用日志（需 admin）"""
+    from app.services.claude_code_cli import _CLI_LOG_DIR
+
+    logs: list[dict] = []
+    if not _CLI_LOG_DIR.exists():
+        return {"logs": [], "message": "No logs yet"}
+
+    cutoff = datetime.now(timezone.utc).date()
+    for date_dir in sorted(_CLI_LOG_DIR.iterdir(), reverse=True):
+        if not date_dir.is_dir():
+            continue
+        dir_date = date_dir.name[:10]
+        if (cutoff - datetime.strptime(dir_date, "%Y-%m-%d").date()).days > days:
+            continue
+        for log_file in sorted(date_dir.iterdir(), reverse=True):
+            if log_file.suffix == ".log":
+                stat = log_file.stat()
+                logs.append({
+                    "date": dir_date,
+                    "filename": log_file.name,
+                    "path": str(log_file.relative_to(_CLI_LOG_DIR)),
+                    "size": stat.st_size,
+                    "created_at": datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
+                })
+
+    return {"total": len(logs), "logs": logs}
+
+
+@router.get("/claude-logs/{date}/{filename}")
+async def read_claude_log(
+    date: str,
+    filename: str,
+    current_user: CurrentAdminUser,
+):
+    """读取指定的 Claude Code CLI 日志文件内容"""
+    from app.services.claude_code_cli import _CLI_LOG_DIR
+
+    filepath = _CLI_LOG_DIR / date / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Log file not found")
+    content = filepath.read_text(encoding="utf-8")
+    return {"filename": filename, "content": content}

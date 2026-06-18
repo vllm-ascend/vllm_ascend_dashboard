@@ -18,7 +18,12 @@ import shlex
 import shutil
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
+
+# Claude Code CLI 日志持久化目录
+_CLI_LOG_DIR = Path(__file__).parent.parent.parent / "data" / "claude_logs"
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,49 @@ class ClaudeCLINotAvailable(Exception):
 class ClaudeCLITimeout(Exception):
     """Claude Code CLI 执行超时"""
     pass
+
+
+def _save_cli_log(
+    provider: str, model: str, prompt: str, system_prompt: str,
+    stdout: str, stderr: str, duration: float, exit_code: int, route: str,
+) -> str:
+    """持久化保存 Claude Code CLI 调用日志"""
+    try:
+        now = datetime.now(timezone.utc)
+        date_dir = _CLI_LOG_DIR / now.strftime("%Y-%m-%d")
+        date_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{now.strftime('%H%M%S')}_{provider}_{model}.log"
+        filepath = date_dir / filename
+
+        filepath.write_text(f"""\
+{'='*60}
+Claude Code CLI Call Log
+{'='*60}
+Time:      {now.isoformat()}
+Provider:  {provider}
+Model:     {model}
+Route:     {route}
+Duration:  {duration:.1f}s
+Exit Code: {exit_code}
+
+--- SYSTEM PROMPT ---
+{system_prompt or '(none)'}
+
+--- USER PROMPT ---
+{prompt}
+
+--- STDOUT ---
+{stdout or '(empty)'}
+
+--- STDERR ---
+{stderr or '(empty)'}
+
+{'='*60}
+""", encoding="utf-8")
+        return str(filepath)
+    except Exception as e:
+        logger.warning("Failed to save CLI log: %s", e)
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +262,17 @@ class ClaudeCodeCLI:
                 "ClaudeCodeCLI finished: duration=%.1fs turns=%d content_len=%d",
                 duration, result.turns, len(result.content),
             )
+
+            # 持久化日志
+            route_name = "litellm" if litellm_url else ("direct" if provider == "anthropic" else "formatproxy")
+            _save_cli_log(
+                provider=provider, model=model,
+                prompt=prompt, system_prompt=system_prompt,
+                stdout=stdout, stderr=stderr,
+                duration=duration, exit_code=proc.returncode,
+                route=route_name,
+            )
+
             return result
 
         finally:
