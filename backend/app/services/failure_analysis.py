@@ -99,6 +99,7 @@ class FailureAnalysisService:
         ).limit(1)
         dedup_result = await db.execute(dedup_stmt)
         dedup_match = dedup_result.scalar_one_or_none()
+        llm_config = await self._get_llm_config(db)
 
         if dedup_match and not force:
             reused = JobFailureAnalysis(
@@ -113,6 +114,8 @@ class FailureAnalysisService:
                 root_cause_summary=dedup_match.root_cause_summary,
                 improvement_measures_summary=dedup_match.improvement_measures_summary,
                 report_file_path=dedup_match.report_file_path,
+                llm_provider=dedup_match.llm_provider or llm_config.provider,
+                llm_model=dedup_match.llm_model or llm_config.default_model,
                 analysis_status="reused",
             )
             db.add(reused)
@@ -122,7 +125,6 @@ class FailureAnalysisService:
 
         system_prompt = await self._get_system_prompt(db)
         user_prompt = await self._build_job_context(job, db)
-        llm_config = await self._get_llm_config(db)
 
         analysis = JobFailureAnalysis(
             job_id=job_id,
@@ -151,9 +153,13 @@ class FailureAnalysisService:
             )
             parsed = self.parse_llm_response(llm_result.content)
             report_content = parsed.get("full_report", llm_result.content)
-            report_path = await self.file_store.save_report(
-                job.workflow_name, job.job_name, job_id, report_content
-            )
+            try:
+                report_path = await self.file_store.save_report(
+                    job.workflow_name, job.job_name, job_id, report_content
+                )
+            except OSError as e:
+                logger.warning("Failed to save report file (non-fatal): %s", e)
+                report_path = None
 
             analysis.analysis_status = "completed"
             analysis.problem_category = parsed["problem_category"]
@@ -476,6 +482,8 @@ class FailureAnalysisService:
         if json_block_match:
             try:
                 data = json.loads(json_block_match.group(1))
+                if not isinstance(data, dict):
+                    data = {}
                 category = data.get("problem_category", "其他")
                 if category not in VALID_CATEGORIES:
                     for cat in VALID_CATEGORIES:

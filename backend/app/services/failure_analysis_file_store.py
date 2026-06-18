@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import re
@@ -9,10 +10,17 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+import hashlib
+
+
 def sanitize_path_component(component: str) -> str:
     sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', component)
     if not sanitized:
         sanitized = 'unknown'
+    if len(sanitized) > 40:
+        # 超长名用 hash，确保唯一：前 20 字符 + hash
+        suffix = hashlib.md5(component.encode()).hexdigest()[:8]
+        sanitized = sanitized[:20] + '_' + suffix
     return sanitized
 
 

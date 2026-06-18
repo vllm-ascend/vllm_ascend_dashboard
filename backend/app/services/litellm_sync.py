@@ -49,14 +49,19 @@ def _detect_prefix(provider: str, api_base: str) -> str:
 _CONFIG_FILE = os.environ.get("LITELLM_CONFIG_FILE", "/app/litellm_config.yaml")
 
 
+def _yaml_value(v: str) -> str:
+    """安全转义 YAML 值"""
+    return '"' + v.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
 def _model_to_yaml(model_list: list[dict]) -> str:
     """将 model_list 转为 YAML 片段"""
     lines = ["model_list:"]
     for m in model_list:
-        lines.append(f"  - model_name: {m['model_name']}")
+        lines.append(f"  - model_name: {_yaml_value(m['model_name'])}")
         lines.append("    litellm_params:")
         for k, v in m["litellm_params"].items():
-            lines.append(f"      {k}: {v}")
+            lines.append(f"      {k}: {_yaml_value(v)}")
     return "\n".join(lines)
 
 
