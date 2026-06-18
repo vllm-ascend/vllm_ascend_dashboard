@@ -108,7 +108,7 @@ class LiteLLMSync:
         from sqlalchemy import select
         from app.models.daily_summary import LLMProviderConfig
 
-        stmt = select(LLMProviderConfig).where(LLMProviderConfig.enabled == True)
+        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True)
         result = await db_session.execute(stmt)
         configs = result.scalars().all()
 

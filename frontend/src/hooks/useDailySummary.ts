@@ -121,6 +121,26 @@ export const useUpdateLLMProvider = () => {
   })
 }
 
+export const useCreateLLMProvider = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: api.createLLMProvider,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['llm-providers'] })
+    },
+  })
+}
+
+export const useDeleteLLMProvider = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: api.deleteLLMProvider,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['llm-providers'] })
+    },
+  })
+}
+
 /**
  * 获取每日总结配置
  */
