@@ -211,6 +211,19 @@ export const updateLLMProvider = async (provider: string, config: Partial<LLMPro
   return response.data
 }
 
+export const createLLMProvider = async (config: {
+  provider: string; display_name?: string; api_key?: string;
+  api_base_url?: string; default_model?: string; enabled?: boolean; is_active?: boolean;
+}) => {
+  const response = await apiClient.post('/system/config/llm-providers', config)
+  return response.data
+}
+
+export const deleteLLMProvider = async (provider: string) => {
+  const response = await apiClient.delete(`/system/config/llm-providers/${provider}`)
+  return response.data
+}
+
 /**
  * 获取每日总结配置
  */
