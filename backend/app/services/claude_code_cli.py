@@ -222,12 +222,17 @@ class ClaudeCodeCLI:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
                 cwd=work_dir or os.getcwd(),
             )
+
+            # 将 prompt 写入 stdin（替代 -p，激活标准模式 skill 加载）
+            proc.stdin.write(prompt.encode("utf-8"))
+            await proc.stdin.drain()
+            proc.stdin.close()
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -391,9 +396,10 @@ class ClaudeCodeCLI:
         output_format: str,
     ) -> list[str]:
         """构建 claude CLI 命令行参数"""
+        # 不用 -p（headless），改用 stdin pipe 进入标准模式
+        # 标准模式下 ~/.claude/skills/ 中的 skill 会自动加载
         args = [
-            "-p", prompt,          # 非交互式 prompt
-            "--print",             # 将结果打印到 stdout（而非启动交互 REPL）
+            "--print",
             "--max-turns", str(max_turns),
         ]
 

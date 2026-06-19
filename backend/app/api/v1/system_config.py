@@ -904,14 +904,19 @@ async def update_llm_provider(
 
         await db.commit()
 
-        # 同步到 LiteLLM 网关
-        try:
-            from app.services.litellm_sync import get_litellm_sync
-            sync = get_litellm_sync()
-            if sync.available:
-                await sync.sync_from_db(db)
-        except Exception as e:
-            logger.warning("LiteLLM sync after provider update failed: %s", e)
+        # 只有当前激活的 provider 或其配置变化时才同步 LiteLLM
+        should_sync = (
+            provider_config.is_active or
+            config.get('is_active') == True
+        )
+        if should_sync:
+            try:
+                from app.services.litellm_sync import get_litellm_sync
+                sync = get_litellm_sync()
+                if sync.available:
+                    await sync.sync_from_db(db)
+            except Exception as e:
+                logger.warning("LiteLLM sync after provider update failed: %s", e)
 
         return {
             "success": True,
@@ -973,6 +978,15 @@ async def create_llm_provider(
     db.add(new_config)
     await db.commit()
     await db.refresh(new_config)
+
+    if new_config.is_active:
+        try:
+            from app.services.litellm_sync import get_litellm_sync
+            sync = get_litellm_sync()
+            if sync.available:
+                await sync.sync_from_db(db)
+        except Exception as e:
+            logger.warning("LiteLLM sync after create failed: %s", e)
 
     logger.info(f"LLM provider created: {provider_name} by {current_user.username}")
     return {"success": True, "message": f"LLM 提供商 {provider_name} 已创建", "provider": provider_name}

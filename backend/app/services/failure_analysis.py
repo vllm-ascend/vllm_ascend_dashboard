@@ -213,6 +213,8 @@ class FailureAnalysisService:
 
     async def _build_job_context(self, job: CIJob, db: AsyncSession) -> str:
         lines = []
+        lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败。")
+        lines.append("")
         lines.append(f"## CI Job 失败信息\n")
         lines.append(f"- **Workflow**: {job.workflow_name}")
         lines.append(f"- **Job Name**: {job.job_name}")
