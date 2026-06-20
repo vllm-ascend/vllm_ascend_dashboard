@@ -77,6 +77,7 @@ litellm_settings:
   drop_params: true
 
 router_settings:
+  disable_responses_api: true
   num_retries: 1
   request_timeout: 600
 """
