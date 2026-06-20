@@ -169,18 +169,27 @@ class ClaudeCodeCLI:
 
         # ── 路由决策 ──
         if litellm_url and provider != "anthropic":
-            # 生产环境：非 Anthropic → LiteLLM 网关
+            # FormatProxy (Anthropic→OpenAI) → LiteLLM /v1/chat/completions
+            # LiteLLM 收到 OpenAI 格式走 Chat Completions，避免 Anthropic→Responses API bug
+            from app.services.format_proxy import FormatProxy
+
+            proxy = FormatProxy(
+                upstream_base_url=litellm_url + "/v1",
+                upstream_api_key="sk-litellm-master-key-change-me",
+                upstream_model=model,
+            )
+            await proxy.start()
+
             env = self._build_env_direct(
-                api_key="sk-litellm-master-key-change-me",
-                api_base=litellm_url,
+                api_key="PROXY_MANAGED",
+                api_base=proxy.listen_url,
                 model=model,
             )
             logger.info(
-                "ClaudeCodeCLI (via LiteLLM): %s provider=%s model=%s",
+                "ClaudeCodeCLI (FormatProxy→LiteLLM): %s provider=%s model=%s",
                 litellm_url, provider, model,
             )
         elif provider == "anthropic":
-            # 开发环境：直连 Anthropic
             env = self._build_env_direct(api_key, api_base, model)
             logger.info(
                 "ClaudeCodeCLI (direct): provider=%s model=%s max_turns=%d",
