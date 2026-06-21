@@ -76,16 +76,16 @@ class FailureAnalysisService:
         if force:
             try:
                 await db.execute(
-                    text("SET SESSION innodb_lock_wait_timeout = 3")
+                    text("SET SESSION innodb_lock_wait_timeout = 2")
                 )
                 del_stmt = delete(JobFailureAnalysis).where(
                     JobFailureAnalysis.job_id == job_id
                 )
                 await db.execute(del_stmt)
                 await db.flush()
-            except Exception as e:
-                logger.warning("Failed to delete old analysis (lock timeout, non-fatal): %s", e)
-                await db.rollback()  # rollback the failed delete, start fresh
+            except Exception:
+                # 锁超时，跳过删除 — 后续 upsert 会覆盖
+                pass
 
         existing_stmt = select(JobFailureAnalysis).where(
             JobFailureAnalysis.job_id == job_id
