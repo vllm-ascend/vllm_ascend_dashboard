@@ -154,29 +154,42 @@ class LiteLLMSync:
         return len(model_list)
 
     async def _reload(self) -> bool:
-        """通过 Docker socket 重启 LiteLLM 容器"""
+        """重启 LiteLLM 容器使其读取新配置"""
         import aiohttp
+
+        # 方案 1: Docker socket API
         socket_path = "/var/run/docker.sock"
-        if not os.path.exists(socket_path):
-            logger.warning("Docker socket not available, LiteLLM needs manual restart")
-            return False
+        if os.path.exists(socket_path):
+            try:
+                conn = aiohttp.UnixConnector(path=socket_path)
+                async with aiohttp.ClientSession(connector=conn) as s:
+                    async with s.post(
+                        "http://localhost/containers/vllm-dashboard-litellm/restart",
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as r:
+                        if r.status in (204, 200):
+                            logger.info("LiteLLM restarted via Docker API")
+                            return True
+            except Exception as e:
+                logger.debug("Docker socket restart failed: %s", e)
+
+        # 方案 2: LiteLLM API 热加载
         try:
-            conn = aiohttp.UnixConnector(path=socket_path)
-            async with aiohttp.ClientSession(connector=conn) as s:
+            headers = {"Authorization": f"Bearer {self.master_key}"}
+            async with aiohttp.ClientSession() as s:
                 async with s.post(
-                    "http://localhost/containers/vllm-dashboard-litellm/restart",
-                    timeout=aiohttp.ClientTimeout(total=10),
+                    f"{self.litellm_url}/config/reload",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=5),
                 ) as r:
-                    ok = r.status in (204, 200)
-                    if ok:
-                        logger.info("LiteLLM container restarted via Docker API")
-                    else:
-                        body = await r.text()
-                        logger.warning("LiteLLM restart: %d %s", r.status, body[:200])
-                    return ok
+                    if r.status in (200, 202):
+                        logger.info("LiteLLM config reloaded via API")
+                        return True
         except Exception as e:
-            logger.warning("LiteLLM restart error: %s", e)
-            return False
+            logger.debug("LiteLLM API reload failed: %s", e)
+
+        logger.warning("LiteLLM needs manual restart to pick up new config: docker restart vllm-dashboard-litellm")
+        return False
 
 
 _litellm_sync: Optional[LiteLLMSync] = None
