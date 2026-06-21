@@ -161,8 +161,9 @@ class ClaudeCodeCLI:
         api_key = provider_config.get("api_key", "")
         api_base = provider_config.get("api_base_url", "")
 
+        is_root = os.geteuid() == 0
         turns = max_turns or self._max_turns
-        args = self._build_args(prompt, system_prompt, turns, output_format)
+        args = self._build_args(prompt, system_prompt, turns, output_format, is_root)
 
         proxy: "FormatProxy | None" = None
         litellm_url = os.environ.get("LITELLM_PROXY_URL", "")
@@ -218,7 +219,7 @@ class ClaudeCodeCLI:
 
         # ── 执行 CLI ──
         # root 用户不允许 --dangerously-skip-permissions，通过 su 切到 appuser
-        if os.geteuid() == 0:
+        if is_root:
             cmd_str = " ".join(
                 [shlex.quote(cli_path)] + [shlex.quote(a) for a in args]
             )
@@ -231,17 +232,18 @@ class ClaudeCodeCLI:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE if not is_root else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
                 cwd=work_dir or os.getcwd(),
             )
 
-            # 将 prompt 写入 stdin（替代 -p，激活标准模式 skill 加载）
-            proc.stdin.write(prompt.encode("utf-8"))
-            await proc.stdin.drain()
-            proc.stdin.close()
+            # 非 root：stdin pipe 传 prompt（非 headless 模式，skill 原生加载）
+            if not is_root:
+                proc.stdin.write(prompt.encode("utf-8"))
+                await proc.stdin.drain()
+                proc.stdin.close()
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -403,14 +405,14 @@ class ClaudeCodeCLI:
         system_prompt: str,
         max_turns: int,
         output_format: str,
+        is_root: bool = False,
     ) -> list[str]:
         """构建 claude CLI 命令行参数"""
-        # 不用 -p（headless），改用 stdin pipe 进入标准模式
-        # 标准模式下 ~/.claude/skills/ 中的 skill 会自动加载
-        args = [
-            "--print",
-            "--max-turns", str(max_turns),
-        ]
+        # 非 root 用 stdin pipe（原生 skill 加载），root 用 -p（su -c 不转发 stdin）
+        if is_root:
+            args = ["-p", prompt, "--print", "--max-turns", str(max_turns)]
+        else:
+            args = ["--print", "--max-turns", str(max_turns)]
 
         if output_format == "json":
             args.extend(["--output-format", "json"])
