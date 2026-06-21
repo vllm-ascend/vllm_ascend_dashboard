@@ -399,7 +399,7 @@ class ClaudeCodeCLI:
         output_format: str,
     ) -> list[str]:
         """构建 claude CLI 命令行参数"""
-        args = ["-p", prompt, "--print", "--max-turns", str(max_turns)]
+        args = ["-p", prompt, "--print", "--verbose", "--max-turns", str(max_turns)]
 
         if output_format == "json":
             args.extend(["--output-format", "json"])
