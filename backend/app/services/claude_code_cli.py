@@ -174,7 +174,7 @@ class ClaudeCodeCLI:
             from app.services.format_proxy import FormatProxy
 
             proxy = FormatProxy(
-                upstream_base_url=litellm_url + "/v1",
+                upstream_base_url=litellm_url,
                 upstream_api_key="sk-litellm-master-key-change-me",
                 upstream_model=model,
             )
