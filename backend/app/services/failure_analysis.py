@@ -498,10 +498,26 @@ class FailureAnalysisService:
 
     @staticmethod
     def parse_llm_response(raw: str) -> dict:
-        json_block_match = re.search(r'```json\s*(.*?)\s*```', raw, re.DOTALL)
-        if json_block_match:
+        # 尝试多种 JSON 匹配模式
+        json_str = None
+        # 1. ```json ... ``` 代码块
+        m = re.search(r'```json\s*(\{.*?\})\s*```', raw, re.DOTALL)
+        if m:
+            json_str = m.group(1)
+        # 2. 末尾裸 JSON 对象
+        if not json_str:
+            m = re.search(r'\{[^{}]*"problem_category"[^{}]*\}', raw, re.DOTALL)
+            if m:
+                json_str = m.group(0)
+        # 3. 最后一对花括号中的 JSON
+        if not json_str:
+            last_brace = raw.rfind('{')
+            if last_brace >= 0:
+                json_str = raw[last_brace:].strip()
+
+        if json_str:
             try:
-                data = json.loads(json_block_match.group(1))
+                data = json.loads(json_str)
                 if not isinstance(data, dict):
                     data = {}
                 category = data.get("problem_category", "其他")
