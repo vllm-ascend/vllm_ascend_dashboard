@@ -50,8 +50,11 @@ _CONFIG_FILE = os.environ.get("LITELLM_CONFIG_FILE", "/app/litellm_config.yaml")
 
 
 def _yaml_value(v: str) -> str:
-    """安全转义 YAML 值"""
-    return '"' + v.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    """安全转义 YAML 值 — 普通值不加引号"""
+    # 只有包含特殊字符时才加引号
+    if any(c in v for c in ':#{}[]|>!%@"\'\n'):
+        return '"' + v.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    return v
 
 
 def _model_to_yaml(model_list: list[dict]) -> str:
