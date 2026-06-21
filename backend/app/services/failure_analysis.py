@@ -213,7 +213,7 @@ class FailureAnalysisService:
 
     async def _build_job_context(self, job: CIJob, db: AsyncSession) -> str:
         lines = []
-        lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败，必须执行 curl 命令获取日志内容后定位具体错误原因，不要仅根据 annotations 表面信息下结论。")
+        lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败")
         lines.append("")
         lines.append(f"## CI Job 失败信息\n")
         lines.append(f"- **Workflow**: {job.workflow_name}")
@@ -240,9 +240,9 @@ class FailureAnalysisService:
         lines.append("```bash")
         lines.append(f"curl -sL -H \"Authorization: Bearer $GITHUB_TOKEN\" \"{logs_url}\" | grep -i -E 'error|fail|exception|traceback|assert' -A5 | head -100")
         lines.append("```")
-        lines.append("- 执行后仔细阅读日志内容，定位具体的 Python 异常、assert 失败、或 import 错误")
+        lines.append("- 执行后仔细阅读日志内容，定位具体的 Python 异常、assert 失败、或 import 错误，给出完整的错误的分析图")
         lines.append("- **不要仅根据 annotations 的表面信息下结论**")
-        lines.append("- 如果日志过大，先用 `tail -500` 截取末尾再搜索关键词")
+        lines.append("- 如果日志过大，先用 `tail -500` 截取末尾再搜索关键词，也可以先下载，再利用其他的工具查看")
 
         try:
             steps = json.loads(job.steps_data) if job.steps_data else []
