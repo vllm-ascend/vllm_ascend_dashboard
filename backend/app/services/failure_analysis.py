@@ -242,14 +242,8 @@ class FailureAnalysisService:
         # 构造日志 API URL（不从 DB 字段读，避免旧数据为空）
         logs_url = job.logs_url or f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/jobs/{job.job_id}/logs"
         lines.append(f"- **Logs URL**: {logs_url}")
-        lines.append("")
-        lines.append("**你必须执行以下命令获取失败日志的详细内容：**")
-        lines.append("```bash")
-        lines.append(f"curl -sL -H \"Authorization: Bearer $GITHUB_TOKEN\" \"{logs_url}\" | grep -i -E 'error|fail|exception|traceback|assert' -A5 | head -100")
-        lines.append("```")
-        lines.append("- 执行后仔细阅读日志内容，定位具体的 Python 异常、assert 失败、或 import 错误，给出完整的错误的分析图")
-        lines.append("- **不要仅根据 annotations 的表面信息下结论**")
-        lines.append("- 如果日志过大，先用 `tail -500` 截取末尾再搜索关键词，也可以先下载，再利用其他的工具查看")
+        lines.append("- 请使用 curl 拉取上述日志，自行决定需要分析哪些内容来定位根因")
+        lines.append(f"- GITHUB_TOKEN 已在环境变量中，可直接使用: curl -sL -H \"Authorization: Bearer \$GITHUB_TOKEN\" \"<日志URL>\"")
 
         try:
             steps = json.loads(job.steps_data) if job.steps_data else []
