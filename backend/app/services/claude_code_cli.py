@@ -169,8 +169,7 @@ class ClaudeCodeCLI:
 
         # ── 路由决策 ──
         if litellm_url and provider != "anthropic":
-            # FormatProxy (Anthropic→OpenAI) → LiteLLM /v1/chat/completions
-            # LiteLLM 收到 OpenAI 格式走 Chat Completions，避免 Anthropic→Responses API bug
+            # FormatProxy (Anthropic→OpenAI) → LiteLLM → upstream
             from app.services.format_proxy import FormatProxy
 
             proxy = FormatProxy(
