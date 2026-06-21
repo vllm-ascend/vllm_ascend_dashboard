@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta, UTC
 from typing import Optional
 
-from sqlalchemy import select, delete, and_, func, desc
+from sqlalchemy import select, delete, and_, func, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CIJob, CIResult, ProjectDashboardConfig, JobFailureAnalysis
@@ -74,11 +74,18 @@ class FailureAnalysisService:
             raise ValueError(f"CIJob {job_id} conclusion is '{job.conclusion}', not a failed/cancelled job")
 
         if force:
-            del_stmt = delete(JobFailureAnalysis).where(
-                JobFailureAnalysis.job_id == job_id
-            )
-            await db.execute(del_stmt)
-            await db.flush()
+            try:
+                await db.execute(
+                    text("SET SESSION innodb_lock_wait_timeout = 3")
+                )
+                del_stmt = delete(JobFailureAnalysis).where(
+                    JobFailureAnalysis.job_id == job_id
+                )
+                await db.execute(del_stmt)
+                await db.flush()
+            except Exception as e:
+                logger.warning("Failed to delete old analysis (lock timeout, non-fatal): %s", e)
+                await db.rollback()  # rollback the failed delete, start fresh
 
         existing_stmt = select(JobFailureAnalysis).where(
             JobFailureAnalysis.job_id == job_id
