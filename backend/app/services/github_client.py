@@ -114,6 +114,11 @@ class GitHubClient:
                         raise GitHubRateLimitError(
                             f"GitHub API rate limit exceeded. Resets at {self.rate_limit_reset}"
                         )
+                    else:
+                        # rate_limit_reset 已过期，重置计数器允许请求继续
+                        logger.info(f"Rate limit reset time has passed, resetting rate_limit_remaining from {self.rate_limit_remaining} to 5000")
+                        self.rate_limit_remaining = 5000
+                        self.rate_limit_reset = None
 
                 response = await self.client.request(
                     method=method,
