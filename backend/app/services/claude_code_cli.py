@@ -58,6 +58,8 @@ class ClaudeCLITimeout(Exception):
 def _save_cli_log(
     provider: str, model: str, prompt: str, system_prompt: str,
     stdout: str, stderr: str, duration: float, exit_code: int, route: str,
+    tool_calls: list[str] | None = None,
+    raw_json: dict | None = None,
 ) -> str:
     """持久化保存 Claude Code CLI 调用日志"""
     try:
@@ -89,6 +91,12 @@ Exit Code: {exit_code}
 
 --- STDERR ---
 {stderr or '(empty)'}
+
+--- TOOL CALLS ---
+{chr(10).join(tool_calls) if tool_calls else '(none)'}
+
+--- RAW JSON (full CLI interaction) ---
+{json.dumps(raw_json, indent=2, ensure_ascii=False) if raw_json else '(not available)'}
 
 {'='*60}
 """, encoding="utf-8")
@@ -279,6 +287,8 @@ class ClaudeCodeCLI:
                 stdout=stdout, stderr=stderr,
                 duration=duration, exit_code=proc.returncode,
                 route=route_name,
+                tool_calls=result.tool_calls if result.tool_calls else None,
+                raw_json=result.raw_json,
             )
 
             return result
@@ -399,7 +409,7 @@ class ClaudeCodeCLI:
         output_format: str,
     ) -> list[str]:
         """构建 claude CLI 命令行参数"""
-        args = ["-p", prompt, "--print", "--verbose", "--max-turns", str(max_turns)]
+        args = ["-p", prompt, "--print", "--max-turns", str(max_turns)]
 
         if output_format == "json":
             args.extend(["--output-format", "json"])
@@ -493,15 +503,10 @@ async def run_with_fallback(
     system_prompt: str = "",
     work_dir: str | None = None,
     max_turns: int = 10,
+    output_format: str = "text",
 ) -> ClaudeCodeResult:
     """
     尝试 Claude Code CLI，不可用时自动降级到直接 API 调用。
-
-    这是推荐的统一入口。
-
-    ccswitch 机制：通过环境变量 ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY
-    将 Claude Code CLI 指向任意 Anthropic Messages API 兼容端点。
-    目前 DeepSeek、Qwen、SiliconFlow 等主流厂商均已支持该格式。
     """
     cli = ClaudeCodeCLI()
 
@@ -512,6 +517,7 @@ async def run_with_fallback(
             work_dir=work_dir,
             max_turns=max_turns,
             system_prompt=system_prompt,
+            output_format=output_format,
         )
     except (ClaudeCLINotAvailable, ClaudeCLITimeout) as e:
         logger.warning(
