@@ -34,6 +34,11 @@ export const useJobFailureAnalysis = (jobId: number | null) => {
     queryKey: ['job-failure-analysis', jobId],
     queryFn: () => jobId ? faApi.getJobFailureAnalysis(jobId) : Promise.resolve(null),
     enabled: !!jobId,
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (data?.analysis_status === 'analyzing') return 2000
+      return false
+    },
   })
 }
 
