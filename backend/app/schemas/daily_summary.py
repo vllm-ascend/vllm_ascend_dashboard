@@ -83,3 +83,18 @@ class DailySummaryConfigResponse(BaseModel):
     timezone: str
     default_llm_provider: Optional[str]
     projects: list[dict]
+
+
+class TrendDataItem(BaseModel):
+    """趋势数据项"""
+    date: str
+    pr_count: int
+    issue_count: int
+    commit_count: int
+
+
+class TrendDataResponse(BaseModel):
+    """趋势数据响应"""
+    project: str
+    days: int
+    data: list[TrendDataItem]
