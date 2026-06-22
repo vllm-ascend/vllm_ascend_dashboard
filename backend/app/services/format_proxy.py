@@ -316,7 +316,7 @@ class FormatProxy:
         openai_body: dict = {
             "model": self.upstream_model,
             "messages": openai_messages,
-            "stream": body.get("stream", False),
+            "stream": False,  # 强制非流式，避免 SSE 翻译 bug
         }
 
         if body.get("max_tokens"):
