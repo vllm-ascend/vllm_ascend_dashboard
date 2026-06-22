@@ -120,8 +120,6 @@ class FormatProxy:
                 status=400,
             )
 
-        stream = anthropic_body.get("stream", False)
-
         try:
             openai_body = self._anthropic_to_openai(anthropic_body)
         except Exception as e:
@@ -131,7 +129,8 @@ class FormatProxy:
                 status=400,
             )
 
-        if stream:
+        # 强制非流式（openai_body 里已设 stream=False），直接用非流式转发
+        if openai_body.get("stream"):
             return await self._forward_stream(openai_body, request)
         else:
             return await self._forward_non_stream(openai_body)
