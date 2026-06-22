@@ -158,7 +158,14 @@ class FailureAnalysisService:
                 system_prompt=system_prompt,
                 max_turns=12,
             )
-            parsed = self.parse_llm_response(llm_result.content)
+            # 清洗 GLM-5.1 的 <think> 和 tool call 噪音
+            raw = llm_result.content
+            raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
+            raw = re.sub(r'```bash\n.*?```', '', raw, flags=re.DOTALL)
+            raw = re.sub(r'curl -sL.*?(?=\n\n|\Z)', '', raw, flags=re.DOTALL)
+            raw = re.sub(r'LOGS=\$.*?(?=\n\n|\n#|\Z)', '', raw, flags=re.DOTALL)
+            parsed = self.parse_llm_response(raw)
+            report_content = parsed.get("full_report", raw)
             report_content = parsed.get("full_report", llm_result.content)
             try:
                 report_path = await self.file_store.save_report(
