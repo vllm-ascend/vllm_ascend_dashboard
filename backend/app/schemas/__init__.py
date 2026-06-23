@@ -786,3 +786,9 @@ from .alert_rules import (
     AlertRuleResponse,
     AlertHistoryResponse,
 )
+
+from .issue_diagnosis import (
+    IssueDiagnosisRequest,
+    CIJobOption,
+    CommitOption,
+)
