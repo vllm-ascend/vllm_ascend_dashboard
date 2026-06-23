@@ -12,6 +12,7 @@ import {
   LoginOutlined,
   LockOutlined,
   GithubOutlined,
+  PullRequestOutlined,
   MenuOutlined,
   CloudServerOutlined,
   MailOutlined,
@@ -38,6 +39,11 @@ const menuItems: MenuProps['items'] = [
     key: '/project',
     icon: <GithubOutlined />,
     label: '项目看板',
+  },
+  {
+    key: '/pr-pipeline',
+    icon: <PullRequestOutlined />,
+    label: 'PR 流水线',
   },
   {
     key: '/ci',
@@ -157,6 +163,7 @@ function Layout() {
   const mobileMenuItems = [
     { key: '/', icon: <DashboardOutlined />, label: '首页' },
     { key: '/project', icon: <GithubOutlined />, label: '项目看板' },
+    { key: '/pr-pipeline', icon: <PullRequestOutlined />, label: 'PR 流水线' },
     { key: '/ci', icon: <CheckCircleOutlined />, label: 'CI 看板' },
     { key: '/models', icon: <ExperimentOutlined />, label: '模型看板' },
     { key: '/resources', icon: <CloudServerOutlined />, label: '资源看板' },

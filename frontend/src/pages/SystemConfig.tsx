@@ -23,6 +23,7 @@ import {
   Row,
   Col,
   Badge,
+  Popconfirm,
   Progress,
 } from 'antd'
 import {
@@ -53,6 +54,8 @@ import {
   useUpdateDailySummaryConfig,
   useLLMProviders,
   useUpdateLLMProvider,
+  useCreateLLMProvider,
+  useDeleteLLMProvider,
   useSystemPromptConfig,
   useUpdateSystemPromptConfig,
 } from '../hooks/useDailySummary'
@@ -191,6 +194,8 @@ function SystemConfig() {
   const { data: llmProviders } = useLLMProviders()
   const updateDailySummaryMutation = useUpdateDailySummaryConfig()
   const updateLLMProviderMutation = useUpdateLLMProvider()
+  const createLLMProviderMutation = useCreateLLMProvider()
+  const deleteLLMProviderMutation = useDeleteLLMProvider()
 
   // 系统提示词配置 hooks
   const { data: systemPromptConfig, isLoading: systemPromptConfigLoading } = useSystemPromptConfig()
@@ -203,6 +208,7 @@ function SystemConfig() {
   const [isDailySummaryConfigModalOpen, setIsDailySummaryConfigModalOpen] = useState(false)
   const [isLLMProviderModalOpen, setIsLLMProviderModalOpen] = useState(false)
   const [selectedLLMProvider, setSelectedLLMProvider] = useState<string | null>(null)
+  const [isCreatingLLMProvider, setIsCreatingLLMProvider] = useState(false)
   const [isSystemPromptModalOpen, setIsSystemPromptModalOpen] = useState(false)
   const [isCommitAnalysisPromptModalOpen, setIsCommitAnalysisPromptModalOpen] = useState(false)
   const [isCIFailureAnalysisPromptModalOpen, setIsCIFailureAnalysisPromptModalOpen] = useState(false)
@@ -1019,11 +1025,20 @@ function SystemConfig() {
         <div>
           <Alert
             message="提示"
-            description='LLM API Key 直接在此页面配置。请点击"编辑"按钮为各提供商配置 API Key 和显示名称。设置"激活状态"为 true 的提供商将用于 AI 每日总结生成。'
+            description="LLM API Key 直接在此页面配置。设置「激活状态」为 true 的提供商将用于 AI 分析。支持新增自定义提供商和删除不需要的提供商。"
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
           />
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => { setIsCreatingLLMProvider(true); llmProviderForm.resetFields(); setIsLLMProviderModalOpen(true) }}
+            style={{ marginBottom: 16 }}
+          >
+            新增提供商
+          </Button>
+
           <Table
             dataSource={llmProviders || []}
             rowKey="provider"
@@ -1069,22 +1084,39 @@ function SystemConfig() {
                 key: 'action',
                 render: (_, record: any) => (
                   isSuperAdmin && (
-                    <Button
-                      size="small"
-                      type="link"
-                      onClick={() => {
-                        setSelectedLLMProvider(record.provider)
-                        llmProviderForm.setFieldsValue({
-                          is_active: record.is_active,
-                          default_model: record.default_model,
-                          display_name: record.display_name,
-                          api_base_url: record.api_base_url || '',
-                        })
-                        setIsLLMProviderModalOpen(true)
-                      }}
-                    >
-                      编辑
-                    </Button>
+                    <Space size="small">
+                      <Button
+                        size="small"
+                        type="link"
+                        onClick={() => {
+                          setIsCreatingLLMProvider(false)
+                          setSelectedLLMProvider(record.provider)
+                          llmProviderForm.setFieldsValue({
+                            is_active: record.is_active,
+                            default_model: record.default_model,
+                            display_name: record.display_name,
+                            api_base_url: record.api_base_url || '',
+                          })
+                          setIsLLMProviderModalOpen(true)
+                        }}
+                      >
+                        编辑
+                      </Button>
+                      <Popconfirm
+                        title={`确定删除提供商 "${record.provider}"？`}
+                        description="此操作不可撤销"
+                        onConfirm={() => deleteLLMProviderMutation.mutate(record.provider)}
+                        okText="删除"
+                        cancelText="取消"
+                        okButtonProps={{ danger: true }}
+                      >
+                        <Button size="small" type="link" danger
+                          disabled={record.is_active}
+                          loading={deleteLLMProviderMutation.isPending}>
+                          删除
+                        </Button>
+                      </Popconfirm>
+                    </Space>
                   )
                 ),
               },
@@ -2142,11 +2174,12 @@ function SystemConfig() {
 
       {/* LLM 提供商编辑弹窗 */}
       <Modal
-        title={`编辑 LLM 提供商 - ${selectedLLMProvider}`}
+        title={isCreatingLLMProvider ? '新增 LLM 提供商' : `编辑 LLM 提供商 - ${selectedLLMProvider}`}
         open={isLLMProviderModalOpen}
         onCancel={() => {
           setIsLLMProviderModalOpen(false)
           setSelectedLLMProvider(null)
+          setIsCreatingLLMProvider(false)
           llmProviderForm.resetFields()
         }}
         footer={null}
@@ -2159,12 +2192,27 @@ function SystemConfig() {
           showIcon
           style={{ marginBottom: 16 }}
         />
-        {selectedLLMProvider && (
+        {(selectedLLMProvider || isCreatingLLMProvider) && (
           <Form
             form={llmProviderForm}
             layout="vertical"
             onFinish={(values) => {
-              // 只有当用户输入了新的 API Key 时才发送，否则不发送该字段（保留原有值）
+              if (isCreatingLLMProvider) {
+                createLLMProviderMutation.mutate(values, {
+                  onSuccess: (data: any) => {
+                    message.success(data?.message || '创建成功')
+                    setIsLLMProviderModalOpen(false)
+                    setIsCreatingLLMProvider(false)
+                    setSelectedLLMProvider(null)
+                    llmProviderForm.resetFields()
+                  },
+                  onError: (error: any) => {
+                    message.error(error.response?.data?.detail || '创建失败')
+                  },
+                })
+                return
+              }
+
               const config: any = {
                 is_active: values.is_active,
                 default_model: values.default_model,
@@ -2175,7 +2223,7 @@ function SystemConfig() {
                 config.api_key = values.api_key
               }
               updateLLMProviderMutation.mutate({
-                provider: selectedLLMProvider,
+                provider: selectedLLMProvider!,
                 config,
               }, {
                 onSuccess: () => {
@@ -2197,6 +2245,22 @@ function SystemConfig() {
             >
               <Switch checkedChildren="激活" unCheckedChildren="未激活" />
             </Form.Item>
+
+            {isCreatingLLMProvider && (
+              <Form.Item
+                name="provider"
+                label="提供商标识"
+                rules={[{ required: true, message: '请输入提供商标识' }, { pattern: /^[a-zA-Z0-9_-]+$/, message: '只能包含字母、数字、下划线和连字符' }]}
+                extra="唯一标识，创建后不可修改。如 openai、deepseek、zhipu"
+              >
+                <Input placeholder="例如：deepseek、zhipu" />
+              </Form.Item>
+            )}
+            {!isCreatingLLMProvider && (
+              <Form.Item label="提供商标识">
+                <Tag>{selectedLLMProvider}</Tag>
+              </Form.Item>
+            )}
 
             <Form.Item
               name="display_name"

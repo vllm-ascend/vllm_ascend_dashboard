@@ -18,7 +18,12 @@ import shlex
 import shutil
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
+
+# Claude Code CLI 日志持久化目录
+_CLI_LOG_DIR = Path(__file__).parent.parent.parent / "data" / "claude_logs"
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,57 @@ class ClaudeCLINotAvailable(Exception):
 class ClaudeCLITimeout(Exception):
     """Claude Code CLI 执行超时"""
     pass
+
+
+def _save_cli_log(
+    provider: str, model: str, prompt: str, system_prompt: str,
+    stdout: str, stderr: str, duration: float, exit_code: int, route: str,
+    tool_calls: list[str] | None = None,
+    raw_json: dict | None = None,
+) -> str:
+    """持久化保存 Claude Code CLI 调用日志"""
+    try:
+        now = datetime.now(timezone.utc)
+        date_dir = _CLI_LOG_DIR / now.strftime("%Y-%m-%d")
+        date_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{now.strftime('%H%M%S')}_{provider}_{model}.log"
+        filepath = date_dir / filename
+
+        filepath.write_text(f"""\
+{'='*60}
+Claude Code CLI Call Log
+{'='*60}
+Time:      {now.isoformat()}
+Provider:  {provider}
+Model:     {model}
+Route:     {route}
+Duration:  {duration:.1f}s
+Exit Code: {exit_code}
+
+--- SYSTEM PROMPT ---
+{system_prompt or '(none)'}
+
+--- USER PROMPT ---
+{prompt}
+
+--- STDOUT ---
+{stdout or '(empty)'}
+
+--- STDERR ---
+{stderr or '(empty)'}
+
+--- TOOL CALLS ---
+{chr(10).join(tool_calls) if tool_calls else '(none)'}
+
+--- RAW JSON (full CLI interaction) ---
+{json.dumps(raw_json, indent=2, ensure_ascii=False) if raw_json else '(not available)'}
+
+{'='*60}
+""", encoding="utf-8")
+        return str(filepath)
+    except Exception as e:
+        logger.warning("Failed to save CLI log: %s", e)
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -121,18 +177,26 @@ class ClaudeCodeCLI:
 
         # ── 路由决策 ──
         if litellm_url and provider != "anthropic":
-            # 生产环境：非 Anthropic → LiteLLM 网关
+            # FormatProxy (Anthropic→OpenAI) → LiteLLM → upstream
+            from app.services.format_proxy import FormatProxy
+
+            proxy = FormatProxy(
+                upstream_base_url=litellm_url,
+                upstream_api_key="sk-litellm-master-key-change-me",
+                upstream_model=model,
+            )
+            await proxy.start()
+
             env = self._build_env_direct(
-                api_key="sk-litellm-master-key-change-me",
-                api_base=litellm_url,
+                api_key="PROXY_MANAGED",
+                api_base=proxy.listen_url,
                 model=model,
             )
             logger.info(
-                "ClaudeCodeCLI (via LiteLLM): %s provider=%s model=%s",
+                "ClaudeCodeCLI (FormatProxy→LiteLLM): %s provider=%s model=%s",
                 litellm_url, provider, model,
             )
         elif provider == "anthropic":
-            # 开发环境：直连 Anthropic
             env = self._build_env_direct(api_key, api_base, model)
             logger.info(
                 "ClaudeCodeCLI (direct): provider=%s model=%s max_turns=%d",
@@ -160,33 +224,35 @@ class ClaudeCodeCLI:
             )
 
         # ── 执行 CLI ──
-        # root 用户不允许 --dangerously-skip-permissions，通过 su -m 切到 appuser
+        # root 用户不允许 --dangerously-skip-permissions，通过 su 切到 appuser
         if os.geteuid() == 0:
             cmd_str = " ".join(
                 [shlex.quote(cli_path)] + [shlex.quote(a) for a in args]
             )
-            # su -m: preserve environment（保留 ANTHROPIC_* 等环境变量）
-            cmd = ["su", "-m", "appuser", "-c", cmd_str]
+            # su -m: preserve environment + 显式设置 HOME，避免 CLI 找 /.agents/skills
+            cmd = ["su", "-m", "appuser", "-c", f"export HOME=/home/appuser; {cmd_str}"]
         else:
             cmd = [cli_path] + args
 
         start = time.monotonic()
         try:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=env,
-                    cwd=work_dir or os.getcwd(),
-                )
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd=work_dir or os.getcwd(),
+            )
 
+            try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(),
                     timeout=self._timeout,
                 )
             except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
                 raise ClaudeCLITimeout(
                     f"Claude Code CLI timed out after {self._timeout}s"
                 )
@@ -212,6 +278,19 @@ class ClaudeCodeCLI:
                 "ClaudeCodeCLI finished: duration=%.1fs turns=%d content_len=%d",
                 duration, result.turns, len(result.content),
             )
+
+            # 持久化日志
+            route_name = "litellm" if litellm_url else ("direct" if provider == "anthropic" else "formatproxy")
+            _save_cli_log(
+                provider=provider, model=model,
+                prompt=prompt, system_prompt=system_prompt,
+                stdout=stdout, stderr=stderr,
+                duration=duration, exit_code=proc.returncode,
+                route=route_name,
+                tool_calls=result.tool_calls if result.tool_calls else None,
+                raw_json=result.raw_json,
+            )
+
             return result
 
         finally:
@@ -311,6 +390,15 @@ class ClaudeCodeCLI:
         env["CLAUDE_CODE_NO_INTERACTIVE"] = "1"
         env["CLAUDE_CODE_HEADLESS"] = "1"
 
+        # 传递 GITHUB_TOKEN，CLI 可以用 curl 拉 CI 日志
+        from app.core.config import settings
+        if settings.GITHUB_TOKEN:
+            env["GITHUB_TOKEN"] = settings.GITHUB_TOKEN
+
+        # 确保 HOME 正确设置，CLI 会用它找配置目录
+        if "HOME" not in env or not env["HOME"]:
+            env["HOME"] = "/home/appuser"
+
         return env
 
     def _build_args(
@@ -321,11 +409,7 @@ class ClaudeCodeCLI:
         output_format: str,
     ) -> list[str]:
         """构建 claude CLI 命令行参数"""
-        args = [
-            "-p", prompt,          # 非交互式 prompt
-            "--print",             # 将结果打印到 stdout（而非启动交互 REPL）
-            "--max-turns", str(max_turns),
-        ]
+        args = ["-p", prompt, "--print", "--max-turns", str(max_turns)]
 
         if output_format == "json":
             args.extend(["--output-format", "json"])
@@ -419,15 +503,10 @@ async def run_with_fallback(
     system_prompt: str = "",
     work_dir: str | None = None,
     max_turns: int = 10,
+    output_format: str = "text",
 ) -> ClaudeCodeResult:
     """
     尝试 Claude Code CLI，不可用时自动降级到直接 API 调用。
-
-    这是推荐的统一入口。
-
-    ccswitch 机制：通过环境变量 ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY
-    将 Claude Code CLI 指向任意 Anthropic Messages API 兼容端点。
-    目前 DeepSeek、Qwen、SiliconFlow 等主流厂商均已支持该格式。
     """
     cli = ClaudeCodeCLI()
 
@@ -438,6 +517,7 @@ async def run_with_fallback(
             work_dir=work_dir,
             max_turns=max_turns,
             system_prompt=system_prompt,
+            output_format=output_format,
         )
     except (ClaudeCLINotAvailable, ClaudeCLITimeout) as e:
         logger.warning(

@@ -48,6 +48,14 @@ __all__ = [
     "LLMProviderResponse", "DailySummaryConfigResponse",
     # Failure Analysis
     "FailureAnalysisResponse", "FailureAnalysisListResponse", "FailureAnalysisAnalyzeRequest",
+    # PR Pipeline
+    "PullRequestBase", "PullRequestResponse",
+    "PRPipelineOverview", "PRPipelineStageDistribution",
+    "PRPipelineMetrics", "PRPipelinePercentileMetric",
+    "PRPipelineContributor", "PRPipelineKanban",
+    "PRPipelineListFilter", "PRPipelineListResponse",
+    "PRPipelineTrendPoint", "PRPipelineTrendsResponse",
+    "PRPipelineSyncRequest", "PRPipelineHistoricalSyncRequest",
     # Common
     "Message", "PaginatedResponse",
 ]
@@ -791,4 +799,21 @@ from .issue_diagnosis import (
     IssueDiagnosisRequest,
     CIJobOption,
     CommitOption,
+)
+
+from .pr_pipeline import (
+    PullRequestBase,
+    PullRequestResponse,
+    PRPipelineOverview,
+    PRPipelineStageDistribution,
+    PRPipelineMetrics,
+    PRPipelinePercentileMetric,
+    PRPipelineContributor,
+    PRPipelineKanban,
+    PRPipelineListFilter,
+    PRPipelineListResponse,
+    PRPipelineTrendPoint,
+    PRPipelineTrendsResponse,
+    PRPipelineSyncRequest,
+    PRPipelineHistoricalSyncRequest,
 )

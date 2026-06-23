@@ -20,10 +20,6 @@ litellm_settings:
   failure_callback: ["generic"]
 
 router_settings:
-  # 允许的请求格式
-  allowed_routes: ["/v1/messages", "/v1/chat/completions", "/health", "/model/new", "/model/info"]
-  num_retries: 3
+  disable_responses_api: true
+  num_retries: 1
   request_timeout: 600
-  # 熔断器
-  enable_loadbalancing: true
-  enable_fallbacks: true

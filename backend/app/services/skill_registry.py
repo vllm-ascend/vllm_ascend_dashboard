@@ -25,7 +25,9 @@ class SkillRegistry:
         self._load_all()
 
     def _resolve_builtin_skills_dir(self) -> Path:
-        project_root = Path(__file__).parent.parent.parent.parent
+        # __file__ = /app/app/services/skill_registry.py
+        # .parent.parent.parent = /app （项目根）
+        project_root = Path(__file__).parent.parent.parent
         agents_skills_dir = project_root / ".agents" / "skills"
         if agents_skills_dir.exists():
             return agents_skills_dir
@@ -45,18 +47,19 @@ class SkillRegistry:
 
     def _load_all(self):
         self._skills.clear()
-        for skill_dir in self._builtin_dir.iterdir():
-            if skill_dir.is_dir():
-                skill_file = skill_dir / "SKILL.md"
-                if skill_file.exists():
-                    self._load_skill_file(skill_dir.name, skill_file, "builtin")
+        if self._builtin_dir.exists():
+            for skill_dir in self._builtin_dir.iterdir():
+                if skill_dir.is_dir():
+                    skill_file = skill_dir / "SKILL.md"
+                    if skill_file.exists():
+                        self._load_skill_file(skill_dir.name, skill_file, "builtin")
         if self._data_dir.exists():
             for skill_dir in self._data_dir.iterdir():
                 if skill_dir.is_dir():
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists():
                         self._load_skill_file(skill_dir.name, skill_file, "data")
-        logger.info(f"Loaded {len(self._skills)} skills from builtin + data directories")
+        logger.info("Loaded %d skills", len(self._skills))
 
     def _load_skill_file(self, skill_name: str, skill_file: Path, source: str):
         try:

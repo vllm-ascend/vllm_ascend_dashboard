@@ -52,8 +52,11 @@ class Settings(BaseSettings):
 
     # 模型同步配置
     MODEL_SYNC_INTERVAL_MINUTES: int = 60  # 模型报告同步间隔（分钟），默认 1 小时
-    MODEL_SYNC_RUNS_LIMIT: int = 100  # 每个 workflow 最多获取最近 N 次 runs
-    MODEL_SYNC_DAYS_BACK: int = 3  # 自动同步时采集最近 N 天的数据
+    MODEL_SYNC_RUNS_LIMIT: int = 100
+    MODEL_SYNC_DAYS_BACK: int = 3
+
+    PR_PIPELINE_SYNC_INTERVAL_MINUTES: int = 30
+    PR_PIPELINE_DAYS_BACK: int = 7
 
     # Project Dashboard 配置
     PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES: int = 60  # Project Dashboard Git 仓库缓存更新间隔（分钟），默认 60 分钟

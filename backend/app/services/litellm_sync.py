@@ -49,14 +49,22 @@ def _detect_prefix(provider: str, api_base: str) -> str:
 _CONFIG_FILE = os.environ.get("LITELLM_CONFIG_FILE", "/app/litellm_config.yaml")
 
 
+def _yaml_value(v: str) -> str:
+    """安全转义 YAML 值 — 普通值不加引号"""
+    # 只有包含特殊字符时才加引号
+    if any(c in v for c in ':#{}[]|>!%@"\'\n'):
+        return '"' + v.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    return v
+
+
 def _model_to_yaml(model_list: list[dict]) -> str:
     """将 model_list 转为 YAML 片段"""
     lines = ["model_list:"]
     for m in model_list:
-        lines.append(f"  - model_name: {m['model_name']}")
+        lines.append(f"  - model_name: {_yaml_value(m['model_name'])}")
         lines.append("    litellm_params:")
         for k, v in m["litellm_params"].items():
-            lines.append(f"      {k}: {v}")
+            lines.append(f"      {k}: {_yaml_value(v)}")
     return "\n".join(lines)
 
 
@@ -72,6 +80,7 @@ litellm_settings:
   drop_params: true
 
 router_settings:
+  disable_responses_api: true
   num_retries: 1
   request_timeout: 600
 """
@@ -103,7 +112,7 @@ class LiteLLMSync:
         from sqlalchemy import select
         from app.models.daily_summary import LLMProviderConfig
 
-        stmt = select(LLMProviderConfig).where(LLMProviderConfig.enabled == True)
+        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True)
         result = await db_session.execute(stmt)
         configs = result.scalars().all()
 
@@ -145,29 +154,42 @@ class LiteLLMSync:
         return len(model_list)
 
     async def _reload(self) -> bool:
-        """通过 Docker socket 重启 LiteLLM 容器"""
+        """重启 LiteLLM 容器使其读取新配置"""
         import aiohttp
+
+        # 方案 1: Docker socket API
         socket_path = "/var/run/docker.sock"
-        if not os.path.exists(socket_path):
-            logger.warning("Docker socket not available, LiteLLM needs manual restart")
-            return False
+        if os.path.exists(socket_path):
+            try:
+                conn = aiohttp.UnixConnector(path=socket_path)
+                async with aiohttp.ClientSession(connector=conn) as s:
+                    async with s.post(
+                        "http://localhost/containers/vllm-dashboard-litellm/restart",
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as r:
+                        if r.status in (204, 200):
+                            logger.info("LiteLLM restarted via Docker API")
+                            return True
+            except Exception as e:
+                logger.debug("Docker socket restart failed: %s", e)
+
+        # 方案 2: LiteLLM API 热加载
         try:
-            conn = aiohttp.UnixConnector(path=socket_path)
-            async with aiohttp.ClientSession(connector=conn) as s:
+            headers = {"Authorization": f"Bearer {self.master_key}"}
+            async with aiohttp.ClientSession() as s:
                 async with s.post(
-                    "http://localhost/containers/vllm-dashboard-litellm/restart",
-                    timeout=aiohttp.ClientTimeout(total=10),
+                    f"{self.litellm_url}/config/reload",
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=5),
                 ) as r:
-                    ok = r.status in (204, 200)
-                    if ok:
-                        logger.info("LiteLLM container restarted via Docker API")
-                    else:
-                        body = await r.text()
-                        logger.warning("LiteLLM restart: %d %s", r.status, body[:200])
-                    return ok
+                    if r.status in (200, 202):
+                        logger.info("LiteLLM config reloaded via API")
+                        return True
         except Exception as e:
-            logger.warning("LiteLLM restart error: %s", e)
-            return False
+            logger.debug("LiteLLM API reload failed: %s", e)
+
+        logger.warning("LiteLLM needs manual restart to pick up new config: docker restart vllm-dashboard-litellm")
+        return False
 
 
 _litellm_sync: Optional[LiteLLMSync] = None

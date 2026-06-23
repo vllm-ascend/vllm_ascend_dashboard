@@ -580,7 +580,7 @@ class CICollector:
                 runner_name=job.get("runner_name"),  # GitHub API 直接返回 runner_name 字段
                 runner_labels=json.dumps(runner_labels),
                 steps_data=json.dumps(steps_summary),
-                logs_url=job.get("logs_url", ""),
+                logs_url=f"https://api.github.com/repos/{self.github.owner}/{self.github.repo}/actions/jobs/{job['id']}/logs",
                 data=json.dumps(job),
             )
 
@@ -696,18 +696,18 @@ class CICollector:
         return None
 
     async def _get_last_synced_run_id(self, workflow_file: str) -> int | None:
-        """
-        获取指定 workflow 已同步的最新 run_id
-
-        Args:
-            workflow_file: workflow 文件名
-
-        Returns:
-            已同步的最大 run_id，如果没有记录则返回 None
-        """
         try:
-            # 查询该 workflow 已同步的最大 run_id
-            stmt = select(func.max(CIResult.run_id)).where(CIResult.workflow_name == workflow_file)
+            stmt = select(WorkflowConfig.workflow_name).where(
+                WorkflowConfig.workflow_file == workflow_file
+            )
+            config_result = await self.db.execute(stmt)
+            workflow_name = config_result.scalar_one_or_none()
+
+            if not workflow_name:
+                logger.warning(f"WorkflowConfig not found for {workflow_file}, using workflow_file as name")
+                workflow_name = workflow_file
+
+            stmt = select(func.max(CIResult.run_id)).where(CIResult.workflow_name == workflow_name)
             result = await self.db.execute(stmt)
             max_run_id = result.scalar()
             return max_run_id if max_run_id else None

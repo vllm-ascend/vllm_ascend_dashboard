@@ -109,9 +109,9 @@ PROJECT_STRUCTURE.md
 .claude/
 
 # Agent local data (logs, sessions, etc.)
-.agents/*
-!.agents/skills/
-!.agents/skills/**/SKILL.md
+backend/.agents/*
+!backend/.agents/skills/
+!backend/.agents/skills/**/SKILL.md
 
 # Database files (SQLite)
 *.db

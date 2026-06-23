@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta, UTC
 from typing import Optional
 
-from sqlalchemy import select, delete, and_, func, desc
+from sqlalchemy import select, delete, and_, func, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CIJob, CIResult, ProjectDashboardConfig, JobFailureAnalysis
@@ -74,11 +74,18 @@ class FailureAnalysisService:
             raise ValueError(f"CIJob {job_id} conclusion is '{job.conclusion}', not a failed/cancelled job")
 
         if force:
-            del_stmt = delete(JobFailureAnalysis).where(
-                JobFailureAnalysis.job_id == job_id
-            )
-            await db.execute(del_stmt)
-            await db.flush()
+            try:
+                await db.execute(
+                    text("SET SESSION innodb_lock_wait_timeout = 2")
+                )
+                del_stmt = delete(JobFailureAnalysis).where(
+                    JobFailureAnalysis.job_id == job_id
+                )
+                await db.execute(del_stmt)
+                await db.flush()
+            except Exception:
+                # 锁超时，跳过删除 — 后续 upsert 会覆盖
+                pass
 
         existing_stmt = select(JobFailureAnalysis).where(
             JobFailureAnalysis.job_id == job_id
@@ -99,6 +106,7 @@ class FailureAnalysisService:
         ).limit(1)
         dedup_result = await db.execute(dedup_stmt)
         dedup_match = dedup_result.scalar_one_or_none()
+        llm_config = await self._get_llm_config(db)
 
         if dedup_match and not force:
             reused = JobFailureAnalysis(
@@ -113,6 +121,8 @@ class FailureAnalysisService:
                 root_cause_summary=dedup_match.root_cause_summary,
                 improvement_measures_summary=dedup_match.improvement_measures_summary,
                 report_file_path=dedup_match.report_file_path,
+                llm_provider=dedup_match.llm_provider or llm_config.provider,
+                llm_model=dedup_match.llm_model or llm_config.default_model,
                 analysis_status="reused",
             )
             db.add(reused)
@@ -122,7 +132,6 @@ class FailureAnalysisService:
 
         system_prompt = await self._get_system_prompt(db)
         user_prompt = await self._build_job_context(job, db)
-        llm_config = await self._get_llm_config(db)
 
         analysis = JobFailureAnalysis(
             job_id=job_id,
@@ -149,11 +158,22 @@ class FailureAnalysisService:
                 system_prompt=system_prompt,
                 max_turns=12,
             )
-            parsed = self.parse_llm_response(llm_result.content)
+            # 清洗 GLM-5.1 的 <think> 和 tool call 噪音
+            raw = llm_result.content
+            raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
+            raw = re.sub(r'```bash\n.*?```', '', raw, flags=re.DOTALL)
+            raw = re.sub(r'curl -sL.*?(?=\n\n|\Z)', '', raw, flags=re.DOTALL)
+            raw = re.sub(r'LOGS=\$.*?(?=\n\n|\n#|\Z)', '', raw, flags=re.DOTALL)
+            parsed = self.parse_llm_response(raw)
+            report_content = parsed.get("full_report", raw)
             report_content = parsed.get("full_report", llm_result.content)
-            report_path = await self.file_store.save_report(
-                job.workflow_name, job.job_name, job_id, report_content
-            )
+            try:
+                report_path = await self.file_store.save_report(
+                    job.workflow_name, job.job_name, job_id, report_content
+                )
+            except OSError as e:
+                logger.warning("Failed to save report file (non-fatal): %s", e)
+                report_path = None
 
             analysis.analysis_status = "completed"
             analysis.problem_category = parsed["problem_category"]
@@ -162,9 +182,9 @@ class FailureAnalysisService:
             analysis.report_file_path = report_path
             analysis.llm_provider = llm_config.provider
             analysis.llm_model = llm_config.default_model
-            analysis.prompt_tokens = llm_result.prompt_tokens
-            analysis.completion_tokens = llm_result.completion_tokens
-            analysis.generation_time_seconds = llm_result.generation_time
+            analysis.prompt_tokens = None  # CLI 模式不可用
+            analysis.completion_tokens = None
+            analysis.generation_time_seconds = int(llm_result.duration_seconds)
 
             await db.commit()
             await db.refresh(analysis)
@@ -207,6 +227,8 @@ class FailureAnalysisService:
 
     async def _build_job_context(self, job: CIJob, db: AsyncSession) -> str:
         lines = []
+        lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败")
+        lines.append("")
         lines.append(f"## CI Job 失败信息\n")
         lines.append(f"- **Workflow**: {job.workflow_name}")
         lines.append(f"- **Job Name**: {job.job_name}")
@@ -224,6 +246,11 @@ class FailureAnalysisService:
         lines.append(f"- **Duration**: {job.duration_seconds or 'unknown'}s")
         lines.append(f"- **Started At**: {job.started_at or 'unknown'}")
         lines.append(f"- **Completed At**: {job.completed_at or 'unknown'}")
+        # 构造日志 API URL（不从 DB 字段读，避免旧数据为空）
+        logs_url = job.logs_url or f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/jobs/{job.job_id}/logs"
+        lines.append(f"- **Logs URL**: {logs_url}")
+        lines.append("- 请使用 curl 拉取上述日志，自行决定需要分析哪些内容来定位根因")
+        lines.append(f"- GITHUB_TOKEN 已在环境变量中，可直接使用: curl -sL -H \"Authorization: Bearer \$GITHUB_TOKEN\" \"<日志URL>\"")
 
         try:
             steps = json.loads(job.steps_data) if job.steps_data else []
@@ -472,10 +499,28 @@ class FailureAnalysisService:
 
     @staticmethod
     def parse_llm_response(raw: str) -> dict:
-        json_block_match = re.search(r'```json\s*(.*?)\s*```', raw, re.DOTALL)
-        if json_block_match:
+        # 尝试多种 JSON 匹配模式
+        json_str = None
+        # 1. ```json ... ``` 代码块
+        m = re.search(r'```json\s*(\{.*?\})\s*```', raw, re.DOTALL)
+        if m:
+            json_str = m.group(1)
+        # 2. 末尾裸 JSON 对象
+        if not json_str:
+            m = re.search(r'\{[^{}]*"problem_category"[^{}]*\}', raw, re.DOTALL)
+            if m:
+                json_str = m.group(0)
+        # 3. 最后一对花括号中的 JSON
+        if not json_str:
+            last_brace = raw.rfind('{')
+            if last_brace >= 0:
+                json_str = raw[last_brace:].strip()
+
+        if json_str:
             try:
-                data = json.loads(json_block_match.group(1))
+                data = json.loads(json_str)
+                if not isinstance(data, dict):
+                    data = {}
                 category = data.get("problem_category", "其他")
                 if category not in VALID_CATEGORIES:
                     for cat in VALID_CATEGORIES:
