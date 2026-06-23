@@ -107,10 +107,10 @@ export const streamDiagnosis = async (
     buffer = lines.pop() || ''
 
     for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim()
-      } else if (line.startsWith('data: ')) {
-        const dataStr = line.slice(6)
+      if (line.startsWith('event:') || line.startsWith('event: ')) {
+        currentEvent = line.slice(line.indexOf(':') + 1).trim()
+      } else if (line.startsWith('data:') || line.startsWith('data: ')) {
+        const dataStr = line.slice(line.indexOf(':') + 1).trim()
         try {
           const data = JSON.parse(dataStr)
           if (currentEvent === 'chunk') {
@@ -122,7 +122,8 @@ export const streamDiagnosis = async (
           } else if (currentEvent === 'error') {
             onError(data.message)
           }
-        } catch {
+        } catch (e) {
+          console.warn('SSE data parse error:', e)
         }
         currentEvent = ''
       }

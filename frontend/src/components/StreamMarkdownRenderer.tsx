@@ -2,12 +2,20 @@ import React, { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
+interface DiagnosisSummary {
+  total_content_length: number
+  duration_seconds: number
+  chunk_count: number
+}
+
 interface StreamMarkdownRendererProps {
   content: string
   isStreaming: boolean
   meta?: { provider: string; model: string } | null
-  summary?: { total_content_length: number; duration_seconds: number; chunk_count: number } | null
+  summary?: DiagnosisSummary | null
 }
+
+export type { DiagnosisSummary }
 
 const StreamMarkdownRenderer: React.FC<StreamMarkdownRendererProps> = ({
   content,

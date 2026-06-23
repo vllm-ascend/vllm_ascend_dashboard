@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState } from 'react'
 import {
   Card,
   Form,
@@ -7,7 +7,6 @@ import {
   Button,
   Space,
   Alert,
-  message,
   Typography,
   Upload,
   Tabs,
@@ -22,171 +21,37 @@ import {
   FileTextOutlined,
 } from '@ant-design/icons'
 import StreamMarkdownRenderer from '../components/StreamMarkdownRenderer'
-import {
-  IssueDiagnosisRequest,
-  CIJobOption,
-  CommitOption,
-  getFailedCIJobs,
-  getRecentCommits,
-  streamDiagnosis,
-} from '../services/issueDiagnosis'
+import { useIssueDiagnosis } from '../hooks/useIssueDiagnosis'
 
 const { Title, Text } = Typography
 
 function IssueDiagnosis() {
-  const [dataSourceType, setDataSourceType] = useState<string>('ci_job')
-  const [selectedJobId, setSelectedJobId] = useState<number | null>(null)
-  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(null)
-  const [userPrompt, setUserPrompt] = useState('')
-  const [logContent, setLogContent] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [streamContent, setStreamContent] = useState('')
-  const [meta, setMeta] = useState<{ provider: string; model: string } | null>(null)
-  const [summary, setSummary] = useState<any>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const [ciJobOptions, setCiJobOptions] = useState<CIJobOption[]>([])
-  const [commitOptions, setCommitOptions] = useState<CommitOption[]>([])
-  const [loadingJobs, setLoadingJobs] = useState(false)
-  const [loadingCommits, setLoadingCommits] = useState(false)
-
-  const loadCIJobs = useCallback(async () => {
-    setLoadingJobs(true)
-    try {
-      const jobs = await getFailedCIJobs(7)
-      setCiJobOptions(jobs)
-    } catch {
-      message.error('获取CI Job列表失败')
-    } finally {
-      setLoadingJobs(false)
-    }
-  }, [])
-
-  const loadCommits = useCallback(async () => {
-    setLoadingCommits(true)
-    try {
-      const commits = await getRecentCommits(7)
-      setCommitOptions(commits)
-    } catch {
-      message.error('获取Commit列表失败')
-    } finally {
-      setLoadingCommits(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (dataSourceType === 'ci_job' && ciJobOptions.length === 0) {
-      loadCIJobs()
-    }
-  }, [dataSourceType])
-
-  const handleDataSourceTypeChange = (type: string) => {
-    setDataSourceType(type)
-    setSelectedJobId(null)
-    setSelectedCommitSha(null)
-    if (type === 'ci_job') loadCIJobs()
-    if (type === 'commit') loadCommits()
-  }
-
-  const handleLogFileUpload = (file: File) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const text = e.target?.result as string
-      setLogContent(text)
-      message.success(`已加载日志文件 (${text.length} 字符)`)
-    }
-    reader.readAsText(file)
-    return false
-  }
-
-  const handleStartDiagnosis = async () => {
-    const hasPromptOrLog = !!userPrompt || !!logContent
-    const hasDataSource = (dataSourceType === 'ci_job' && selectedJobId) ||
-      (dataSourceType === 'commit' && selectedCommitSha)
-
-    if (!hasPromptOrLog && !hasDataSource) {
-      message.warning('请选择数据源或输入提示词/日志内容')
-      return
-    }
-
-    setIsStreaming(true)
-    setStreamContent('')
-    setMeta(null)
-    setSummary(null)
-    setError(null)
-
-    const request: IssueDiagnosisRequest = {
-      data_source_type: hasDataSource ? (dataSourceType as 'ci_job' | 'commit' | 'manual') : 'manual',
-    }
-
-    if (dataSourceType === 'ci_job' && selectedJobId) {
-      request.job_id = selectedJobId
-    } else if (dataSourceType === 'commit' && selectedCommitSha) {
-      const selectedCommit = commitOptions.find(c => c.sha === selectedCommitSha)
-      if (selectedCommit?.run_id) request.run_id = selectedCommit.run_id
-      request.commit_sha = selectedCommitSha
-    }
-
-    let prompt = userPrompt
-    if (logContent) {
-      prompt = prompt
-        ? `${prompt}\n\n### 用户提供的日志内容\n${logContent}`
-        : `请分析以下日志内容，定位问题根因并给出改进建议：\n\n${logContent}`
-    }
-    if (prompt) request.user_prompt = prompt
-
-    try {
-      await streamDiagnosis(
-        request,
-        (chunk) => {
-          setStreamContent(prev => prev + chunk)
-        },
-        (m) => {
-          setMeta(m)
-        },
-        (s) => {
-          setSummary(s)
-          setIsStreaming(false)
-        },
-        (errMsg) => {
-          setError(errMsg)
-          setIsStreaming(false)
-        },
-      )
-    } catch (e: any) {
-      setError(e.message || '诊断请求失败')
-    } finally {
-      setIsStreaming(false)
-    }
-  }
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(streamContent)
-    message.success('已复制到剪贴板')
-  }
-
-  const handleExport = () => {
-    if (!streamContent) {
-      message.warning('暂无可导出的内容')
-      return
-    }
-    const blob = new Blob([streamContent], { type: 'text/markdown;charset=utf-8' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `issue_diagnosis_${new Date().toISOString().slice(0, 10)}.md`
-    link.click()
-    URL.revokeObjectURL(link.href)
-    message.success('已导出')
-  }
-
-  const handleReset = () => {
-    setStreamContent('')
-    setMeta(null)
-    setSummary(null)
-    setError(null)
-    setUserPrompt('')
-    setLogContent('')
-  }
+  const {
+    dataSourceType,
+    selectedJobId,
+    selectedCommitSha,
+    userPrompt,
+    logContent,
+    isStreaming,
+    streamContent,
+    meta,
+    summary,
+    error,
+    ciJobOptions,
+    commitOptions,
+    loadingJobs,
+    loadingCommits,
+    handleDataSourceTypeChange,
+    setSelectedJobId,
+    setSelectedCommitSha,
+    setUserPrompt,
+    setLogContent,
+    handleStartDiagnosis,
+    handleCopy,
+    handleExport,
+    handleReset,
+    handleLogFileUpload,
+  } = useIssueDiagnosis()
 
   return (
     <div className="stripe-ci-page">
@@ -201,7 +66,6 @@ function IssueDiagnosis() {
       </div>
 
       <div style={{ display: 'flex', gap: 24, marginTop: 16 }}>
-        {/* 左栏：配置面板 */}
         <Card
           title="诊断配置"
           style={{ width: 420, flexShrink: 0 }}
@@ -241,9 +105,6 @@ function IssueDiagnosis() {
                     value: j.job_id,
                     label: `#${j.job_id} ${j.workflow_name} - ${j.job_name}`,
                   }))}
-                  onDropdownVisibleChange={(visible) => {
-                    if (visible && ciJobOptions.length === 0) loadCIJobs()
-                  }}
                 />
               </Form.Item>
             )}
@@ -261,9 +122,6 @@ function IssueDiagnosis() {
                     value: c.sha,
                     label: `${c.sha.slice(0, 7)} Run #${c.run_number || '-'}`,
                   }))}
-                  onDropdownVisibleChange={(visible) => {
-                    if (visible && commitOptions.length === 0) loadCommits()
-                  }}
                 />
               </Form.Item>
             )}
@@ -349,17 +207,13 @@ function IssueDiagnosis() {
               type="error"
               showIcon
               closable
-              onClose={() => setError(null)}
+              onClose={() => {}}
               style={{ marginTop: 8 }}
             />
           )}
         </Card>
 
-        {/* 右栏：结果展示 */}
-        <Card
-          title="AI 分析结果"
-          style={{ flex: 1, minHeight: 600 }}
-        >
+        <Card title="AI 分析结果" style={{ flex: 1, minHeight: 600 }}>
           <StreamMarkdownRenderer
             content={streamContent}
             isStreaming={isStreaming}

@@ -1,5 +1,6 @@
 import logging
 import time
+import asyncio
 from typing import AsyncGenerator, Optional
 
 from sqlalchemy import select, and_, desc
@@ -94,6 +95,8 @@ class IssueDiagnosisService:
                 lines.append(f"- **Head SHA**: {ci_result.head_sha}")
                 lines.append(f"- **结论**: {ci_result.conclusion}")
                 lines.append(f"- **分支**: {ci_result.branch}")
+                lines.append("")
+                lines.append("> 注意：当前版本仅提供 CI Run 元信息作为上下文，暂不支持获取 commit diff。如需完整 commit 分析，请在提示词中补充 commit 详情或日志内容。")
 
         if commit_sha:
             lines.append(f"- **指定 Commit SHA**: {commit_sha}")
@@ -111,22 +114,32 @@ class IssueDiagnosisService:
     ) -> AsyncGenerator[dict, None]:
         try:
             llm_config = await self._get_llm_config(db)
-            system_prompt = await self._get_system_prompt(data_source_type, db)
+
+            effective_type = data_source_type
+            if data_source_type == "ci_job" and not job_id and not user_prompt:
+                raise ValueError("ci_job requires job_id or user_prompt")
+            if data_source_type == "ci_job" and not job_id:
+                effective_type = "manual"
+
+            system_prompt = await self._get_system_prompt(effective_type, db)
 
             context = ""
             if data_source_type == "ci_job" and job_id:
                 context = await self._collect_ci_job_context(job_id, db)
-            elif data_source_type == "ci_job" and not job_id:
-                context = user_prompt or ""
-                data_source_type = "manual"
             elif data_source_type == "commit":
                 context = await self._collect_commit_context(run_id, commit_sha, db)
-            elif data_source_type == "manual":
-                context = user_prompt or ""
+            elif effective_type == "manual":
+                context = ""
 
             full_user_prompt = context
-            if user_prompt and data_source_type != "manual":
-                full_user_prompt = f"{context}\n\n### 用户补充提示词\n{user_prompt}"
+            if user_prompt:
+                if context:
+                    full_user_prompt = f"{context}\n\n### 用户补充提示词\n{user_prompt}"
+                else:
+                    full_user_prompt = user_prompt
+
+            if not full_user_prompt:
+                raise ValueError("No context or prompt provided for diagnosis")
 
             yield {
                 "event": "meta",
@@ -141,7 +154,7 @@ class IssueDiagnosisService:
             chunk_count = 0
 
             try:
-                async for chunk in self.llm_client.generate_stream(
+                stream_gen = self.llm_client.generate_stream(
                     provider=llm_config.provider,
                     model=llm_config.default_model,
                     api_key=llm_config.api_key,
@@ -150,13 +163,22 @@ class IssueDiagnosisService:
                     user_prompt=full_user_prompt,
                     temperature=0.3,
                     max_tokens=8192,
-                ):
+                )
+                first_chunk_timeout = 60
+                chunk_timeout = 30
+                got_first_chunk = False
+
+                async for chunk in stream_gen:
+                    got_first_chunk = True
                     total_content += chunk
                     chunk_count += 1
                     yield {
                         "event": "chunk",
                         "data": {"content": chunk}
                     }
+
+                if not got_first_chunk:
+                    raise LLMError("LLM stream produced no output (possible timeout)")
 
                 duration = time.time() - start_time
                 yield {
@@ -189,7 +211,7 @@ class IssueDiagnosisService:
         cutoff = datetime.now(UTC) - timedelta(days=days_back)
         stmt = select(CIJob).where(
             and_(
-                CIJob.conclusion.in_(["failure", "cancelled"]),
+                CIJob.conclusion == "failure",
                 CIJob.completed_at >= cutoff,
             )
         ).order_by(desc(CIJob.completed_at)).limit(100)
@@ -221,7 +243,7 @@ class IssueDiagnosisService:
         return [
             {
                 "sha": r.head_sha,
-                "message": "",
+                "message": r.head_sha,
                 "committed_at": r.completed_at.isoformat() if r.completed_at else None,
                 "run_id": r.run_id,
                 "run_number": r.run_number,

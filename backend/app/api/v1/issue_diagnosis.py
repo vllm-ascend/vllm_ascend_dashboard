@@ -1,7 +1,8 @@
 import json
 import logging
+import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-service = IssueDiagnosisService()
+DIAGNOSIS_TIMEOUT = 300
 
 
 @router.post("/diagnose", summary="问题定位诊断（SSE流式响应）")
@@ -21,20 +22,32 @@ async def diagnose(
     request: IssueDiagnosisRequest,
     current_user: CurrentAdminUser,
     db: DbSession,
+    fastapi_request: Request,
 ):
-    async def event_stream():
-        async for event_data in service.stream_diagnose(
-            data_source_type=request.data_source_type,
-            job_id=request.job_id,
-            run_id=request.run_id,
-            commit_sha=request.commit_sha,
-            user_prompt=request.user_prompt,
-            db=db,
-        ):
-            event = event_data.get("event", "chunk")
-            data = event_data.get("data", {})
+    service = IssueDiagnosisService()
 
-            yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    async def event_stream():
+        try:
+            async for event_data in service.stream_diagnose(
+                data_source_type=request.data_source_type,
+                job_id=request.job_id,
+                run_id=request.run_id,
+                commit_sha=request.commit_sha,
+                user_prompt=request.user_prompt,
+                db=db,
+            ):
+                if await fastapi_request.is_disconnected():
+                    logger.info("Client disconnected, stopping diagnosis stream")
+                    break
+
+                event = event_data.get("event", "chunk")
+                data = event_data.get("data", {})
+
+                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            logger.info("Diagnosis stream cancelled (client disconnect)")
+        except GeneratorExit:
+            logger.info("Generator exited (client disconnect)")
 
     return StreamingResponse(
         event_stream(),
@@ -54,6 +67,7 @@ async def get_failed_ci_jobs(
     db: DbSession,
 ):
     try:
+        service = IssueDiagnosisService()
         jobs = await service.get_failed_ci_jobs(days_back, db)
         return jobs
     except Exception as e:
@@ -68,6 +82,7 @@ async def get_recent_commits(
     db: DbSession,
 ):
     try:
+        service = IssueDiagnosisService()
         commits = await service.get_recent_commits(days_back, db)
         return commits
     except Exception as e:
