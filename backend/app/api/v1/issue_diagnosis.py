@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-DIAGNOSIS_TIMEOUT = 300
-
 
 @router.post("/diagnose", summary="问题定位诊断（SSE流式响应）")
 async def diagnose(

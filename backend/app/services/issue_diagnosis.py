@@ -164,8 +164,6 @@ class IssueDiagnosisService:
                     temperature=0.3,
                     max_tokens=8192,
                 )
-                first_chunk_timeout = 60
-                chunk_timeout = 30
                 got_first_chunk = False
 
                 async for chunk in stream_gen:
@@ -243,7 +241,7 @@ class IssueDiagnosisService:
         return [
             {
                 "sha": r.head_sha,
-                "message": r.head_sha,
+                "message": "",
                 "committed_at": r.completed_at.isoformat() if r.completed_at else None,
                 "run_id": r.run_id,
                 "run_number": r.run_number,

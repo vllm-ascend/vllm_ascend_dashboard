@@ -162,6 +162,7 @@ export function useIssueDiagnosis() {
     meta,
     summary,
     error,
+    clearError: () => setError(null),
     ciJobOptions,
     commitOptions,
     loadingJobs,
