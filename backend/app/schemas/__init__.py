@@ -795,6 +795,12 @@ from .alert_rules import (
     AlertHistoryResponse,
 )
 
+from .issue_diagnosis import (
+    IssueDiagnosisRequest,
+    CIJobOption,
+    CommitOption,
+)
+
 from .pr_pipeline import (
     PullRequestBase,
     PullRequestResponse,
