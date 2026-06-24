@@ -75,48 +75,24 @@ async def init_db():
 
 
 async def _migrate_email_column():
-    """迁移 User.email 列：填充空值 + 添加 unique 约束"""
     try:
         from sqlalchemy import text
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
-            result = await db.execute(text(
-                "SELECT COUNT(*) FROM users WHERE email IS NULL OR email = ''"
-            ))
-            null_count = result.scalar()
-
-            if null_count and null_count > 0:
-                await db.execute(text(
-                    "UPDATE users SET email = username || '@placeholder.local' WHERE email IS NULL OR email = ''"
-                ))
+            null_count = (await db.execute(text("SELECT COUNT(*) FROM users WHERE email IS NULL OR email = ''"))).scalar()
+            if null_count:
+                await db.execute(text("UPDATE users SET email = username || '@placeholder.local' WHERE email IS NULL OR email = ''"))
                 await db.commit()
-                logger.info(f"Migrated {null_count} users with null/empty email to placeholder values")
-
             try:
-                await db.execute(text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"
-                ))
+                await db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
                 await db.commit()
-                logger.info("Email unique index created successfully")
             except Exception as idx_err:
                 if "duplicate" in str(idx_err).lower() or "unique" in str(idx_err).lower():
-                    logger.warning("Duplicate email values found, deduplicating...")
-                    await db.execute(text(
-                        """UPDATE users SET email = email || '_' || id
-                        WHERE id NOT IN (
-                            SELECT MIN(id) FROM users WHERE email IS NOT NULL GROUP BY email
-                        ) AND email IS NOT NULL"""
-                    ))
+                    await db.execute(text("UPDATE users SET email = email || '_' || id WHERE id NOT IN (SELECT MIN(id) FROM users WHERE email IS NOT NULL GROUP BY email) AND email IS NOT NULL"))
                     await db.commit()
-                    await db.execute(text(
-                        "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"
-                    ))
+                    await db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
                     await db.commit()
-                    logger.info("Email deduplicated and unique index created")
-                else:
-                    logger.warning(f"Email index creation error (may already exist): {idx_err}")
     except Exception as e:
         logger.warning(f"Email migration skipped (non-fatal): {e}")
 

@@ -420,36 +420,20 @@ class DataSyncScheduler:
                 raise
 
     async def _cleanup_logs_job(self) -> None:
-        """清理过期日志和黑名单 Token"""
         logger.info("LOG CLEANUP JOB STARTED")
-
         retention_days = getattr(settings, 'DATA_RETENTION_DAYS', 365)
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-
         async with SessionLocal() as db:
             try:
                 from sqlalchemy import delete as sa_delete
                 from app.models import UserLoginLog, FeatureUsageLog, TokenBlacklist
-
-                login_result = await db.execute(
-                    sa_delete(UserLoginLog).where(UserLoginLog.login_time < cutoff)
-                )
-                usage_result = await db.execute(
-                    sa_delete(FeatureUsageLog).where(FeatureUsageLog.access_time < cutoff)
-                )
-                token_result = await db.execute(
-                    sa_delete(TokenBlacklist).where(TokenBlacklist.expires_at < datetime.now(UTC))
-                )
+                lr = await db.execute(sa_delete(UserLoginLog).where(UserLoginLog.login_time < cutoff))
+                ur = await db.execute(sa_delete(FeatureUsageLog).where(FeatureUsageLog.access_time < cutoff))
+                tr = await db.execute(sa_delete(TokenBlacklist).where(TokenBlacklist.expires_at < datetime.now(UTC)))
                 await db.commit()
-
-                logger.info(
-                    f"LOG CLEANUP JOB COMPLETED - "
-                    f"login_logs: {login_result.rowcount}, "
-                    f"usage_logs: {usage_result.rowcount}, "
-                    f"blacklist_tokens: {token_result.rowcount}"
-                )
+                logger.info(f"LOG CLEANUP: login={lr.rowcount}, usage={ur.rowcount}, tokens={tr.rowcount}")
             except Exception as e:
-                logger.error(f"LOG CLEANUP JOB FAILED: {e}", exc_info=True)
+                logger.error(f"LOG CLEANUP FAILED: {e}", exc_info=True)
                 await db.rollback()
 
     def _update_project_dashboard_cache_job(self) -> None:
