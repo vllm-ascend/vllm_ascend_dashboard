@@ -592,6 +592,11 @@ class FailureAnalysisAnalyzeRequest(BaseModel):
 
 # ============ Stats Schemas ============
 
+class FeatureUsageTrendPoint(BaseModel):
+    """功能使用趋势数据点"""
+    date: str
+    count: int
+
 class LoginStatsResponse(BaseModel):
     """登录统计响应"""
     total_users: int
@@ -607,11 +612,6 @@ class FeatureUsageStatsResponse(BaseModel):
     feature_ranking: list[dict]
     user_activity_ranking: list[dict]
     daily_trend: list[FeatureUsageTrendPoint]
-
-class FeatureUsageTrendPoint(BaseModel):
-    """功能使用趋势数据点"""
-    date: str
-    count: int
 
 
 # ============ Common Schemas ============
