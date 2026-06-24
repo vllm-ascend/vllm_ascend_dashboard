@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import {
   Card,
   Form,
@@ -51,6 +50,7 @@ function IssueDiagnosis() {
     handleExport,
     handleReset,
     handleLogFileUpload,
+    clearError,
   } = useIssueDiagnosis()
 
   return (
@@ -207,7 +207,7 @@ function IssueDiagnosis() {
               type="error"
               showIcon
               closable
-              onClose={() => {}}
+              onClose={clearError}
               style={{ marginTop: 8 }}
             />
           )}

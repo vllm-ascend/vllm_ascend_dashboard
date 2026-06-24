@@ -14,7 +14,7 @@ __all__ = [
     # User
     "UserBase", "UserCreate", "UserUpdate", "UserResponse", "PasswordChange", "PasswordReset",
     # Auth
-    "Token", "LoginRequest",
+    "Token", "LoginRequest", "RegisterRequest",
     # CI
     "CIResultBase", "CIResultResponse", "CIStats",
     # Model
@@ -56,6 +56,8 @@ __all__ = [
     "PRPipelineListFilter", "PRPipelineListResponse",
     "PRPipelineTrendPoint", "PRPipelineTrendsResponse",
     "PRPipelineSyncRequest", "PRPipelineHistoricalSyncRequest",
+    # Stats
+    "LoginStatsResponse", "FeatureUsageStatsResponse", "FeatureUsageTrendPoint",
     # Common
     "Message", "PaginatedResponse",
 ]
@@ -66,16 +68,14 @@ __all__ = [
 class UserBase(BaseModel):
     """用户基础 Schema"""
     username: str = Field(..., min_length=3, max_length=50, pattern=r'^[a-zA-Z0-9_-]+$')
-    email: str | None = Field(None, max_length=100)
+    email: str = Field(..., max_length=100)
 
     @field_validator('email')
     @classmethod
-    def validate_email(cls, v: str | None) -> str | None:
-        """验证邮箱格式"""
-        # 空字符串视为 None
+    def validate_email(cls, v: str) -> str:
         if v == '':
-            return None
-        if v is not None and '@' not in v:
+            raise ValueError('邮箱不能为空')
+        if '@' not in v:
             raise ValueError('无效的邮箱格式')
         return v
 
@@ -88,7 +88,6 @@ class UserCreate(UserBase):
     @field_validator('password')
     @classmethod
     def validate_password(cls, v: str) -> str:
-        """验证密码强度"""
         if len(v) < 6:
             raise ValueError('密码长度至少为 6 位')
         return v
@@ -99,6 +98,13 @@ class UserUpdate(BaseModel):
     email: str | None = None
     role: str | None = None
     is_active: bool | None = None
+
+    @field_validator('email')
+    @classmethod
+    def validate_email_update(cls, v: str | None) -> str | None:
+        if v is not None and '@' not in v:
+            raise ValueError('无效的邮箱格式')
+        return v
 
 
 class PasswordChange(BaseModel):
@@ -148,6 +154,27 @@ class LoginRequest(BaseModel):
     """登录请求"""
     username: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    """用户注册请求"""
+    username: str = Field(..., min_length=3, max_length=50, pattern=r'^[a-zA-Z0-9_-]+$')
+    email: str = Field(..., max_length=100)
+    password: str = Field(..., min_length=6, max_length=128)
+
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        if '@' not in v:
+            raise ValueError('无效的邮箱格式')
+        return v
+
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError('密码长度至少为 6 位')
+        return v
 
 
 # ============ CI Schemas ============
@@ -561,6 +588,30 @@ class FailureAnalysisListResponse(BaseModel):
 class FailureAnalysisAnalyzeRequest(BaseModel):
     force: bool = False
     days_back: int = 7
+
+
+# ============ Stats Schemas ============
+
+class FeatureUsageTrendPoint(BaseModel):
+    """功能使用趋势数据点"""
+    date: str
+    count: int
+
+class LoginStatsResponse(BaseModel):
+    """登录统计响应"""
+    total_users: int
+    active_users_today: int
+    active_users_7days: int
+    active_users_30days: int
+    login_trend: list[dict]
+    top_users_by_login_count: list[dict]
+
+class FeatureUsageStatsResponse(BaseModel):
+    """功能使用统计响应"""
+    total_requests: int
+    feature_ranking: list[dict]
+    user_activity_ranking: list[dict]
+    daily_trend: list[FeatureUsageTrendPoint]
 
 
 # ============ Common Schemas ============

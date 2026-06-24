@@ -29,6 +29,8 @@ import DailyReportConfigPage from './pages/DailyReportConfig'
 import SmtpConfig from './pages/SmtpConfig'
 import AlertRulesManagement from './pages/AlertRulesManagement'
 import IssueDiagnosis from './pages/IssueDiagnosis'
+import Register from './pages/Register'
+import UserStats from './pages/UserStats'
 import { useCurrentUser } from './hooks/useCurrentUser'
 
 const queryClient = new QueryClient({
@@ -115,6 +117,8 @@ function App() {
           <Routes>
             {/* 登录页面 */}
             <Route path="/login" element={<Login />} />
+            {/* 注册页面 */}
+            <Route path="/register" element={<Register />} />
 
             {/* 需要登录的路由（默认） */}
             <Route path="/" element={
@@ -146,6 +150,15 @@ function App() {
                 element={
                   <AdminRoute>
                     <IssueDiagnosis />
+                  </AdminRoute>
+                }
+              />
+              {/* 用户统计（管理员） */}
+              <Route
+                path="user-stats"
+                element={
+                  <AdminRoute>
+                    <UserStats />
                   </AdminRoute>
                 }
               />

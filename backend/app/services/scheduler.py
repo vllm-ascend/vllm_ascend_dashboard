@@ -4,7 +4,7 @@
 """
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -286,6 +286,18 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add PR pipeline sync job: {e}", exc_info=True)
 
+        try:
+            self.scheduler.add_job(
+                self._cleanup_logs_job,
+                trigger=IntervalTrigger(hours=6),
+                id="cleanup_logs",
+                name="Cleanup Expired Logs and Tokens",
+                replace_existing=True,
+            )
+            logger.info("Log cleanup scheduled every 6 hours")
+        except Exception as e:
+            logger.error(f"Failed to add log cleanup job: {e}", exc_info=True)
+
     def stop(self) -> None:
         """停止调度器"""
         if self.scheduler.running:
@@ -406,6 +418,23 @@ class DataSyncScheduler:
             except Exception as e:
                 logger.error(f"PR PIPELINE SYNC JOB FAILED - Error: {e}", exc_info=True)
                 raise
+
+    async def _cleanup_logs_job(self) -> None:
+        logger.info("LOG CLEANUP JOB STARTED")
+        retention_days = getattr(settings, 'DATA_RETENTION_DAYS', 365)
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        async with SessionLocal() as db:
+            try:
+                from sqlalchemy import delete as sa_delete
+                from app.models import UserLoginLog, FeatureUsageLog, TokenBlacklist
+                lr = await db.execute(sa_delete(UserLoginLog).where(UserLoginLog.login_time < cutoff))
+                ur = await db.execute(sa_delete(FeatureUsageLog).where(FeatureUsageLog.access_time < cutoff))
+                tr = await db.execute(sa_delete(TokenBlacklist).where(TokenBlacklist.expires_at < datetime.now(UTC)))
+                await db.commit()
+                logger.info(f"LOG CLEANUP: login={lr.rowcount}, usage={ur.rowcount}, tokens={tr.rowcount}")
+            except Exception as e:
+                logger.error(f"LOG CLEANUP FAILED: {e}", exc_info=True)
+                await db.rollback()
 
     def _update_project_dashboard_cache_job(self) -> None:
         """Project Dashboard Git 仓库缓存更新任务"""

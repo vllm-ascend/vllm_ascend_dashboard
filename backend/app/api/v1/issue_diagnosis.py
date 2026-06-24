@@ -14,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-DIAGNOSIS_TIMEOUT = 300
-
 
 @router.post("/diagnose", summary="问题定位诊断（SSE流式响应）")
 async def diagnose(
@@ -62,9 +60,9 @@ async def diagnose(
 
 @router.get("/data-sources/ci-jobs", summary="获取失败的CI Job列表")
 async def get_failed_ci_jobs(
-    days_back: int = 7,
     current_user: CurrentAdminUser,
     db: DbSession,
+    days_back: int = 7,
 ):
     try:
         service = IssueDiagnosisService()
@@ -77,9 +75,9 @@ async def get_failed_ci_jobs(
 
 @router.get("/data-sources/commits", summary="获取最近的commit列表")
 async def get_recent_commits(
-    days_back: int = 7,
     current_user: CurrentAdminUser,
     db: DbSession,
+    days_back: int = 7,
 ):
     try:
         service = IssueDiagnosisService()
