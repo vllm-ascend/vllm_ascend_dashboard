@@ -25,12 +25,14 @@ from app.api.v1 import (
     project_dashboard,
     resource_dashboard,
     resource_metrics,
+    stats,
     system_config,
     users,
     workflows,
 )
 from app.core.config import settings
 from app.db.base import engine
+from app.middleware.usage_tracking import UsageTrackingMiddleware
 from app.models import Base
 from app.services.scheduler import get_scheduler, start_scheduler, stop_scheduler_async
 
@@ -57,6 +59,8 @@ async def init_db():
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables created successfully")
 
+        await _migrate_email_column()
+
         # 初始化 LLM 提供商默认配置
         await _init_llm_provider_configs()
 
@@ -68,6 +72,53 @@ async def init_db():
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}", exc_info=True)
         raise
+
+
+async def _migrate_email_column():
+    """迁移 User.email 列：填充空值 + 添加 unique 约束"""
+    try:
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            result = await db.execute(text(
+                "SELECT COUNT(*) FROM users WHERE email IS NULL OR email = ''"
+            ))
+            null_count = result.scalar()
+
+            if null_count and null_count > 0:
+                await db.execute(text(
+                    "UPDATE users SET email = username || '@placeholder.local' WHERE email IS NULL OR email = ''"
+                ))
+                await db.commit()
+                logger.info(f"Migrated {null_count} users with null/empty email to placeholder values")
+
+            try:
+                await db.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"
+                ))
+                await db.commit()
+                logger.info("Email unique index created successfully")
+            except Exception as idx_err:
+                if "duplicate" in str(idx_err).lower() or "unique" in str(idx_err).lower():
+                    logger.warning("Duplicate email values found, deduplicating...")
+                    await db.execute(text(
+                        """UPDATE users SET email = email || '_' || id
+                        WHERE id NOT IN (
+                            SELECT MIN(id) FROM users WHERE email IS NOT NULL GROUP BY email
+                        ) AND email IS NOT NULL"""
+                    ))
+                    await db.commit()
+                    await db.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"
+                    ))
+                    await db.commit()
+                    logger.info("Email deduplicated and unique index created")
+                else:
+                    logger.warning(f"Email index creation error (may already exist): {idx_err}")
+    except Exception as e:
+        logger.warning(f"Email migration skipped (non-fatal): {e}")
 
 
 async def _warmup_claude_code_cli():
@@ -247,6 +298,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.add_middleware(UsageTrackingMiddleware)
+
     # 注册路由
     app.include_router(auth.router, prefix="/api/v1/auth", tags=["认证"])
     app.include_router(ci.router, prefix="/api/v1/ci", tags=["CI 数据"])
@@ -263,6 +316,7 @@ def create_app() -> FastAPI:
     app.include_router(resource_dashboard.router, prefix="/api/v1/resource-dashboard", tags=["资源看板"])
     app.include_router(resource_metrics.router, prefix="/api/v1/resource-dashboard", tags=["资源看板"])
     app.include_router(daily_report.router, prefix="/api/v1", tags=["每日运行报告"])
+    app.include_router(stats.router, prefix="/api/v1/stats", tags=["统计信息"])
     app.include_router(issue_diagnosis.router, prefix="/api/v1/issue-diagnosis", tags=["问题定位"])
     app.include_router(alert_rules.router, prefix="/api/v1", tags=["告警规则"])
     app.include_router(pr_pipeline.router, prefix="/api/v1/pr-pipeline", tags=["PR 流水线"])

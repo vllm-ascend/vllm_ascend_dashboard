@@ -10,9 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_token
 from app.db.base import get_db
-from app.models import User
+from app.models import User, TokenBlacklist
 
-# HTTP Bearer 认证
 security = HTTPBearer()
 
 
@@ -30,6 +29,17 @@ async def get_current_user(
             detail="Token 无效或已过期",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    jti = payload.get("jti")
+    if jti:
+        stmt = select(TokenBlacklist).where(TokenBlacklist.token_jti == jti)
+        result = await db.execute(stmt)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token 已被撤销",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     username: str = payload.get("sub")
     if username is None:
@@ -73,7 +83,6 @@ async def get_current_active_super_admin_user(
     return current_user
 
 
-# 类型别名
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentAdminUser = Annotated[User, Depends(get_current_active_admin_user)]
 CurrentSuperAdminUser = Annotated[User, Depends(get_current_active_super_admin_user)]

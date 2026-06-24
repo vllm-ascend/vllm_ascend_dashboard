@@ -1,51 +1,31 @@
 import { useState } from 'react'
 import { Form, Input, Button, Card, message, Typography } from 'antd'
-import { UserOutlined, LockOutlined } from '@ant-design/icons'
+import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
-import { login } from '../services/auth'
+import { register } from '../services/auth'
 import './Login.css'
 import vllmAscendLogo from '../assets/vllm-ascend-logo.png'
 
 const { Title, Paragraph } = Typography
 
-interface LoginFormValues {
+interface RegisterFormValues {
   username: string
+  email: string
   password: string
 }
 
-function Login() {
+function Register() {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const [loading, setLoading] = useState(false)
 
-  const onFinish = async (values: LoginFormValues) => {
+  const onFinish = async (values: RegisterFormValues) => {
     setLoading(true)
     try {
-      const response = await login(values)
-
-      // 保存 Token
-      localStorage.setItem('access_token', response.access_token)
-      localStorage.setItem('refresh_token', response.refresh_token)
-
-      // 清除用户信息缓存，确保重新获取最新角色
-      queryClient.invalidateQueries({ queryKey: ['current-user'] })
-
-      // 获取用户信息并保存（用于路由权限判断）
-      try {
-        const { getCurrentUser } = await import('../services/auth')
-        const userInfo = await getCurrentUser()
-        localStorage.setItem('user_info', JSON.stringify(userInfo))
-      } catch (e) {
-        console.error('Failed to fetch user info:', e)
-      }
-
-      message.success('登录成功')
-
-      // 跳转到首页
-      navigate('/')
+      await register(values)
+      message.success('注册成功，请登录')
+      navigate('/login')
     } catch (error: any) {
-      message.error((error as any).response?.data?.detail || '登录失败，请检查用户名和密码')
+      message.error(error.response?.data?.detail || '注册失败，请重试')
     } finally {
       setLoading(false)
     }
@@ -53,30 +33,27 @@ function Login() {
 
   return (
     <div className="stripe-login-page">
-      {/* Decorative Background Elements */}
       <div className="stripe-login-background">
         <div className="stripe-login-gradient-orb stripe-login-orb-1" />
         <div className="stripe-login-gradient-orb stripe-login-orb-2" />
       </div>
-      
+
       <div className="stripe-login-container">
-        {/* Logo Section */}
         <div className="stripe-login-header">
           <div className="stripe-login-logo">
             <img src={vllmAscendLogo} alt="vLLM Ascend" className="stripe-login-logo-img" />
           </div>
           <Title level={2} className="stripe-login-title">
-            vLLM Ascend Dashboard
+            注册新账号
           </Title>
           <Paragraph className="stripe-login-subtitle">
-            社区看板管理系统
+            vLLM Ascend 社区看板
           </Paragraph>
         </div>
 
-        {/* Login Card */}
         <Card className="stripe-login-card">
           <Form
-            name="login"
+            name="register"
             onFinish={onFinish}
             autoComplete="off"
             size="large"
@@ -89,12 +66,30 @@ function Login() {
               rules={[
                 { required: true, message: '请输入用户名' },
                 { min: 3, message: '用户名至少 3 个字符' },
+                { pattern: /^[a-zA-Z0-9_-]+$/, message: '仅支持字母、数字、下划线和连字符' },
               ]}
             >
               <Input
                 prefix={<UserOutlined className="stripe-input-icon" />}
                 placeholder="请输入用户名"
                 autoComplete="username"
+                className="stripe-input"
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="email"
+              label="邮箱"
+              className="stripe-form-item"
+              rules={[
+                { required: true, message: '请输入邮箱' },
+                { type: 'email', message: '请输入有效的邮箱地址' },
+              ]}
+            >
+              <Input
+                prefix={<MailOutlined className="stripe-input-icon" />}
+                placeholder="请输入邮箱"
+                autoComplete="email"
                 className="stripe-input"
               />
             </Form.Item>
@@ -111,7 +106,7 @@ function Login() {
               <Input.Password
                 prefix={<LockOutlined className="stripe-input-icon" />}
                 placeholder="请输入密码"
-                autoComplete="current-password"
+                autoComplete="new-password"
                 className="stripe-input"
               />
             </Form.Item>
@@ -125,17 +120,17 @@ function Login() {
                 size="large"
                 className="stripe-btn-primary stripe-login-btn"
               >
-                {loading ? '登录中...' : '登录'}
+                {loading ? '注册中...' : '注册'}
               </Button>
             </Form.Item>
 
             <div style={{ textAlign: 'center', marginTop: 16 }}>
               <Button
                 type="link"
-                onClick={() => navigate('/register')}
+                onClick={() => navigate('/login')}
                 style={{ color: 'var(--stripe-purple)' }}
               >
-                还没有账号？点击注册
+                已有账号？点击登录
               </Button>
             </div>
           </Form>
@@ -145,4 +140,4 @@ function Login() {
   )
 }
 
-export default Login
+export default Register

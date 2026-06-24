@@ -1,7 +1,9 @@
 """
 安全工具模块
 """
+import hashlib
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -12,9 +14,7 @@ from app.core.config import settings
 
 def hash_password(password: str) -> str:
     """密码加密"""
-    # 将密码转换为字节
     password_bytes = password.encode('utf-8')
-    # 生成盐并哈希密码
     hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
     return hashed.decode('utf-8')
 
@@ -26,15 +26,34 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         return bcrypt.checkpw(password_bytes, hashed_bytes)
     except ValueError as e:
-        # 捕获 bcrypt 特定错误（如无效的 hash）
         logger = logging.getLogger(__name__)
         logger.warning(f"Password verification error: {e}")
         return False
     except Exception as e:
-        # 记录其他异常以便调试
         logger = logging.getLogger(__name__)
         logger.error(f"Unexpected error during password verification: {e}")
         return False
+
+
+def anonymize_ip(ip_address: str) -> str:
+    """IP 地址匿名化：将最后一段替换为 0"""
+    if not ip_address:
+        return ""
+    parts = ip_address.split('.')
+    if len(parts) == 4:
+        return f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+    if ':' in ip_address:
+        segments = ip_address.split(':')
+        if len(segments) >= 4:
+            return ':'.join(segments[:4]) + ':0:0:0:0'
+    return hashlib.sha256(ip_address.encode()).hexdigest()[:16]
+
+
+def hash_ip(ip_address: str) -> str:
+    """IP 地址哈希化，用于统计比对"""
+    if not ip_address:
+        return ""
+    return hashlib.sha256(ip_address.encode()).hexdigest()
 
 
 def create_access_token(
@@ -51,7 +70,7 @@ def create_access_token(
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
 
-    to_encode.update({"exp": expire, "iat": datetime.now(UTC)})
+    to_encode.update({"exp": expire, "iat": datetime.now(UTC), "jti": str(uuid.uuid4())})
 
     encoded_jwt = jwt.encode(
         to_encode,
@@ -77,15 +96,12 @@ def decode_token(token: str) -> dict | None:
         )
         return payload
     except ExpiredSignatureError:
-        # Token 已过期
         return None
     except JWTError as e:
-        # Token 无效 - 记录详细错误以便调试
         logger = logging.getLogger(__name__)
         logger.warning(f"JWT decode error: {e}, token: {token[:20]}...")
         return None
     except Exception as e:
-        # 记录其他异常以便调试
         logger = logging.getLogger(__name__)
         logger.error(f"Unexpected error during token decoding: {e}")
         return None
