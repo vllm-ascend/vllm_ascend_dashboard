@@ -28,12 +28,12 @@ async def get_login_stats(
         active_30d = (await db.execute(select(func.count(distinct(UserLoginLog.user_id)).where(UserLoginLog.login_time >= now - timedelta(days=30))))).scalar() or 0
 
         login_trend = []
-        for i in range(min(days, 30)):
+        stmt = select(func.date(UserLoginLog.login_time).label("day"), func.count(UserLoginLog.id).label("cnt")).where(UserLoginLog.login_time >= now - timedelta(days=min(days, 30))).group_by(func.date(UserLoginLog.login_time)).order_by(func.date(UserLoginLog.login_time))
+        trend_rows = (await db.execute(stmt)).all()
+        trend_map = {str(r.day): r.cnt for r in trend_rows}
+        for i in range(min(days, 30) - 1, -1, -1):
             ds = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
-            de = ds + timedelta(days=1)
-            c = (await db.execute(select(func.count(UserLoginLog.id)).where(and_(UserLoginLog.login_time >= ds, UserLoginLog.login_time < de)))).scalar() or 0
-            login_trend.append({"date": ds.strftime("%Y-%m-%d"), "count": c})
-        login_trend.reverse()
+            login_trend.append({"date": ds.strftime("%Y-%m-%d"), "count": trend_map.get(ds.strftime("%Y-%m-%d"), 0)})
 
         stmt = select(UserLoginLog.user_id, User.username, func.count(UserLoginLog.id).label("cnt")).join(User).where(UserLoginLog.login_time >= now - timedelta(days=days)).group_by(UserLoginLog.user_id, User.username).order_by(func.count(UserLoginLog.id).desc()).limit(10)
         top_users = [{"user_id": r.user_id, "username": r.username, "login_count": r.cnt} for r in (await db.execute(stmt)).all()]
@@ -62,12 +62,12 @@ async def get_feature_usage_stats(
         user_ranking = [{"user_id": r.user_id, "username": r.username, "count": r.cnt} for r in (await db.execute(stmt)).all()]
 
         daily_trend = []
-        for i in range(min(days, 30)):
+        stmt = select(func.date(FeatureUsageLog.access_time).label("day"), func.count(FeatureUsageLog.id).label("cnt")).where(FeatureUsageLog.access_time >= now - timedelta(days=min(days, 30))).group_by(func.date(FeatureUsageLog.access_time)).order_by(func.date(FeatureUsageLog.access_time))
+        trend_rows = (await db.execute(stmt)).all()
+        trend_map = {str(r.day): r.cnt for r in trend_rows}
+        for i in range(min(days, 30) - 1, -1, -1):
             ds = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
-            de = ds + timedelta(days=1)
-            c = (await db.execute(select(func.count(FeatureUsageLog.id)).where(and_(FeatureUsageLog.access_time >= ds, FeatureUsageLog.access_time < de)))).scalar() or 0
-            daily_trend.append(FeatureUsageTrendPoint(date=ds.strftime("%Y-%m-%d"), count=c))
-        daily_trend.reverse()
+            daily_trend.append(FeatureUsageTrendPoint(date=ds.strftime("%Y-%m-%d"), count=trend_map.get(ds.strftime("%Y-%m-%d"), 0)))
 
         return FeatureUsageStatsResponse(total_requests=total_requests, feature_ranking=feature_ranking, user_activity_ranking=user_ranking, daily_trend=daily_trend)
     except Exception as e:

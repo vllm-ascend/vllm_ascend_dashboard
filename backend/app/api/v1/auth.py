@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, get_current_user
 from app.core.security import (
@@ -35,21 +36,26 @@ async def register(request: Request, db: DbSession, data: RegisterRequest):
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e))
 
-    if await db.execute(select(User).where(User.username == data.username)).scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名已存在")
-    if await db.execute(select(User).where(User.email == data.email)).scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱已被注册")
-
     user = User(username=data.username, email=data.email, password_hash=hash_password(data.password), role="user", is_active=True)
     db.add(user)
-    await db.commit()
-    await db.refresh(user)
+    try:
+        await db.commit()
+        await db.refresh(user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="注册信息已被使用，请更换用户名或邮箱")
     logger.info(f"New user registered: {user.username} from IP {anonymize_ip(ip)}")
     return user
 
 
 @router.post("/login", response_model=Token)
 async def login(request: Request, db: DbSession, data: LoginRequest):
+    ip = _client_ip(request)
+    try:
+        check_rate_limit(ip, "login")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e))
+
     user = await db.execute(select(User).where(User.username == data.username)).scalar_one_or_none()
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误", headers={"WWW-Authenticate": "Bearer"})

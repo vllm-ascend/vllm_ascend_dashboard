@@ -35,7 +35,7 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
         path = request.url.path
-        if any(path.startswith(e) for e in EXCLUDED_PATHS) or request.method not in ("GET", "POST", "PUT", "DELETE", "PATCH"):
+        if any(path.startswith(e) for e in EXCLUDED_PATHS) or request.method == "OPTIONS":
             return response
 
         auth_header = request.headers.get("Authorization")

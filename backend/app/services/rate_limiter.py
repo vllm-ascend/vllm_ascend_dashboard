@@ -20,8 +20,15 @@ def check_rate_limit(ip_address: str, action: str) -> None:
     now = time.time()
     window = config["window_seconds"]
     max_req = config["max_requests"]
+    _purge_expired(now)
     timestamps = _rate_store[key]
     timestamps[:] = [t for t in timestamps if now - t < window]
     if len(timestamps) >= max_req:
         raise ValueError(f"请求过于频繁，请在 {int(window / 60)} 分钟后重试")
     timestamps.append(now)
+
+
+def _purge_expired(now: float) -> None:
+    expired_keys = [k for k, ts in _rate_store.items() if not ts or now - ts[-1] > 86400]
+    for k in expired_keys:
+        del _rate_store[k]
