@@ -31,6 +31,7 @@ import AlertRulesManagement from './pages/AlertRulesManagement'
 import IssueDiagnosis from './pages/IssueDiagnosis'
 import Register from './pages/Register'
 import UserStats from './pages/UserStats'
+import TestObservabilityDashboard from './pages/TestObservabilityDashboard'
 import { useCurrentUser } from './hooks/useCurrentUser'
 
 const queryClient = new QueryClient({
@@ -168,6 +169,8 @@ function App() {
               {/* PR Pipeline Kanban */}
               <Route path="pr-pipeline" element={<PRPipelineBoard />} />
               <Route path="pr-pipeline/:prNumber" element={<PRDetail />} />
+              {/* Test Observability Dashboard */}
+              <Route path="test-board" element={<TestObservabilityDashboard />} />
 
               {/* 仅管理员访问的路由 */}
               <Route
