@@ -219,18 +219,7 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add resource metrics cleanup job: {e}", exc_info=True)
 
-        # 失败分析兜底定时任务 - 每 30 分钟运行
-        try:
-            self.scheduler.add_job(
-                self._failure_analysis_fallback_job,
-                trigger=IntervalTrigger(minutes=30),
-                id="failure_analysis_fallback",
-                name="Failure Analysis Fallback",
-                replace_existing=True,
-            )
-            logger.info("Failure analysis fallback scheduled every 30 minutes")
-        except Exception as e:
-            logger.error(f"Failed to add failure analysis fallback job: {e}", exc_info=True)
+        # 失败分析兜底已移除 — 仅由 CI sync 后触发 _analyze_failed_jobs
 
         # 每日运行报告邮件推送任务 - 每天早上 8:30 执行（可配置）
         # 与每日总结任务（8:00 AM）错开 30 分钟，确保数据采集先完成
@@ -260,18 +249,7 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add daily report job: {e}", exc_info=True)
 
-        # CI 失败分析任务 - CI 同步后 15 分钟执行（确保数据已落库）
-        try:
-            self.scheduler.add_job(
-                self._analyze_failures_scheduled_job,
-                trigger=IntervalTrigger(minutes=30),
-                id="ci_failure_analysis",
-                name="CI Failure Analysis (Claude Code CLI)",
-                replace_existing=True,
-            )
-            logger.info(f"CI failure analysis scheduled every 30 minutes")
-        except Exception as e:
-            logger.error(f"Failed to add CI failure analysis job: {e}", exc_info=True)
+        # CI 失败分析已移除 — 仅由 _sync_ci_data_job 中 _analyze_failed_jobs 触发
 
         pr_pipeline_interval = getattr(settings, 'PR_PIPELINE_SYNC_INTERVAL_MINUTES', 30)
         try:
@@ -368,11 +346,6 @@ class DataSyncScheduler:
                 logger.info("=" * 60)
                 logger.info(f"CI DATA SYNC JOB COMPLETED - Collected {collected} runs")
                 logger.info("=" * 60)
-
-                try:
-                    await self._trigger_failure_analysis_after_sync(db)
-                except Exception as fae:
-                    logger.warning(f"Post-sync failure analysis trigger failed: {fae}")
 
             except Exception as e:
                 logger.error("=" * 60)
@@ -621,28 +594,6 @@ class DataSyncScheduler:
             logger.error(f"DAILY REPORT EMAIL JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
 
-    async def _trigger_failure_analysis_after_sync(self, db):
-        """CI同步完成后触发失败Job分析"""
-        from app.services.failure_analysis import FailureAnalysisService
-        service = FailureAnalysisService()
-        results = await service.analyze_batch(days_back=7, db=db)
-        logger.info(f"Post-sync failure analysis: processed {len(results)} failed jobs")
-
-    async def _failure_analysis_fallback_job(self) -> None:
-        """失败分析兜底定时任务"""
-        logger.info("=" * 60)
-        logger.info("FAILURE ANALYSIS FALLBACK JOB STARTED")
-        logger.info("=" * 60)
-
-        async with SessionLocal() as db:
-            try:
-                from app.services.failure_analysis import FailureAnalysisService
-                service = FailureAnalysisService()
-                results = await service.analyze_batch(days_back=7, db=db)
-                logger.info(f"FAILURE ANALYSIS FALLBACK JOB COMPLETED - processed {len(results)} jobs")
-            except Exception as e:
-                logger.error(f"FAILURE ANALYSIS FALLBACK JOB FAILED - Error: {e}", exc_info=True)
-
     async def _collect_resource_metrics_job(self) -> None:
         """NPU 指标采集任务"""
         logger.info("=" * 60)
@@ -701,7 +652,7 @@ class DataSyncScheduler:
                 jobs = result.scalars().all()
                 for job in jobs:
                     try:
-                        await svc.analyze_failed_job(job.job_id, db)
+                        await svc.analyze_failed_job(job.job_id, db, triggered_by="scheduler")
                         count += 1
                     except Exception as e:
                         logger.warning(f"Analysis failed for job {job.job_id}: {e}")
@@ -730,18 +681,6 @@ class DataSyncScheduler:
         except Exception as e:
             logger.warning(f"Failed job analysis error (non-fatal): {e}")
             return 0
-
-    async def _analyze_failures_scheduled_job(self) -> None:
-        """定时分析失败 CI jobs 的独立任务"""
-        logger.info("=" * 60)
-        logger.info("CI FAILURE ANALYSIS JOB STARTED")
-        logger.info("=" * 60)
-
-        try:
-            count = await self._analyze_failed_jobs(db=None)
-            logger.info(f"CI FAILURE ANALYSIS JOB COMPLETED - Analyzed {count} jobs")
-        except Exception as e:
-            logger.error(f"CI FAILURE ANALYSIS JOB FAILED: {e}", exc_info=True)
 
     async def _cleanup_resource_metrics_job(self) -> None:
         """NPU 指标数据清理任务"""

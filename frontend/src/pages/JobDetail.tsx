@@ -65,7 +65,7 @@ function JobDetail() {
 
   useEffect(() => {
     if (analyzeMutation.isSuccess && analyzeMutation.data) {
-      message.success('分析完成')
+      message.success('分析已提交，请等待完成...')
       refetch()
     }
   }, [analyzeMutation.isSuccess, analyzeMutation.data, refetch])
