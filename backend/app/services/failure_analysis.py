@@ -96,42 +96,40 @@ class FailureAnalysisService:
             return existing
 
         fingerprint = self.compute_failure_fingerprint(job)
-
-        dedup_stmt = select(JobFailureAnalysis).where(
-            and_(
-                JobFailureAnalysis.failure_fingerprint == fingerprint,
-                JobFailureAnalysis.analysis_status == "completed",
-                JobFailureAnalysis.job_id != job_id
-            )
-        ).limit(1)
-        dedup_result = await db.execute(dedup_stmt)
-        dedup_match = dedup_result.scalar_one_or_none()
         llm_config = await self._get_llm_config(db)
 
-        if dedup_match and not force:
-            # 复用已有记录或插入新记录（避免 UNIQUE 冲突）
-            target = existing if existing else JobFailureAnalysis(
-                job_id=job_id,
-                run_id=job.run_id,
-                workflow_name=job.workflow_name,
-                job_name=job.job_name,
-                failure_date=job.completed_at or datetime.now(UTC),
-            )
-            target.failure_fingerprint = fingerprint
-            target.reused_analysis_id = dedup_match.id
-            target.problem_category = dedup_match.problem_category
-            target.root_cause_summary = dedup_match.root_cause_summary
-            target.improvement_measures_summary = dedup_match.improvement_measures_summary
-            target.report_file_path = dedup_match.report_file_path
-            target.llm_provider = dedup_match.llm_provider or llm_config.provider
-            target.llm_model = dedup_match.llm_model or llm_config.default_model
-            target.analysis_status = "reused"
-            target.triggered_by = triggered_by
-            if target not in db:
-                db.add(target)
-            await db.commit()
-            await db.refresh(target)
-            return target
+        # 指纹复用（仅 scheduler 触发，手动 force=true 跳过）
+        if not force:
+            dedup_stmt = select(JobFailureAnalysis).where(
+                and_(
+                    JobFailureAnalysis.failure_fingerprint == fingerprint,
+                    JobFailureAnalysis.analysis_status == "completed",
+                    JobFailureAnalysis.job_id != job_id,
+                )
+            ).limit(1)
+            dedup_result = await db.execute(dedup_stmt)
+            dedup_match = dedup_result.scalar_one_or_none()
+            if dedup_match:
+                target = existing if existing else JobFailureAnalysis(
+                    job_id=job_id, run_id=job.run_id,
+                    workflow_name=job.workflow_name, job_name=job.job_name,
+                    failure_date=job.completed_at or datetime.now(UTC),
+                )
+                target.failure_fingerprint = fingerprint
+                target.reused_analysis_id = dedup_match.id
+                target.problem_category = dedup_match.problem_category
+                target.root_cause_summary = dedup_match.root_cause_summary
+                target.improvement_measures_summary = dedup_match.improvement_measures_summary
+                target.report_file_path = dedup_match.report_file_path
+                target.llm_provider = dedup_match.llm_provider or llm_config.provider
+                target.llm_model = dedup_match.llm_model or llm_config.default_model
+                target.analysis_status = "reused"
+                target.triggered_by = triggered_by
+                if target not in db:
+                    db.add(target)
+                await db.commit()
+                await db.refresh(target)
+                return target
 
         system_prompt = await self._get_system_prompt(db)
         user_prompt = await self._build_job_context(job, db)
@@ -340,6 +338,7 @@ class FailureAnalysisService:
         github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}"
         lines.append(f"\n- **GitHub Job URL**: {github_url}")
         lines.append(f"\n请严格按照「CI 失败分析报告模板」的章节结构输出分析报告，包括：基本信息表、问题分类、根因分析（证据来源按优先级排序+根因链路）、影响范围、修复建议表（含优先级和负责方）、关联PR、结论。报告末尾必须包含 JSON 代码块。")
+        lines.append(f"\n**强制要求**：根因分析必须全面，禁止只分析单层就下结论。必须同时验证：1) 错误的直接触发点（代码行）2) 上游调用链的数据流转 3) 是否为代码变更引入（对比 commit diff）。如果这三个层面指向不同的方向，说明分析不完整，需要继续深挖直到证据链收敛到同一个根因。")
         return "\n".join(lines)
 
     async def _fetch_job_annotations(self, job_id: int, db: AsyncSession) -> list[dict]:

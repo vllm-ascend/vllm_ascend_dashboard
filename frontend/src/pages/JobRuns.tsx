@@ -98,7 +98,7 @@ function JobRuns() {
   }
 
   const handleQuickAnalyze = (jobId: number) => {
-    analyzeMutation.mutate({ jobId, force: false })
+    analyzeMutation.mutate({ jobId, force: true })
   }
 
   const columns = [
