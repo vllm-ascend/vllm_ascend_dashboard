@@ -115,7 +115,7 @@ class ClaudeCodeCLI:
 
     # 可配置的默认值
     DEFAULT_MAX_TURNS: int = 10
-    DEFAULT_TIMEOUT_SECONDS: int = 600
+    DEFAULT_TIMEOUT_SECONDS: int = 1800
     DEFAULT_MODEL: str = "claude-sonnet-4-20250514"
 
     def __init__(
@@ -170,7 +170,12 @@ class ClaudeCodeCLI:
         api_base = provider_config.get("api_base_url", "")
 
         turns = max_turns or self._max_turns
-        args = self._build_args(prompt, system_prompt, turns, output_format)
+        # 生成 debug 日志路径（轮次级交互记录）
+        now = datetime.now(timezone.utc)
+        debug_dir = _CLI_LOG_DIR / now.strftime("%Y-%m-%d")
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_file = debug_dir / f"{now.strftime('%H%M%S')}_{provider}_{model}_debug.log"
+        args = self._build_args(prompt, system_prompt, turns, output_format, str(debug_file))
 
         proxy: "FormatProxy | None" = None
         litellm_url = os.environ.get("LITELLM_PROXY_URL", "")
@@ -261,11 +266,34 @@ class ClaudeCodeCLI:
             stdout = stdout_bytes.decode("utf-8", errors="replace").strip()
             stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
 
+            result = None
             if proc.returncode != 0:
-                logger.error(
-                    "Claude Code CLI exited with code %d\nstderr: %s",
-                    proc.returncode, stderr[:500],
+                # CLI 失败，但仍然保存日志并尝试解析已产出的内容
+                route_name = "litellm" if litellm_url else ("direct" if provider == "anthropic" else "formatproxy")
+                # 尝试从 stdout 提取内容（如 hit max_turns 但已写了报告）
+                partial_result = None
+                try:
+                    partial_result = self._parse_output(
+                        stdout, stderr, duration, output_format, model, proc.returncode,
+                    )
+                except Exception:
+                    pass
+                _save_cli_log(
+                    provider=provider, model=model,
+                    prompt=prompt, system_prompt=system_prompt,
+                    stdout=stdout, stderr=stderr,
+                    duration=duration, exit_code=proc.returncode,
+                    route=route_name,
+                    tool_calls=partial_result.tool_calls if partial_result and partial_result.tool_calls else None,
+                    raw_json=partial_result.raw_json if partial_result else None,
                 )
+                # 如果能解析出非空内容，返回部分结果而不是抛异常
+                if partial_result and partial_result.content and len(partial_result.content.strip()) > 100:
+                    logger.warning(
+                        "CLI exited with code %d but produced partial output (%d chars), using it",
+                        proc.returncode, len(partial_result.content),
+                    )
+                    return partial_result
                 raise ClaudeCLINotAvailable(
                     f"Claude CLI exited with code {proc.returncode}: {stderr[:200]}"
                 )
@@ -407,9 +435,13 @@ class ClaudeCodeCLI:
         system_prompt: str,
         max_turns: int,
         output_format: str,
+        debug_file: str = "",
     ) -> list[str]:
         """构建 claude CLI 命令行参数"""
         args = ["-p", prompt, "--print", "--max-turns", str(max_turns)]
+
+        if debug_file:
+            args.extend(["--debug", "--debug-file", debug_file])
 
         if output_format == "json":
             args.extend(["--output-format", "json"])
@@ -461,42 +493,6 @@ class ClaudeCodeCLI:
         )
 
 
-# ---------------------------------------------------------------------------
-# Fallback: 当 CLI 不可用时降级到原有直接 API 调用
-# ---------------------------------------------------------------------------
-
-async def fallback_to_direct_api(
-    provider_config: dict,
-    system_prompt: str,
-    user_prompt: str,
-) -> ClaudeCodeResult:
-    """
-    降级策略：CLI 不可用时回退到原有的 LLMClient.generate() 直接 API 调用。
-    保持功能不中断。
-    """
-    from app.services.llm_client import LLMClient
-
-    client = LLMClient()
-    try:
-        result = await client.generate(
-            provider=provider_config.get("provider", "anthropic"),
-            model=provider_config.get("default_model", "claude-sonnet-4-20250514"),
-            api_key=provider_config.get("api_key", ""),
-            api_base=provider_config.get("api_base_url", ""),
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-        )
-        return ClaudeCodeResult(
-            content=result.content,
-            duration_seconds=result.generation_time,
-            model_used=provider_config.get("default_model", ""),
-        )
-    except Exception as e:
-        raise ClaudeCLINotAvailable(
-            f"Both CLI and direct API fallback failed: {e}"
-        ) from e
-
-
 async def run_with_fallback(
     prompt: str,
     provider_config: dict,
@@ -506,7 +502,7 @@ async def run_with_fallback(
     output_format: str = "text",
 ) -> ClaudeCodeResult:
     """
-    尝试 Claude Code CLI，不可用时自动降级到直接 API 调用。
+    通过 Claude Code CLI 执行分析（仅 CLI，无降级）。
     """
     cli = ClaudeCodeCLI()
 
@@ -520,11 +516,4 @@ async def run_with_fallback(
             output_format=output_format,
         )
     except (ClaudeCLINotAvailable, ClaudeCLITimeout) as e:
-        logger.warning(
-            "Claude Code CLI unavailable, falling back to direct API: %s", e
-        )
-        return await fallback_to_direct_api(
-            provider_config=provider_config,
-            system_prompt=system_prompt,
-            user_prompt=prompt,
-        )
+        raise  # 直接抛出，由上层标记分析失败，不降级到 direct API

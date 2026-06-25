@@ -937,23 +937,94 @@ async def get_daily_report(
 
 # ============ Failure Analysis API ============
 
-@router.post("/failure-analysis/analyze/{job_id}", response_model=FailureAnalysisResponse)
+@router.post("/failure-analysis/analyze/{job_id}")
 async def analyze_failed_job(
     job_id: int,
     current_user: CurrentAdminUser,
     db: DbSession,
     force: bool = Query(default=False, description="强制重新分析"),
 ):
+    """触发失败分析（异步后台执行，立即返回，前端轮询 GET 接口获取结果）"""
+    import asyncio
+
+    from sqlalchemy import delete, text
+
+    from app.db.base import SessionLocal
+    from app.models import CIJob, JobFailureAnalysis
     from app.services.failure_analysis import FailureAnalysisService
+
+    # 1. 验证 job 存在
+    stmt = select(CIJob).where(CIJob.job_id == job_id)
+    result = await db.execute(stmt)
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"CIJob with job_id={job_id} not found")
+    if job.conclusion not in ("failure", "cancelled"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Job conclusion is '{job.conclusion}', not a failed job")
+
+    # 2. 检查已有记录
+    existing_stmt = select(JobFailureAnalysis).where(
+        JobFailureAnalysis.job_id == job_id
+    ).order_by(JobFailureAnalysis.id.desc()).limit(1)
+    existing_result = await db.execute(existing_stmt)
+    existing = existing_result.scalar_one_or_none()
+
+    # 2a. 分析进行中 → 直接返回，让前端轮询（force 也不允许重复提交）
+    if existing and existing.analysis_status == "analyzing":
+        return existing
+
+    # 2b. 已完成且非 force → 直接返回缓存
+    if existing and existing.analysis_status in ("completed", "reused") and not force:
+        return existing
+
+    # 3. force 模式下清理旧记录（已完成/失败的可重跑）
+    if force and existing:
+        try:
+            await db.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
+        except Exception:
+            pass
+        del_stmt = delete(JobFailureAnalysis).where(JobFailureAnalysis.job_id == job_id)
+        await db.execute(del_stmt)
+        await db.flush()
+
+    # 4. 创建 "analyzing" 占位记录，立即返回
     service = FailureAnalysisService()
-    try:
-        analysis = await service.analyze_failed_job(job_id=job_id, db=db, force=force)
-        return analysis
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(f"Failed to analyze job {job_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"分析失败: {str(e)}")
+    fingerprint = service.compute_failure_fingerprint(job)
+    placeholder = JobFailureAnalysis(
+        job_id=job_id,
+        run_id=job.run_id,
+        workflow_name=job.workflow_name,
+        job_name=job.job_name,
+        failure_date=job.completed_at or datetime.now(UTC),
+        failure_fingerprint=fingerprint,
+        analysis_status="analyzing",
+    )
+    db.add(placeholder)
+    await db.commit()
+    await db.refresh(placeholder)
+
+    # 5. 后台异步执行实际分析
+    async def _run_analysis():
+        async with SessionLocal() as bg_db:
+            svc = FailureAnalysisService()
+            try:
+                await svc.analyze_failed_job(job_id=job_id, db=bg_db, force=force, triggered_by="manual")
+            except Exception as e:
+                logger.error(f"Background analysis failed for job {job_id}: {e}")
+                # 确保状态更新为 failed，避免僵尸记录
+                try:
+                    from sqlalchemy import update
+                    await bg_db.execute(
+                        update(JobFailureAnalysis)
+                        .where(JobFailureAnalysis.job_id == job_id)
+                        .values(analysis_status="failed", error_message=str(e)[:500])
+                    )
+                    await bg_db.commit()
+                except Exception as db_e:
+                    logger.error(f"Failed to update analysis status for job {job_id}: {db_e}")
+
+    asyncio.create_task(_run_analysis())
+    return placeholder
 
 
 @router.post("/failure-analysis/analyze-batch")

@@ -64,7 +64,7 @@ class FailureAnalysisService:
                 return value
         return self._get_default_prompt()
 
-    async def analyze_failed_job(self, job_id: int, db: AsyncSession, force: bool = False):
+    async def analyze_failed_job(self, job_id: int, db: AsyncSession, force: bool = False, triggered_by: str = "manual"):
         stmt = select(CIJob).where(CIJob.job_id == job_id)
         result = await db.execute(stmt)
         job = result.scalar_one_or_none()
@@ -109,40 +109,52 @@ class FailureAnalysisService:
         llm_config = await self._get_llm_config(db)
 
         if dedup_match and not force:
-            reused = JobFailureAnalysis(
+            # 复用已有记录或插入新记录（避免 UNIQUE 冲突）
+            target = existing if existing else JobFailureAnalysis(
+                job_id=job_id,
+                run_id=job.run_id,
+                workflow_name=job.workflow_name,
+                job_name=job.job_name,
+                failure_date=job.completed_at or datetime.now(UTC),
+            )
+            target.failure_fingerprint = fingerprint
+            target.reused_analysis_id = dedup_match.id
+            target.problem_category = dedup_match.problem_category
+            target.root_cause_summary = dedup_match.root_cause_summary
+            target.improvement_measures_summary = dedup_match.improvement_measures_summary
+            target.report_file_path = dedup_match.report_file_path
+            target.llm_provider = dedup_match.llm_provider or llm_config.provider
+            target.llm_model = dedup_match.llm_model or llm_config.default_model
+            target.analysis_status = "reused"
+            target.triggered_by = triggered_by
+            if target not in db:
+                db.add(target)
+            await db.commit()
+            await db.refresh(target)
+            return target
+
+        system_prompt = await self._get_system_prompt(db)
+        user_prompt = await self._build_job_context(job, db)
+
+        # 如果之前有失败/卡住的记录，复用而不是插入新记录（避免 UNIQUE 冲突）
+        if existing:
+            analysis = existing
+            analysis.analysis_status = "analyzing"
+            analysis.error_message = None
+            analysis.failure_fingerprint = fingerprint
+            analysis.triggered_by = triggered_by
+        else:
+            analysis = JobFailureAnalysis(
                 job_id=job_id,
                 run_id=job.run_id,
                 workflow_name=job.workflow_name,
                 job_name=job.job_name,
                 failure_date=job.completed_at or datetime.now(UTC),
                 failure_fingerprint=fingerprint,
-                reused_analysis_id=dedup_match.id,
-                problem_category=dedup_match.problem_category,
-                root_cause_summary=dedup_match.root_cause_summary,
-                improvement_measures_summary=dedup_match.improvement_measures_summary,
-                report_file_path=dedup_match.report_file_path,
-                llm_provider=dedup_match.llm_provider or llm_config.provider,
-                llm_model=dedup_match.llm_model or llm_config.default_model,
-                analysis_status="reused",
+                triggered_by=triggered_by,
+                analysis_status="analyzing",
             )
-            db.add(reused)
-            await db.commit()
-            await db.refresh(reused)
-            return reused
-
-        system_prompt = await self._get_system_prompt(db)
-        user_prompt = await self._build_job_context(job, db)
-
-        analysis = JobFailureAnalysis(
-            job_id=job_id,
-            run_id=job.run_id,
-            workflow_name=job.workflow_name,
-            job_name=job.job_name,
-            failure_date=job.completed_at or datetime.now(UTC),
-            failure_fingerprint=fingerprint,
-            analysis_status="analyzing",
-        )
-        db.add(analysis)
+            db.add(analysis)
         await db.flush()
         await db.refresh(analysis)
 
@@ -156,7 +168,8 @@ class FailureAnalysisService:
                     "default_model": llm_config.default_model,
                 },
                 system_prompt=system_prompt,
-                max_turns=12,
+                max_turns=50,
+                output_format="json",
             )
             # 清洗 GLM-5.1 的 <think> 和 tool call 噪音
             raw = llm_result.content
@@ -164,7 +177,19 @@ class FailureAnalysisService:
             raw = re.sub(r'```bash\n.*?```', '', raw, flags=re.DOTALL)
             raw = re.sub(r'curl -sL.*?(?=\n\n|\Z)', '', raw, flags=re.DOTALL)
             raw = re.sub(r'LOGS=\$.*?(?=\n\n|\n#|\Z)', '', raw, flags=re.DOTALL)
+
+            # CLI 没有实际运行（turns=0 或输出太短）
+            if llm_result.turns == 0 and len(raw.strip()) < 50:
+                raise RuntimeError(
+                    f"Claude Code CLI did not run properly: turns={llm_result.turns}, "
+                    f"content_len={len(raw)}, stderr={llm_result.stderr[:200] if llm_result.stderr else 'none'}"
+                )
+
             parsed = self.parse_llm_response(raw)
+            if not parsed.get("problem_category"):
+                raise RuntimeError(
+                    f"Failed to parse analysis result from CLI output: {raw[:500]}"
+                )
             report_content = parsed.get("full_report", raw)
             report_content = parsed.get("full_report", llm_result.content)
             try:

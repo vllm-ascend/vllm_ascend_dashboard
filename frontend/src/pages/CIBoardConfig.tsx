@@ -56,6 +56,8 @@ interface Workflow {
   workflow_name: string
   workflow_file: string
   hardware: string
+  event?: string | null
+  actor?: string | null
   description?: string
   enabled: boolean
   display_order: number
@@ -271,6 +273,13 @@ function CIBoardConfig() {
         },
       })
     },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ci-runs'] })
+      queryClient.invalidateQueries({ queryKey: ['ci-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['ci-trends'] })
+      queryClient.invalidateQueries({ queryKey: ['ci-jobs'] })
+      queryClient.invalidateQueries({ queryKey: ['ci-job-detail'] })
+    },
     onError: (error: any) => {
       message.error(error.response?.data?.detail || '同步失败')
       setIsSyncing(false)
@@ -356,6 +365,15 @@ function CIBoardConfig() {
       width: 80,
       render: (hardware: string) => (
         <Tag color={hardware === 'A2' ? 'green' : 'purple'}>{hardware}</Tag>
+      ),
+    },
+    {
+      title: '事件',
+      dataIndex: 'event',
+      key: 'event',
+      width: 120,
+      render: (event: string | null) => (
+        event ? <Tag>{event}</Tag> : <Tag color="default">全部</Tag>
       ),
     },
     {
@@ -841,6 +859,20 @@ function CIBoardConfig() {
               <Option value="A3">A3</Option>
               <Option value="310P">310P</Option>
             </Select>
+          </Form.Item>
+
+          <Form.Item name="event" label="事件类型" initialValue="schedule">
+            <Select>
+              <Option value="">全部（不过滤）</Option>
+              <Option value="schedule">schedule（定时）</Option>
+              <Option value="push">push</Option>
+              <Option value="pull_request">pull_request</Option>
+              <Option value="workflow_dispatch">workflow_dispatch（手动）</Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item name="actor" label="触发人">
+            <Input placeholder="留空=不过滤" />
           </Form.Item>
 
           <Form.Item name="description" label="描述">

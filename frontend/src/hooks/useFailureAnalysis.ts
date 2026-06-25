@@ -18,6 +18,12 @@ export const useFailureAnalysis = (analysisId: number | null) => {
     queryKey: ['failure-analysis', analysisId],
     queryFn: () => analysisId ? faApi.getFailureAnalysis(analysisId) : Promise.resolve(null),
     enabled: !!analysisId,
+    refetchInterval: (query) => {
+      const data = query.state.data as { analysis_status?: string } | null
+      // 分析进行中时每 5 秒轮询一次，完成后停止
+      if (data?.analysis_status === 'analyzing') return 5000
+      return false
+    },
   })
 }
 
@@ -34,6 +40,11 @@ export const useJobFailureAnalysis = (jobId: number | null) => {
     queryKey: ['job-failure-analysis', jobId],
     queryFn: () => jobId ? faApi.getJobFailureAnalysis(jobId) : Promise.resolve(null),
     enabled: !!jobId,
+    refetchInterval: (query) => {
+      const data = query.state.data as { analysis_status?: string } | null
+      if (data?.analysis_status === 'analyzing') return 5000
+      return false
+    },
   })
 }
 

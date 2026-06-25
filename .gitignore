@@ -124,3 +124,9 @@ docs/screenshots/
 
 # Temporary notes
 \# GitHub *
+
+# Code review report (generated)
+CODE_REVIEW.md
+
+# LiteLLM runtime config (generated, contains API keys)
+deploy/config/litellm_runtime.yaml
