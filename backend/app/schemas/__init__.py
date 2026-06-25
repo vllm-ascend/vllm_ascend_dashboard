@@ -58,6 +58,12 @@ __all__ = [
     "PRPipelineSyncRequest", "PRPipelineHistoricalSyncRequest",
     # Stats
     "LoginStatsResponse", "FeatureUsageStatsResponse", "FeatureUsageTrendPoint",
+    # Test Board
+    "TestHealthScore", "TestCaseResponse", "TestRunResponse",
+    "TestSuiteResponse", "TestOverviewResponse",
+    "FlakyCaseDetail", "FailureCategoryBreakdown",
+    "OwnerMatrixItem", "ModuleHealthItem",
+    "TestBoardSyncRequest", "FailureAnnotationRequest",
     # Common
     "Message", "PaginatedResponse",
 ]
@@ -872,4 +878,18 @@ from .pr_pipeline import (
     PRPipelineTrendsResponse,
     PRPipelineSyncRequest,
     PRPipelineHistoricalSyncRequest,
+)
+
+from .test_board import (
+    TestHealthScore,
+    TestCaseResponse,
+    TestRunResponse,
+    TestSuiteResponse,
+    TestOverviewResponse,
+    FlakyCaseDetail,
+    FailureCategoryBreakdown,
+    OwnerMatrixItem,
+    ModuleHealthItem,
+    TestBoardSyncRequest,
+    FailureAnnotationRequest,
 )
