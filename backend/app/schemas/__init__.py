@@ -74,7 +74,9 @@ __all__ = [
 class UserBase(BaseModel):
     """用户基础 Schema"""
     username: str = Field(..., min_length=3, max_length=50, pattern=r'^[a-zA-Z0-9_-]+$')
-    email: str | None = Field(None, max_length=100)    @field_validator('email')
+    email: str | None = Field(None, max_length=100)
+
+    @field_validator('email')
     @classmethod
     def validate_email(cls, v: str | None) -> str | None:
         if v is not None and '@' not in v:
@@ -166,8 +168,8 @@ class RegisterRequest(BaseModel):
 
     @field_validator('email')
     @classmethod
-    def validate_email(cls, v: str) -> str:
-        if '@' not in v:
+    def validate_email(cls, v: str | None) -> str | None:
+        if v is not None and '@' not in v:
             raise ValueError('无效的邮箱格式')
         return v
 
