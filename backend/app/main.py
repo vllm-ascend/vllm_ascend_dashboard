@@ -69,6 +69,9 @@ async def init_db():
 
         # Claude Code CLI 预热检查 —— 后台执行，不阻塞启动
         asyncio.create_task(_warmup_claude_code_cli())
+
+        # 清理启动前遗留的僵尸分析记录（>1h 还在 analyzing 的标记为 failed）
+        await _cleanup_stale_analyses()
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}", exc_info=True)
         raise
@@ -130,6 +133,38 @@ async def _warmup_claude_code_cli():
             logger.warning("Claude Code CLI warmup failed — analysis will fallback to direct API")
     except Exception as e:
         logger.warning("Claude Code CLI warmup error (non-fatal): %s", e)
+
+
+async def _cleanup_stale_analyses():
+    """启动时清理超过 1 小时还在 analyzing 的僵尸分析记录"""
+    try:
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            from sqlalchemy import update
+
+            from app.models import JobFailureAnalysis
+
+            cutoff = datetime.now(UTC) - timedelta(hours=1)
+            result = await db.execute(
+                update(JobFailureAnalysis)
+                .where(
+                    JobFailureAnalysis.analysis_status == "analyzing",
+                    JobFailureAnalysis.created_at < cutoff,
+                )
+                .values(
+                    analysis_status="failed",
+                    error_message="分析超时，启动时自动标记为失败",
+                )
+            )
+            await db.commit()
+            if result.rowcount:
+                logger.warning("Cleaned %d stale analysis records", result.rowcount)
+    except Exception as e:
+        logger.warning("Failed to cleanup stale analyses (non-fatal): %s", e)
 
 
 async def _sync_litellm_providers():
@@ -268,7 +303,12 @@ def create_app() -> FastAPI:
     # 配置 CORS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=[
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -78,6 +78,8 @@ async def create_workflow(
         workflow_name=workflow_name,
         workflow_file=workflow_file,
         hardware=workflow_data.hardware,
+        event=workflow_data.event if workflow_data.event is not None else "schedule",
+        actor=workflow_data.actor,
         description=workflow_data.description,
         enabled=workflow_data.enabled,
         display_order=workflow_data.display_order,

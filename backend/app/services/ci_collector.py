@@ -66,11 +66,14 @@ class CICollector:
             stmt = select(WorkflowConfig).where(WorkflowConfig.enabled == True)
             result = await self.db.execute(stmt)
             workflow_configs = result.scalars().all()
-            workflow_files = [(config.workflow_file, config.hardware) for config in workflow_configs]
+            workflow_files = [
+                (config.workflow_file, config.hardware, getattr(config, 'event', 'schedule') or None, getattr(config, 'actor', None))
+                for config in workflow_configs
+            ]
             logger.info(f"Loaded {len(workflow_files)} enabled workflows from database")
         else:
-            # 兼容旧格式：转换为 (workflow_file, hardware) 元组列表
-            workflow_files = [(wf, "A2") for wf in workflow_files]
+            # 兼容旧格式：转换为 (workflow_file, hardware, event, actor) 元组列表
+            workflow_files = [(wf, "A2", "schedule", None) for wf in workflow_files]
 
         # 初始化进度跟踪器
         progress = get_sync_progress()
@@ -87,7 +90,10 @@ class CICollector:
 
         logger.info(f"Starting CI data collection since {since.isoformat()}, force_full_refresh={force_full_refresh}")
 
-        for workflow_file, hardware in workflow_files:
+        for wf_item in workflow_files:
+            workflow_file, hardware = wf_item[0], wf_item[1]
+            event_filter = wf_item[2] if len(wf_item) > 2 else "schedule"
+            actor_filter = wf_item[3] if len(wf_item) > 3 else None
             try:
                 # 更新当前正在处理的 workflow
                 progress.current_workflow = workflow_file
@@ -103,6 +109,8 @@ class CICollector:
                     max_runs=max_runs_per_workflow,
                     hardware=hardware,
                     force_full_refresh=force_full_refresh,
+                    event=event_filter,
+                    actor=actor_filter,
                 )
                 total_collected += collected
 
@@ -148,9 +156,11 @@ class CICollector:
         max_runs: int = 100,
         hardware: str = "A2",
         force_full_refresh: bool = False,
+        event: str | None = None,
+        actor: str | None = None,
     ) -> int:
         """
-        采集单个 workflow 的运行数据（只采集 event: schedule 触发的 runs）
+        采集单个 workflow 的运行数据
 
         Args:
             workflow_file: workflow 文件名
@@ -159,13 +169,14 @@ class CICollector:
             max_runs: 最多获取多少条记录
             hardware: 硬件类型
             force_full_refresh: 是否强制全量覆盖刷新（忽略已有记录）
+            event: 事件类型过滤（None=不过滤）
+            actor: 触发人过滤（None=不过滤）
 
         Returns:
             新增或更新的记录数
         """
         collected = 0
         updated_count = 0
-        skipped_count = 0
         page = 1
 
         # 获取该 workflow 已同步的最新 run_id（用于增量同步）
@@ -185,7 +196,7 @@ class CICollector:
 
                 runs = await self.github.get_workflow_runs(
                     workflow_id_or_name=workflow_file,
-                    event="schedule",  # 只获取定时任务触发的事件
+                    event=event or None,  # 使用配置的 event，空=不过滤
                     per_page=min(max_runs, 100),
                     page=page,
                     created=created_filter,  # 使用 created 参数过滤
@@ -194,23 +205,20 @@ class CICollector:
                 logger.error(f"Failed to fetch workflow runs for {workflow_file} (page {page}): {e}")
                 break
 
-            logger.info(f"Fetched {len(runs)} schedule-triggered runs for {workflow_file} (page {page})")
+            # actor 客户端过滤（GitHub API 不支持 actor 参数）
+            if actor and runs:
+                runs = [r for r in runs if (r.get("actor") or {}).get("login") == actor]
+
+            logger.info(f"Fetched {len(runs)} runs for {workflow_file} (page {page}, event={event or 'all'}, actor={actor or 'all'})")
 
             if not runs:
-                logger.info(f"No schedule-triggered runs found for {workflow_file}")
+                logger.info(f"No runs found for {workflow_file} (event={event or 'all'}, actor={actor or 'all'})")
                 break  # 没有更多数据
 
             # 处理每条记录
             for run in runs:
                 created_at = self._parse_datetime(run.get("created_at"))
                 run_id = run.get("id")
-                event = run.get("event", "unknown")
-
-                # 再次确认 event 类型（防御性检查）
-                if event != "schedule":
-                    logger.debug(f"Skipping run {run_id} with event: {event}")
-                    skipped_count += 1
-                    continue
 
                 # 检查时间范围
                 if created_at and created_at < since:
@@ -254,7 +262,7 @@ class CICollector:
 
         # 提交最后的数据
         await self.db.commit()
-        logger.info(f"Collection completed for {workflow_file}: {collected} new/updated, {updated_count} updated, {skipped_count} skipped")
+        logger.info(f"Collection completed for {workflow_file}: {collected} new/updated, {updated_count} updated")
         return collected
 
     async def _save_ci_result(

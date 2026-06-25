@@ -164,6 +164,8 @@ class WorkflowConfig(Base):
     workflow_name = Column(String(100), nullable=False, unique=True, index=True)  # 显示名称，如 "Nightly-A2"
     workflow_file = Column(String(100), nullable=False, unique=True)  # workflow 文件名，如 "schedule_nightly_test_a2.yaml"
     hardware = Column(String(20), nullable=False)  # 硬件类型：A2, A3, 310P 等
+    event = Column(String(50), default="schedule")  # 采集的事件类型：schedule/push/pull_request/workflow_dispatch，空=不过滤
+    actor = Column(String(100), nullable=True)  # 触发人过滤（GitHub actor login），空=不过滤
     description = Column(String(500))  # 描述信息
     enabled = Column(Boolean, default=True)  # 是否启用
     display_order = Column(Integer, default=0)  # 显示顺序
@@ -363,6 +365,7 @@ class JobFailureAnalysis(Base):
 
     analysis_status = Column(String(20), default="pending", index=True)
     error_message = Column(String(500))
+    triggered_by = Column(String(20), default="manual")  # "manual" | "scheduler"
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 

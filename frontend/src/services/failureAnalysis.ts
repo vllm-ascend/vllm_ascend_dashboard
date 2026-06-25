@@ -20,6 +20,7 @@ export interface FailureAnalysis {
   generation_time_seconds: number | null
   analysis_status: string
   error_message: string | null
+  triggered_by: string | null
   created_at: string | null
   updated_at: string | null
 }

@@ -470,6 +470,8 @@ class WorkflowConfigBase(BaseModel):
     workflow_name: str = Field(..., description="显示名称，如 'Nightly-A2'")
     workflow_file: str = Field(..., description="workflow 文件名，如 'schedule_nightly_test_a2.yaml'")
     hardware: str = Field(..., description="硬件类型：A2, A3, 310P 等")
+    event: str | None = "schedule"  # 采集的事件类型，空字符串=不过滤
+    actor: str | None = None  # 触发人过滤（GitHub actor login），空=不过滤
     description: str | None = None
     enabled: bool = True
     display_order: int = 0
@@ -486,6 +488,8 @@ class WorkflowConfigUpdate(BaseModel):
     workflow_name: str | None = None
     workflow_file: str | None = None
     hardware: str | None = None
+    event: str | None = None
+    actor: str | None = None
     description: str | None = None
     enabled: bool | None = None
     display_order: int | None = None
@@ -576,6 +580,7 @@ class FailureAnalysisResponse(BaseModel):
     generation_time_seconds: float | None = None
     analysis_status: str = "pending"
     error_message: str | None = None
+    triggered_by: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

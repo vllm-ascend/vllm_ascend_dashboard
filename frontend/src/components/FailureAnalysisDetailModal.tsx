@@ -37,7 +37,8 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
   )
   const analyzeMutation = useAnalyzeFailedJob()
 
-  const currentAnalysis = existingAnalysis || analysis
+  // analysis 优先（提交新分析后能反映最新状态），existingAnalysis 仅作初始值
+  const currentAnalysis = analysis || existingAnalysis
 
   useEffect(() => {
     if (existingAnalysis?.id) {
@@ -48,7 +49,7 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
   useEffect(() => {
     if (analyzeMutation.isSuccess && analyzeMutation.data) {
       setAnalysisId(analyzeMutation.data.id)
-      message.success('分析完成')
+      message.success('分析已提交，请等待完成...')
     }
   }, [analyzeMutation.isSuccess, analyzeMutation.data])
 
@@ -107,6 +108,11 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
           )}
           {categoryInfo && (
             <Tag color={categoryInfo.color}>{categoryInfo.label}</Tag>
+          )}
+          {currentAnalysis?.triggered_by && (
+            <Tag color={currentAnalysis.triggered_by === 'scheduler' ? 'blue' : 'orange'}>
+              {currentAnalysis.triggered_by === 'scheduler' ? '调度器' : '手动'}
+            </Tag>
           )}
         </Space>
       }
