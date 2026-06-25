@@ -56,7 +56,8 @@ async def login(request: Request, db: DbSession, data: LoginRequest):
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e))
 
-    user = await db.execute(select(User).where(User.username == data.username)).scalar_one_or_none()
+    result = await db.execute(select(User).where(User.username == data.username))
+    user = result.scalar_one_or_none()
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误", headers={"WWW-Authenticate": "Bearer"})
     if not user.is_active:
@@ -98,13 +99,16 @@ async def refresh_token(request: Request, db: DbSession):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新Token无效或已过期")
 
     jti = payload.get("jti")
-    if jti and await db.execute(select(TokenBlacklist).where(TokenBlacklist.token_jti == jti)).scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token已被撤销")
+    if jti:
+        blacklist_result = await db.execute(select(TokenBlacklist).where(TokenBlacklist.token_jti == jti))
+        if blacklist_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token已被撤销")
 
     username = payload.get("sub")
     if not username:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新Token无效")
-    user = await db.execute(select(User).where(User.username == username)).scalar_one_or_none()
+    user_result = await db.execute(select(User).where(User.username == username))
+    user = user_result.scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已被禁用")
 
