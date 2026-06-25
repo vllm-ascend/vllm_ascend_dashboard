@@ -66,6 +66,11 @@ const menuItems: MenuProps['items'] = [
     icon: <BellOutlined />,
     label: '告警规则',
   },
+  {
+    key: '/test-board',
+    icon: <DashboardOutlined />,
+    label: '测试看板',
+  },
 ]
 
 // 仅管理员可见的菜单项
@@ -173,6 +178,7 @@ function Layout() {
     { key: '/ci', icon: <CheckCircleOutlined />, label: 'CI 看板' },
     { key: '/models', icon: <ExperimentOutlined />, label: '模型看板' },
     { key: '/resources', icon: <CloudServerOutlined />, label: '资源看板' },
+    { key: '/test-board', icon: <DashboardOutlined />, label: '测试看板' },
     ...(hasAdminRole ? [
       { key: '/issue-diagnosis', icon: <SearchOutlined />, label: '问题定位' },
       { key: '/user-stats', icon: <BarChartOutlined />, label: '用户统计' },

@@ -44,6 +44,10 @@ async def register(request: Request, db: DbSession, data: RegisterRequest):
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="注册信息已被使用，请更换用户名或邮箱")
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Registration failed: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="注册失败，请稍后重试")
     logger.info(f"New user registered: {user.username} from IP {anonymize_ip(ip)}")
     return user
 
@@ -64,8 +68,12 @@ async def login(request: Request, db: DbSession, data: LoginRequest):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户账号已被禁用")
 
     ip = _client_ip(request)
-    db.add(UserLoginLog(user_id=user.id, ip_address=anonymize_ip(ip), ip_address_hashed=hash_ip(ip), user_agent=request.headers.get("User-Agent", "")[:500], login_method="password"))
-    await db.commit()
+    try:
+        db.add(UserLoginLog(user_id=user.id, ip_address=anonymize_ip(ip), ip_address_hashed=hash_ip(ip), user_agent=request.headers.get("User-Agent", "")[:500], login_method="password"))
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"Failed to log login event: {e}")
+        await db.rollback()
 
     return {"access_token": create_access_token(data={"sub": user.username, "user_id": user.id, "role": user.role}), "refresh_token": create_refresh_token(data={"sub": user.username, "user_id": user.id, "role": user.role}), "token_type": "bearer", "expires_in": 86400}
 
@@ -79,8 +87,12 @@ async def logout(request: Request, db: DbSession, current_user: User = Depends(g
             jti = payload.get("jti")
             exp = payload.get("exp")
             if jti:
-                db.add(TokenBlacklist(token_jti=jti, expires_at=datetime.fromtimestamp(exp, UTC) if exp else datetime.now(UTC) + timedelta(days=1)))
-                await db.commit()
+                try:
+                    db.add(TokenBlacklist(token_jti=jti, expires_at=datetime.fromtimestamp(exp, UTC) if exp else datetime.now(UTC) + timedelta(days=1)))
+                    await db.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to blacklist token on logout: {e}")
+                    await db.rollback()
     return {"message": "已成功登出"}
 
 
@@ -100,9 +112,12 @@ async def refresh_token(request: Request, db: DbSession):
 
     jti = payload.get("jti")
     if jti:
-        blacklist_result = await db.execute(select(TokenBlacklist).where(TokenBlacklist.token_jti == jti))
-        if blacklist_result.scalar_one_or_none():
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token已被撤销")
+        try:
+            blacklist_result = await db.execute(select(TokenBlacklist).where(TokenBlacklist.token_jti == jti))
+            if blacklist_result.scalar_one_or_none():
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token已被撤销")
+        except Exception as e:
+            logger.warning(f"Token blacklist check failed, skipping: {e}")
 
     username = payload.get("sub")
     if not username:

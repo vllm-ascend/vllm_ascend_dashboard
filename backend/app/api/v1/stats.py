@@ -1,7 +1,7 @@
 import logging
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from sqlalchemy import select, func, distinct, and_
 
 from app.api.deps import CurrentAdminUser, DbSession
@@ -41,7 +41,7 @@ async def get_login_stats(
         return LoginStatsResponse(total_users=total_users, active_users_today=active_today, active_users_7days=active_7d, active_users_30days=active_30d, login_trend=login_trend, top_users_by_login_count=top_users)
     except Exception as e:
         logger.error(f"Login stats error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        return LoginStatsResponse(total_users=0, active_users_today=0, active_users_7days=0, active_users_30days=0, login_trend=[], top_users_by_login_count=[])
 
 
 @router.get("/feature-usage", response_model=FeatureUsageStatsResponse, summary="功能使用统计")
@@ -72,4 +72,4 @@ async def get_feature_usage_stats(
         return FeatureUsageStatsResponse(total_requests=total_requests, feature_ranking=feature_ranking, user_activity_ranking=user_ranking, daily_trend=daily_trend)
     except Exception as e:
         logger.error(f"Feature usage stats error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        return FeatureUsageStatsResponse(total_requests=0, feature_ranking=[], user_activity_ranking=[], daily_trend=[])

@@ -30,6 +30,7 @@ __all__ = [
     "JobFailureAnalysis",
     "PullRequest",
     "UserLoginLog", "FeatureUsageLog", "TokenBlacklist",
+    "TestCase", "TestRun", "TestSuiteSnapshot", "FailureAnnotation",
 ]
 
 
@@ -452,6 +453,8 @@ class TokenBlacklist(Base):
 
 # 导入每日总结相关模型
 from .daily_summary import DailyPR, DailyIssue, DailyCommit, DailySummary, LLMProviderConfig
+
+from .test_board import TestCase, TestRun, TestSuiteSnapshot, FailureAnnotation
 
 
 class PullRequest(Base):

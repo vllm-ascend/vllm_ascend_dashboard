@@ -27,6 +27,7 @@ from app.api.v1 import (
     resource_metrics,
     stats,
     system_config,
+    test_board,
     users,
     workflows,
 )
@@ -336,6 +337,7 @@ def create_app() -> FastAPI:
     app.include_router(issue_diagnosis.router, prefix="/api/v1/issue-diagnosis", tags=["问题定位"])
     app.include_router(alert_rules.router, prefix="/api/v1", tags=["告警规则"])
     app.include_router(pr_pipeline.router, prefix="/api/v1/pr-pipeline", tags=["PR 流水线"])
+    app.include_router(test_board.router, prefix="/api/v1", tags=["测试看板"])
 
     @app.get("/health")
     async def health_check():
