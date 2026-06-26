@@ -1,0 +1,178 @@
+import csv
+import io
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import get_current_user
+from app.db.base import SessionLocal
+from app.models import User
+from app.schemas import Message
+from app.schemas.test_board import (
+    TestOverviewResponse, TestCaseResponse, TestRunResponse,
+    TestSuiteResponse, FlakyCaseDetail, FailureCategoryBreakdown,
+    OwnerMatrixItem, ModuleHealthItem, TestBoardSyncRequest,
+    FailureAnnotationRequest,
+)
+from app.services.test_board_service import TestBoardService
+from app.services.test_health_calculator import TestHealthCalculator
+from app.services.github_client import GitHubClient
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/test-board", tags=["Test Board"])
+
+
+async def get_db():
+    async with SessionLocal() as session:
+        yield session
+
+
+def get_github():
+    return GitHubClient(token=settings.GITHUB_TOKEN, owner=settings.GITHUB_OWNER, repo=settings.GITHUB_REPO) if settings.GITHUB_TOKEN else None
+
+
+@router.get("/overview", response_model=TestOverviewResponse)
+async def get_overview(days: int = Query(7, ge=1, le=90), db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    svc = TestBoardService(db)
+    data = await svc.get_overview(days=days)
+    return data
+
+
+@router.get("/suites")
+async def get_suites(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    svc = TestBoardService(db)
+    return await svc.get_suites()
+
+
+@router.get("/cases")
+async def get_cases(
+    test_type: str | None = None, suite_name: str | None = None, module_name: str | None = None,
+    hardware: str | None = None, result: str | None = None, health_level: str | None = None,
+    is_flaky: bool | None = None, owner: str | None = None,
+    sort: str = "health_score", order: str = "desc",
+    page: int = 1, per_page: int = 20,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    filters = {"test_type": test_type, "suite_name": suite_name, "module_name": module_name,
+               "hardware": hardware, "result": result, "health_level": health_level,
+               "is_flaky": is_flaky, "owner": owner, "sort": sort, "order": order}
+    filters = {k: v for k, v in filters.items() if v is not None}
+    svc = TestBoardService(db)
+    data = await svc.get_cases(filters=filters, page=page, per_page=per_page)
+    return data
+
+
+@router.get("/cases/{case_id}")
+async def get_case_detail(case_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    svc = TestBoardService(db)
+    data = await svc.get_case_detail(case_id)
+    if not data:
+        return {"error": "Case not found"}
+    return data
+
+
+@router.get("/runs")
+async def get_runs(
+    test_case_id: int | None = None, result: str | None = None,
+    days: int = 30, page: int = 1, per_page: int = 20,
+    format: str | None = None,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    from sqlalchemy import select, and_, desc, func
+    from app.models.test_board import TestRun
+    from datetime import timedelta
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    stmt = select(TestRun).where(TestRun.started_at >= cutoff)
+    if test_case_id:
+        stmt = stmt.where(TestRun.test_case_id == test_case_id)
+    if result:
+        stmt = stmt.where(TestRun.result == result)
+    stmt = stmt.order_by(desc(TestRun.started_at))
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+    stmt = stmt.offset((page - 1) * per_page).limit(per_page)
+    items = list((await db.execute(stmt)).scalars().all())
+    if format == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["id", "test_case_id", "result", "duration_seconds", "failure_category", "head_sha", "started_at"])
+        for item in items:
+            writer.writerow([item.id, item.test_case_id, item.result, item.duration_seconds, item.failure_category, item.head_sha, item.started_at])
+        return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=test_runs.csv"})
+    return {"total": total, "items": items, "page": page, "page_size": per_page}
+
+
+@router.get("/flaky")
+async def get_flaky(
+    min_flip_rate: float = 0.01, days: int = 30,
+    suite_name: str | None = None, module_name: str | None = None,
+    sort: str = "flip_rate", order: str = "desc",
+    page: int = 1, per_page: int = 20,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    filters = {"suite_name": suite_name, "module_name": module_name, "sort": sort, "order": order}
+    filters = {k: v for k, v in filters.items() if v is not None}
+    svc = TestBoardService(db)
+    return await svc.get_flaky_cases(min_flip_rate=min_flip_rate, days=days, filters=filters, page=page, per_page=per_page)
+
+
+@router.get("/failures")
+async def get_failures(days: int = 30, category: str | None = None, suite_name: str | None = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    svc = TestBoardService(db)
+    return await svc.get_failure_breakdown(days=days, category=category, suite_name=suite_name)
+
+
+@router.get("/duration")
+async def get_duration(days: int = 30, suite_name: str | None = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    svc = TestBoardService(db)
+    return await svc.get_duration_analysis(days=days, suite_name=suite_name)
+
+
+@router.get("/owners")
+async def get_owners(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    svc = TestBoardService(db)
+    return await svc.get_owner_matrix()
+
+
+@router.get("/modules")
+async def get_modules(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    svc = TestBoardService(db)
+    return await svc.get_module_health()
+
+
+@router.get("/trends")
+async def get_trends(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    from sqlalchemy import select
+    from app.models.test_board import TestSuiteSnapshot
+    from datetime import timedelta
+    stmt = select(TestSuiteSnapshot).where(TestSuiteSnapshot.snapshot_date >= (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%d")).order_by(TestSuiteSnapshot.snapshot_date)
+    snapshots = list((await db.execute(stmt)).scalars().all())
+    health_trend = [{"date": s.snapshot_date, "score": s.health_score, "level": s.health_level} for s in snapshots]
+    pass_rate_trend = [{"date": s.snapshot_date, "rate": s.pass_rate} for s in snapshots]
+    return {"health_trend": health_trend, "pass_rate_trend": pass_rate_trend}
+
+
+@router.post("/sync")
+async def trigger_sync(request: TestBoardSyncRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role not in ("admin", "super_admin"):
+        return {"error": "Admin access required"}
+    gh = get_github()
+    svc = TestBoardService(db, gh)
+    count = await svc.parse_ci_results(days_back=request.days_back, force=request.force)
+    return {"success": True, "message": f"Parsed {count} test results", "count": count}
+
+
+@router.post("/annotate")
+async def annotate_failure(request: FailureAnnotationRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    from app.models.test_board import FailureAnnotation
+    annotation = FailureAnnotation(
+        test_run_id=request.test_run_id, annotated_category=request.annotated_category,
+        annotated_by=request.annotated_by, annotation_source="manual",
+    )
+    db.add(annotation)
+    await db.commit()
+    return {"success": True, "message": "Annotation saved"}

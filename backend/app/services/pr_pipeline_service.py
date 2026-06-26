@@ -63,8 +63,13 @@ class PRPipelineService:
         recent_opened = await self._count_since(db, owner, repo, "open", since)
         recent_merged = await self._count_since(db, owner, repo, "merged", since)
 
-        backlog_index = round(open_count / max(recent_merged + recent_opened, 1), 1)
-        backlog_level = "green" if backlog_index < 5 else ("yellow" if backlog_index < 15 else "red")
+        open_non_draft = open_count - draft_count
+        daily_merge_avg = recent_merged / days if days > 0 else 0.0
+        if daily_merge_avg > 0:
+            backlog_index = round(open_non_draft / daily_merge_avg, 1)
+        else:
+            backlog_index = round(float(open_non_draft), 1) if open_non_draft > 0 else 0.0
+        backlog_level = "green" if backlog_index < 1.5 else ("yellow" if backlog_index < 3 else "red")
         merge_rate = round(merged_count / max(merged_count + closed_count, 1), 2)
 
         avg_first_review = await self._avg_hours(db, owner, repo, "first_review_at", "created_at", days)
@@ -231,11 +236,16 @@ class PRPipelineService:
         merged_count = await self._count_by_state(db, owner, repo, "merged")
         closed_count = await self._count_by_state(db, owner, repo, "closed")
         open_count = await self._count_by_state(db, owner, repo, "open")
+        draft_count = await self._count_by_state(db, owner, repo, "open", is_draft=True)
 
         merge_rate = round(merged_count / max(merged_count + closed_count, 1), 2)
         recent_merged = await self._count_since(db, owner, repo, "merged", since)
-        recent_opened = await self._count_since(db, owner, repo, "open", since)
-        backlog_index = round(open_count / max(recent_merged + recent_opened, 1), 1)
+        open_non_draft = open_count - draft_count
+        daily_merge_avg = recent_merged / days if days > 0 else 0.0
+        if daily_merge_avg > 0:
+            backlog_index = round(open_non_draft / daily_merge_avg, 1)
+        else:
+            backlog_index = round(float(open_non_draft), 1) if open_non_draft > 0 else 0.0
 
         survival = await self._survival_distribution(db, owner, repo, days)
 

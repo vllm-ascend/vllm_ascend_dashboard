@@ -122,6 +122,9 @@ docs/screenshots/
 # Mock / testing only
 *mock*
 
+# Worktrees
+.worktrees/
+
 # Temporary notes
 \# GitHub *
 

@@ -117,8 +117,8 @@ const formatHours = (hours: number | null) => {
 }
 
 const getBacklogColor = (index: number) => {
-  if (index < 15) return '#52c41a'
-  if (index <= 25) return '#faad14'
+  if (index < 1.5) return '#52c41a'
+  if (index < 3) return '#faad14'
   return '#ff4d4f'
 }
 
@@ -170,10 +170,10 @@ const OverviewTab = ({ period }: { period: number }) => {
           <Card>
             <Statistic
               title="合并率"
-              value={data.merge_rate}
+              value={data.merge_rate * 100}
               suffix="%"
               precision={1}
-              valueStyle={{ color: data.merge_rate >= 60 ? '#52c41a' : '#faad14' }}
+              valueStyle={{ color: data.merge_rate >= 0.6 ? '#52c41a' : '#faad14' }}
             />
           </Card>
         </Col>
@@ -555,10 +555,10 @@ const MetricsTab = ({ period }: { period: number }) => {
           <Card>
             <Statistic
               title="合并率"
-              value={data.merge_rate}
+              value={data.merge_rate * 100}
               suffix="%"
               precision={1}
-              valueStyle={{ color: data.merge_rate >= 60 ? '#52c41a' : '#faad14' }}
+              valueStyle={{ color: data.merge_rate >= 0.6 ? '#52c41a' : '#faad14' }}
             />
           </Card>
         </Col>

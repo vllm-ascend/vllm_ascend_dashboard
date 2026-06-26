@@ -1,0 +1,144 @@
+.stripe-test-board-page {
+  padding: var(--space-24);
+  background-color: #ffffff;
+  min-height: 100vh;
+}
+
+.stripe-test-board-page .stripe-page-header {
+  margin-bottom: var(--space-32);
+  padding-bottom: var(--space-24);
+  border-bottom: 1px solid var(--border-default);
+  text-align: left;
+}
+
+.stripe-test-board-page .stripe-page-title {
+  font-family: var(--font-primary);
+  font-size: var(--text-section-heading);
+  font-weight: var(--weight-light);
+  color: var(--deep-navy);
+  margin-bottom: var(--space-8) !important;
+  font-feature-settings: "ss01" on;
+  letter-spacing: var(--tracking-section);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  justify-content: flex-start;
+}
+
+.stripe-test-board-page .stripe-page-icon {
+  color: var(--stripe-purple);
+  font-size: 28px;
+}
+
+.stripe-test-board-page .stripe-page-description {
+  font-family: var(--font-primary);
+  font-size: var(--text-body);
+  color: var(--color-body);
+  font-feature-settings: "ss01" on;
+}
+
+.stripe-test-board-page .ant-tabs {
+  font-family: var(--font-primary);
+  font-feature-settings: "ss01" on;
+}
+
+.stripe-test-board-page .ant-tabs-tab {
+  font-family: var(--font-primary);
+  font-weight: var(--weight-regular);
+  font-size: var(--text-body);
+  color: var(--deep-navy);
+}
+
+.stripe-test-board-page .ant-tabs-tab-active {
+  color: var(--stripe-purple);
+}
+
+.stripe-test-board-page .ant-tabs-ink-bar {
+  background-color: var(--stripe-purple);
+}
+
+.stripe-test-board-page .ant-card {
+  background: #ffffff;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-comfortable);
+  box-shadow:
+    rgba(50, 50, 93, 0.25) 0px 30px 45px -30px,
+    rgba(0, 0, 0, 0.1) 0px 18px 36px -18px;
+  margin-bottom: var(--space-24);
+}
+
+.stripe-test-board-page .ant-card:hover {
+  box-shadow:
+    rgba(50, 50, 93, 0.25) 0px 35px 50px -25px,
+    rgba(0, 0, 0, 0.1) 0px 20px 40px -15px;
+}
+
+.stripe-test-board-page .ant-card-head {
+  font-family: var(--font-primary);
+  font-weight: var(--weight-regular);
+  color: var(--deep-navy);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.stripe-test-board-page .ant-card-head-title {
+  font-family: var(--font-primary);
+  font-weight: var(--weight-regular);
+  font-size: var(--text-sub-heading);
+  letter-spacing: var(--tracking-sub);
+}
+
+.stripe-test-board-page .ant-table {
+  font-family: var(--font-primary);
+  font-feature-settings: "ss01" on;
+}
+
+.stripe-test-board-page .ant-table-thead > tr > th {
+  background-color: #fafafa;
+  font-family: var(--font-primary);
+  font-weight: var(--weight-regular);
+  color: var(--deep-navy);
+  font-feature-settings: "ss01" on;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.stripe-test-board-page .ant-table-tbody > tr > td {
+  font-family: var(--font-primary);
+  font-weight: var(--weight-regular);
+  color: var(--deep-navy);
+  font-feature-settings: "ss01" on;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.stripe-test-board-page .ant-table-tbody > tr:hover {
+  background-color: rgba(83, 58, 253, 0.02);
+}
+
+.stripe-test-board-page .ant-statistic {
+  font-family: var(--font-primary);
+  font-feature-settings: "tnum" on;
+}
+
+.stripe-test-board-page .ant-statistic-title {
+  font-family: var(--font-primary);
+  font-weight: var(--weight-regular);
+  font-size: var(--text-caption);
+  color: var(--color-body);
+}
+
+.stripe-test-board-page .ant-statistic-content {
+  font-family: var(--font-primary);
+  font-weight: var(--weight-regular);
+  color: var(--deep-navy);
+}
+
+@media (max-width: 768px) {
+  .stripe-test-board-page {
+    padding: var(--space-16);
+  }
+
+  .stripe-test-board-page .stripe-page-title {
+    font-size: var(--text-section-heading);
+    flex-direction: column;
+    text-align: center;
+  }
+}

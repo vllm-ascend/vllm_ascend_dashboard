@@ -4,7 +4,7 @@
 """
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -264,6 +264,68 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add PR pipeline sync job: {e}", exc_info=True)
 
+        try:
+            self.scheduler.add_job(
+                self._cleanup_logs_job,
+                trigger=IntervalTrigger(hours=6),
+                id="cleanup_logs",
+                name="Cleanup Expired Logs and Tokens",
+                replace_existing=True,
+            )
+            logger.info("Log cleanup scheduled every 6 hours")
+        except Exception as e:
+            logger.error(f"Failed to add log cleanup job: {e}", exc_info=True)
+
+        test_board_interval = getattr(settings, 'TEST_BOARD_SYNC_INTERVAL_MINUTES', 120)
+        try:
+            self.scheduler.add_job(
+                self._parse_test_results_job,
+                trigger=IntervalTrigger(minutes=test_board_interval),
+                id="test_result_parse",
+                name="Test Board Result Parse",
+                replace_existing=True,
+            )
+            logger.info(f"Test board result parse scheduled every {test_board_interval} minutes")
+        except Exception as e:
+            logger.error(f"Failed to add test board result parse job: {e}", exc_info=True)
+
+        try:
+            self.scheduler.add_job(
+                self._calc_test_health_job,
+                trigger=IntervalTrigger(minutes=test_board_interval + 30),
+                id="test_health_calc",
+                name="Test Board Health Calc",
+                replace_existing=True,
+            )
+            logger.info(f"Test board health calc scheduled every {test_board_interval + 30} minutes")
+        except Exception as e:
+            logger.error(f"Failed to add test health calc job: {e}", exc_info=True)
+
+        try:
+            self.scheduler.add_job(
+                self._snapshot_test_suites_job,
+                trigger=IntervalTrigger(hours=6),
+                id="test_suite_snapshot",
+                name="Test Board Suite Snapshot",
+                replace_existing=True,
+            )
+            logger.info("Test board suite snapshot scheduled every 6 hours")
+        except Exception as e:
+            logger.error(f"Failed to add test suite snapshot job: {e}", exc_info=True)
+
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+            self.scheduler.add_job(
+                self._cleanup_test_runs_job,
+                trigger=CronTrigger(hour=2, minute=0, timezone=timezone_str),
+                id="cleanup_test_runs",
+                name="Test Board Run Cleanup",
+                replace_existing=True,
+            )
+            logger.info(f"Test board run cleanup scheduled at 02:00 {timezone_str}")
+        except Exception as e:
+            logger.error(f"Failed to add test board cleanup job: {e}", exc_info=True)
+
     def stop(self) -> None:
         """停止调度器"""
         if self.scheduler.running:
@@ -379,6 +441,23 @@ class DataSyncScheduler:
             except Exception as e:
                 logger.error(f"PR PIPELINE SYNC JOB FAILED - Error: {e}", exc_info=True)
                 raise
+
+    async def _cleanup_logs_job(self) -> None:
+        logger.info("LOG CLEANUP JOB STARTED")
+        retention_days = getattr(settings, 'DATA_RETENTION_DAYS', 365)
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        async with SessionLocal() as db:
+            try:
+                from sqlalchemy import delete as sa_delete
+                from app.models import UserLoginLog, FeatureUsageLog, TokenBlacklist
+                lr = await db.execute(sa_delete(UserLoginLog).where(UserLoginLog.login_time < cutoff))
+                ur = await db.execute(sa_delete(FeatureUsageLog).where(FeatureUsageLog.access_time < cutoff))
+                tr = await db.execute(sa_delete(TokenBlacklist).where(TokenBlacklist.expires_at < datetime.now(UTC)))
+                await db.commit()
+                logger.info(f"LOG CLEANUP: login={lr.rowcount}, usage={ur.rowcount}, tokens={tr.rowcount}")
+            except Exception as e:
+                logger.error(f"LOG CLEANUP FAILED: {e}", exc_info=True)
+                await db.rollback()
 
     def _update_project_dashboard_cache_job(self) -> None:
         """Project Dashboard Git 仓库缓存更新任务"""
@@ -699,6 +778,52 @@ class DataSyncScheduler:
             logger.error("=" * 60)
             logger.error(f"RESOURCE METRICS CLEANUP JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
+
+    async def _parse_test_results_job(self) -> None:
+        logger.info("TEST BOARD RESULT PARSE JOB STARTED")
+        if not self.github_client:
+            self._initialize_github_client()
+        async with SessionLocal() as db:
+            try:
+                from app.services.test_board_service import TestBoardService
+                svc = TestBoardService(db, self.github_client)
+                count = await svc.parse_ci_results(days_back=7)
+                logger.info(f"TEST BOARD RESULT PARSE JOB COMPLETED - {count} results parsed")
+            except Exception as e:
+                logger.error(f"TEST BOARD RESULT PARSE JOB FAILED: {e}", exc_info=True)
+
+    async def _calc_test_health_job(self) -> None:
+        logger.info("TEST BOARD HEALTH CALC JOB STARTED")
+        async with SessionLocal() as db:
+            try:
+                from app.services.test_health_calculator import TestHealthCalculator
+                calc = TestHealthCalculator(db)
+                count = await calc.calculate_all_health_scores()
+                logger.info(f"TEST BOARD HEALTH CALC JOB COMPLETED - {count} cases updated")
+            except Exception as e:
+                logger.error(f"TEST BOARD HEALTH CALC JOB FAILED: {e}", exc_info=True)
+
+    async def _snapshot_test_suites_job(self) -> None:
+        logger.info("TEST BOARD SUITE SNAPSHOT JOB STARTED")
+        async with SessionLocal() as db:
+            try:
+                from app.services.test_health_calculator import TestHealthCalculator
+                calc = TestHealthCalculator(db)
+                count = await calc.calculate_suite_snapshot()
+                logger.info(f"TEST BOARD SUITE SNAPSHOT JOB COMPLETED - {count} snapshots")
+            except Exception as e:
+                logger.error(f"TEST BOARD SUITE SNAPSHOT JOB FAILED: {e}", exc_info=True)
+
+    async def _cleanup_test_runs_job(self) -> None:
+        logger.info("TEST BOARD RUN CLEANUP JOB STARTED")
+        async with SessionLocal() as db:
+            try:
+                from app.services.test_health_calculator import TestHealthCalculator
+                calc = TestHealthCalculator(db)
+                deleted = await calc.cleanup_old_test_runs()
+                logger.info(f"TEST BOARD RUN CLEANUP JOB COMPLETED - {deleted} records deleted")
+            except Exception as e:
+                logger.error(f"TEST BOARD RUN CLEANUP JOB FAILED: {e}", exc_info=True)
 
     def update_daily_summary_schedule(self, enabled: bool, cron_hour: int, cron_minute: int, timezone: str = 'Asia/Shanghai'):
         """

@@ -128,6 +128,16 @@ function Login() {
                 {loading ? '登录中...' : '登录'}
               </Button>
             </Form.Item>
+
+            <div style={{ textAlign: 'center', marginTop: 16 }}>
+              <Button
+                type="link"
+                onClick={() => navigate('/register')}
+                style={{ color: 'var(--stripe-purple)' }}
+              >
+                还没有账号？点击注册
+              </Button>
+            </div>
           </Form>
         </Card>
       </div>
