@@ -112,7 +112,9 @@ class PRPipelineCollector:
 
         review_status = self.calculate_review_status(reviews)
         ci_status, ci_workflow_run_id, ci_started_at, ci_completed_at = await self._get_ci_status_for_sha(
-            pr.get("head_sha") or (pr.get("head", {}) or {}).get("sha")
+            pr.get("head_sha") or (pr.get("head", {}) or {}).get("sha"),
+            owner,
+            repo,
         )
         pipeline_stage = self.calculate_pipeline_stage(
             pr=pr, ci_status=ci_status, review_status=review_status
@@ -337,6 +339,8 @@ class PRPipelineCollector:
     async def _get_ci_status_for_sha(
         self,
         head_sha: str | None,
+        owner: str | None = None,
+        repo: str | None = None,
     ) -> tuple[str | None, int | None, datetime | None, datetime | None]:
         if not head_sha:
             return (None, None, None, None)
@@ -344,7 +348,6 @@ class PRPipelineCollector:
         stmt = (
             select(CIResult)
             .where(
-                CIResult.event == "pull_request",
                 CIResult.head_sha == head_sha,
             )
             .order_by(CIResult.created_at.desc())
@@ -353,33 +356,99 @@ class PRPipelineCollector:
         result = await self.db.execute(stmt)
         ci_result = result.scalar_one_or_none()
 
-        if not ci_result:
+        if ci_result:
+            ci_status = None
+            if ci_result.status == "completed":
+                conclusion = ci_result.conclusion
+                if conclusion == "success":
+                    ci_status = "success"
+                elif conclusion == "failure":
+                    ci_status = "failure"
+                elif conclusion == "cancelled":
+                    ci_status = "cancelled"
+                else:
+                    ci_status = conclusion
+            elif ci_result.status == "in_progress":
+                ci_status = "in_progress"
+            elif ci_result.status == "queued":
+                ci_status = "queued"
+            else:
+                ci_status = ci_result.status
+
+            return (
+                ci_status,
+                ci_result.run_id,
+                ci_result.started_at,
+                ci_result.completed_at,
+            )
+
+        if owner and repo:
+            try:
+                ci_status, run_id, started_at, completed_at = await self._get_ci_status_from_github(
+                    owner, repo, head_sha
+                )
+                if ci_status:
+                    return (ci_status, run_id, started_at, completed_at)
+            except GitHubRateLimitError:
+                raise
+            except Exception as e:
+                logger.warning(f"Failed to fetch check runs from GitHub API for SHA {head_sha[:8]}: {e}")
+
+        return (None, None, None, None)
+
+    async def _get_ci_status_from_github(
+        self,
+        owner: str,
+        repo: str,
+        head_sha: str,
+    ) -> tuple[str | None, int | None, datetime | None, datetime | None]:
+        """Fetch CI status from GitHub check runs API as a fallback when DB has no record."""
+        check_runs = await self.github.get_check_runs_for_sha(owner, repo, head_sha)
+        if not check_runs:
             return (None, None, None, None)
 
-        ci_status = None
-        if ci_result.status == "completed":
-            conclusion = ci_result.conclusion
-            if conclusion == "success":
-                ci_status = "success"
-            elif conclusion == "failure":
-                ci_status = "failure"
-            elif conclusion == "cancelled":
-                ci_status = "cancelled"
-            else:
-                ci_status = conclusion
-        elif ci_result.status == "in_progress":
-            ci_status = "in_progress"
-        elif ci_result.status == "queued":
-            ci_status = "queued"
-        else:
-            ci_status = ci_result.status
+        has_in_progress = False
+        has_queued = False
+        has_failure = False
+        has_success = False
+        started_at: datetime | None = None
+        completed_at: datetime | None = None
+        run_id: int | None = None
 
-        return (
-            ci_status,
-            ci_result.run_id,
-            ci_result.started_at,
-            ci_result.completed_at,
-        )
+        for run in check_runs:
+            status = run.get("status", "")
+            conclusion = run.get("conclusion")
+            run_started = self._parse_datetime(run.get("started_at"))
+            run_completed = self._parse_datetime(run.get("completed_at"))
+
+            if run_started and (started_at is None or run_started < started_at):
+                started_at = run_started
+            if run_completed and (completed_at is None or run_completed > completed_at):
+                completed_at = run_completed
+
+            if run_id is None:
+                run_id = run.get("run_id")
+
+            if status == "in_progress":
+                has_in_progress = True
+            elif status == "queued":
+                has_queued = True
+            elif status == "completed":
+                if conclusion == "failure":
+                    has_failure = True
+                elif conclusion == "success":
+                    has_success = True
+
+        if has_in_progress or has_queued:
+            ci_status = "in_progress"
+        elif has_failure:
+            ci_status = "failure"
+        elif has_success:
+            ci_status = "success"
+        else:
+            ci_status = None
+
+        return (ci_status, run_id, started_at, completed_at)
 
     def _parse_datetime(self, dt_string: str | None) -> datetime | None:
         if not dt_string:

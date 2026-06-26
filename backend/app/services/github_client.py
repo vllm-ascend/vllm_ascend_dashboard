@@ -849,6 +849,29 @@ class GitHubClient:
         logger.info(f"Total {len(all_files)} files fetched for PR #{pr_number}")
         return all_files
 
+    async def get_check_runs_for_sha(
+        self,
+        owner: str,
+        repo: str,
+        sha: str,
+    ) -> list[dict[str, Any]]:
+        """
+        获取指定 commit SHA 的 check runs（CI 状态）
+
+        Args:
+            owner: GitHub 组织名
+            repo: 仓库名
+            sha: commit SHA
+
+        Returns:
+            check runs 列表
+        """
+        url = f"/repos/{owner}/{repo}/commits/{sha}/check-runs"
+        params = {"per_page": 100}
+        logger.info(f"Fetching check runs for SHA {sha[:8]}")
+        result = await self._request("GET", url, params=params)
+        return result.get("check_runs", [])
+
     async def get_issue(
         self,
         owner: str,
