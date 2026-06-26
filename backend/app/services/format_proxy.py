@@ -13,7 +13,6 @@ import json
 import logging
 import time
 from typing import Optional
-from urllib.parse import urljoin
 
 import aiohttp
 from aiohttp import web
@@ -141,7 +140,7 @@ class FormatProxy:
 
     async def _forward_non_stream(self, openai_body: dict) -> web.Response:
         """非流式转发"""
-        url = urljoin(self.upstream_base_url + "/", "v1/chat/completions")
+        url = self._chat_completions_url()
         headers = self._upstream_headers()
 
         try:
@@ -163,7 +162,7 @@ class FormatProxy:
 
     async def _forward_stream(self, openai_body: dict, request: web.Request) -> web.StreamResponse:
         """流式转发 + SSE 格式翻译"""
-        url = urljoin(self.upstream_base_url + "/", "v1/chat/completions")
+        url = self._chat_completions_url()
         headers = self._upstream_headers()
 
         # 准备 stream response (Anthropic SSE 格式)
@@ -561,6 +560,19 @@ class FormatProxy:
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
         }
+
+    def _chat_completions_url(self) -> str:
+        """构造上游 chat/completions URL。
+
+        兼容 upstream_base_url 是否已含 /v1：
+          - 含 /v1（如 DashScope compatible-mode .../v1）→ 只追加 /chat/completions
+          - 不含 /v1（如 https://api.openai.com）→ 追加 /v1/chat/completions
+        避免 /v1/v1/chat/completions 双重路径导致上游 400。
+        """
+        base = self.upstream_base_url.rstrip("/")
+        if base.endswith("/v1"):
+            return f"{base}/chat/completions"
+        return f"{base}/v1/chat/completions"
 
     @staticmethod
     def _build_anthropic_sse(event: str, data: dict) -> str:

@@ -185,6 +185,13 @@ class FailureAnalysisService:
                     f"content_len={len(raw)}, stderr={llm_result.stderr[:200] if llm_result.stderr else 'none'}"
                 )
 
+            # 检测 LLM/API 层错误：CLI 会把上游 API 错误（如 400 Invalid model name）
+            # 作为 content 返回，此类输出不是有效分析结果，应标记为 failed
+            # 而非被 parse_llm_response 兜底为 completed/其他
+            api_err = self._detect_api_error(raw)
+            if api_err:
+                raise RuntimeError(f"LLM API error: {api_err}")
+
             parsed = self.parse_llm_response(raw)
             if not parsed.get("problem_category"):
                 raise RuntimeError(
@@ -521,6 +528,34 @@ class FailureAnalysisService:
             fingerprint_data = json.dumps({"failed_steps": failed_steps}, sort_keys=True)
 
         return hashlib.md5(fingerprint_data.encode()).hexdigest()
+
+    @staticmethod
+    def _detect_api_error(raw: str) -> str | None:
+        """检测 CLI 输出是否实为上游 LLM/API 错误（而非分析结果）。
+
+        Claude Code CLI 在上游返回错误时，会把错误信息作为 content 返回
+        （如 "API Error: 400 /chat/completions: Invalid model name ..."）。
+        此类内容会被 parse_llm_response 兜底为 problem_category="其他"，
+        从而把失败误标为 completed。这里提前识别并返回错误描述，
+        由上层 except 标记 analysis_status="failed" 并写入 error_message。
+        """
+        text = raw.strip()
+        if not text:
+            return None
+        low = text.lower()
+        signatures = (
+            "api error",
+            "invalid model name",
+            "model not found",
+            "model is not supported",
+            "call `/v1/models`",
+        )
+        # 仅当内容较短（疑似纯错误消息）时判定，避免误伤含 error 字样的正常分析
+        if len(text) < 400:
+            for sig in signatures:
+                if sig in low:
+                    return text[:300]
+        return None
 
     @staticmethod
     def parse_llm_response(raw: str) -> dict:
