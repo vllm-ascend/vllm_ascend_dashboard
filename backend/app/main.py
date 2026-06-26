@@ -32,6 +32,7 @@ from app.api.v1 import (
     workflows,
 )
 from app.core.config import settings
+from app.core.logging import setup_db_logging
 from app.db.base import engine
 from app.middleware.usage_tracking import UsageTrackingMiddleware
 from app.models import Base
@@ -255,6 +256,9 @@ async def _init_llm_provider_configs():
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     logger.info("Starting vLLM Ascend Dashboard application...")
+
+    # 安装 DB 日志处理器，将应用日志持久化到数据库
+    setup_db_logging()
 
     # 启动时初始化数据库
     await init_db()
