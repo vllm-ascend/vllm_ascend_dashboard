@@ -3,7 +3,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, func, and_, desc, delete
+from sqlalchemy import select, and_, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.test_board import TestCase, TestRun, TestSuiteSnapshot
@@ -30,7 +30,7 @@ class TestHealthCalculator:
                 runs = await self._get_recent_runs(case.id, days=30)
                 if not runs:
                     continue
-                scores = self._calculate_case_scores(case, runs)
+                scores = await self._calculate_case_scores(case, runs)
                 case.health_score = scores["overall"] * 100
                 case.health_level = self._score_to_level(scores["overall"] * 100)
                 case.pass_rate_7d = scores["pass_rate"]
@@ -53,11 +53,11 @@ class TestHealthCalculator:
         await self.db.commit()
         return count
 
-    def _calculate_case_scores(self, case: TestCase, runs: list[TestRun]) -> dict[str, float]:
+    async def _calculate_case_scores(self, case: TestCase, runs: list[TestRun]) -> dict[str, float]:
         pass_rate = self._calc_pass_rate(runs)
         stability = 1.0 - self._calc_flip_rate_by_sha(runs)
         reliability = self._calc_reliability(runs)
-        timeliness = self._calc_timeliness_dynamic(runs, case)
+        timeliness = await self._calc_timeliness_dynamic(runs, case)
         overall = (
             pass_rate * CASE_WEIGHTS["pass_rate"]
             + stability * CASE_WEIGHTS["stability"]
@@ -244,15 +244,20 @@ class TestHealthCalculator:
         return min(1.0, baseline / p90) if p90 > 0 else 1.0
 
     async def _get_suite_baseline(self, case: TestCase) -> float:
-        stmt = select(func.percentile_cont(0.5).within_group(TestSuiteSnapshot.avg_duration_seconds)).where(
+        stmt = select(TestSuiteSnapshot.avg_duration_seconds).where(
             and_(
                 TestSuiteSnapshot.suite_name == case.test_suite,
                 TestSuiteSnapshot.hardware == (case.hardware or "unknown"),
             )
         ).order_by(desc(TestSuiteSnapshot.snapshot_date)).limit(30)
         result = await self.db.execute(stmt)
-        p50 = result.scalar_one_or_none()
-        if p50 is not None and p50 > 0:
+        durations = [r[0] for r in result.all() if r[0] is not None]
+        if not durations:
+            return case.avg_duration_seconds or 600.0
+        sorted_d = sorted(durations)
+        mid = len(sorted_d) // 2
+        p50 = sorted_d[mid] if len(sorted_d) % 2 == 1 else (sorted_d[mid - 1] + sorted_d[mid]) / 2
+        if p50 > 0:
             return float(p50)
         return case.avg_duration_seconds or 600.0
 
