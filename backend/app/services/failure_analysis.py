@@ -267,7 +267,16 @@ class FailureAnalysisService:
     async def _build_job_context(self, job: CIJob, db: AsyncSession, max_turns: int = 80, timeout_seconds: int = 1800) -> str:
         timeout_min = timeout_seconds // 60
         lines = []
-        lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败")
+        lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败。")
+        lines.append("")
+        lines.append("以下数据已预加载，请直接基于这些数据分析，无需 curl 拉取：")
+        lines.append(f"- Annotations（下方）")
+        lines.append(f"- Steps summary（下方）")
+        lines.append(f"- 历史运行对比（下方）")
+        lines.append(f"- Commit diff（下方）")
+        lines.append(f"- **CI Job 原始日志**（下方，已截取关键部分）")
+        lines.append("")
+        lines.append(f"如需更多数据（多节点日志、artifacts 等），GITHUB_TOKEN 已在环境变量中，可 curl 拉取后再分析。")
         lines.append("")
         lines.append(f"## CI Job 失败信息\n")
         lines.append(f"- **Workflow**: {job.workflow_name}")
@@ -286,11 +295,12 @@ class FailureAnalysisService:
         lines.append(f"- **Duration**: {job.duration_seconds or 'unknown'}s")
         lines.append(f"- **Started At**: {job.started_at or 'unknown'}")
         lines.append(f"- **Completed At**: {job.completed_at or 'unknown'}")
-        # 构造日志 API URL（不从 DB 字段读，避免旧数据为空）
-        logs_url = job.logs_url or f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/jobs/{job.job_id}/logs"
-        lines.append(f"- **Logs URL**: {logs_url}")
-        lines.append("- 请使用 curl 拉取上述日志，自行决定需要分析哪些内容来定位根因")
-        lines.append(f"- GITHUB_TOKEN 已在环境变量中，可直接使用: curl -sL -H \"Authorization: Bearer \$GITHUB_TOKEN\" \"<日志URL>\"")
+
+        # 获取关联的 CIResult（含 branch 和 head_sha）
+        ci_result = await self._get_ci_result(db, job.run_id)
+        if ci_result:
+            lines.append(f"- **Branch**: {ci_result.branch or 'unknown'}")
+            lines.append(f"- **Head Commit SHA**: `{ci_result.head_sha}`" if ci_result.head_sha else "")
 
         try:
             steps = json.loads(job.steps_data) if job.steps_data else []
@@ -352,11 +362,45 @@ class FailureAnalysisService:
         if commit_diff:
             lines.append(commit_diff)
 
+        # 确保本地 Git 仓库已 clone
+        from app.services.github_cache import ensure_repo_cloned
+        ensure_repo_cloned()
+        repo_path = "/app/data/repos/vllm-ascend"
+        ref_value = ci_result.head_sha if ci_result and ci_result.head_sha else "main"
+
+        # 预拉取所有可用日志到本地，CLI 只读本地文件不 curl
+        logs = await self._download_all_logs(job)
+        lines.append(f"\n### 本地已缓存的数据（Read 直接读，禁止 curl 重复拉取）:\n")
+        if logs["job_log"]:
+            lines.append(f"- Job 日志：`{logs['job_log']}`")
+        if logs["run_log_zip"]:
+            lines.append(f"- Run 全部日志(ZIP)：`{logs['run_log_zip']}` → unzip 后 Read 各 job 日志")
+        if logs["artifacts_dir"]:
+            lines.append(f"- Artifacts：`{logs['artifacts_dir']}` → unzip 后 Read")
+        if logs["jobs_list"]:
+            lines.append(f"- Run 全部 job 列表：`{logs['jobs_list']}` → 找到多节点/worker job 后 Read 对应日志")
+        lines.append(f"- Annotations、Steps、历史对比、Commit Diff：下方已预加载")
+        lines.append(f"")
+        lines.append(f"**源码分析（本地仓库 `{repo_path}`，git 命令秒级响应）：**")
+        lines.append(f"  git -C {repo_path} log {ref_value} --oneline -20")
+        lines.append(f"  git -C {repo_path} show {ref_value}:<path>")
+        lines.append(f"  git -C {repo_path} diff <old>..{ref_value} -- <path>")
+        lines.append(f"  git -C {repo_path} blame {ref_value} -- <path>")
+        lines.append(f"  git -C {repo_path} bisect")
+        lines.append(f"  失败 commit：`{ref_value}`")
+        lines.append(f"")
+        lines.append(f"**GitHub 探索（GITHUB_TOKEN 在环境变量中，按需使用）：**")
+        lines.append(f"  curl /repos/{{owner}}/{{repo}}/pulls/<id>  → PR 讨论和 review 意见")
+        lines.append(f"  curl /repos/{{owner}}/{{repo}}/issues/<id> → Issue 讨论")
+        lines.append(f"  curl /search/code?q=...                       → 跨仓库代码搜索")
+        lines.append(f"  WebFetch github.com/...                        → README、文档、PR 页面")
+
         github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}"
         lines.append(f"\n- **GitHub Job URL**: {github_url}")
         lines.append(f"\n请严格按照「CI 失败分析报告模板」的章节结构输出分析报告，包括：基本信息表、问题分类、根因分析（证据来源按优先级排序+根因链路）、影响范围、修复建议表（含优先级和负责方）、关联PR、结论。报告末尾必须包含 JSON 代码块。")
         lines.append(f"\n注意：本会话有轮次上限，请在证据充足后及时撰写报告，确保 JSON 代码块完整输出。")
         lines.append(f"\n**强制要求**：根因分析必须全面，禁止只分析单层就下结论。必须同时验证：1) 错误的直接触发点（代码行）2) 上游调用链的数据流转 3) 是否为代码变更引入（对比 commit diff）。如果这三个层面指向不同的方向，说明分析不完整，需要继续深挖直到证据链收敛到同一个根因。")
+        lines.append(f"\n**代码修复建议**：利用本地代码仓（`{repo_path}`），通过 git show 查看关联文件完整内容，给出具体的代码修改建议（diff 格式优先），包括：修改文件路径、修改前代码、修改后代码、修改原因。")
         return "\n".join(lines)
 
     async def _fetch_job_annotations(self, job_id: int, db: AsyncSession) -> list[dict]:
@@ -635,3 +679,92 @@ class FailureAnalysisService:
         result = await db.execute(stmt)
         items = result.scalars().all()
         return {"total": len(items), "items": items}
+
+    async def _get_ci_result(self, db: AsyncSession, run_id: int):
+        """获取 CIResult（含 branch 和 head_sha）"""
+        stmt = select(CIResult).where(CIResult.run_id == run_id).limit(1)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def _download_all_logs(self, job: CIJob) -> dict[str, str | None]:
+        """预拉取所有可用日志到本地文件，返回路径 dict 供 CLI 读取"""
+        import aiohttp
+        from pathlib import Path
+
+        log_dir = Path(f"/app/data/failure-analysis/{job.workflow_name}")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        headers = {
+            "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        result = {"job_log": None, "run_log_zip": None, "artifacts_dir": None, "jobs_list": None}
+
+        # 1. Job 日志
+        job_log_path = log_dir / f"{job.job_id}.log"
+        if not job_log_path.exists():
+            job_url = f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/jobs/{job.job_id}/logs"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(job_url, headers=headers) as resp:
+                        if resp.status == 200:
+                            job_log_path.write_bytes(await resp.read())
+            except Exception as e:
+                logger.warning("Failed to fetch job log: %s", e)
+        if job_log_path.exists():
+            result["job_log"] = str(job_log_path)
+
+        # 2. Run 全部日志 ZIP
+        run_zip_path = log_dir / f"run_{job.run_id}_logs.zip"
+        if not run_zip_path.exists():
+            run_url = f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/logs"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(run_url, headers=headers) as resp:
+                        if resp.status == 200:
+                            run_zip_path.write_bytes(await resp.read())
+            except Exception as e:
+                logger.warning("Failed to fetch run logs ZIP: %s", e)
+        if run_zip_path.exists():
+            result["run_log_zip"] = str(run_zip_path)
+
+        # 3. Artifacts
+        artifacts_dir = log_dir / f"artifacts_{job.run_id}"
+        if not artifacts_dir.exists():
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            art_url = f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/artifacts"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(art_url, headers=headers) as resp:
+                        if resp.status == 200:
+                            art_data = await resp.json()
+                            for art in art_data.get("artifacts", []):
+                                art_path = artifacts_dir / f"{art['id']}_{art['name']}.zip"
+                                if not art_path.exists():
+                                    dl_url = art["archive_download_url"]
+                                    async with session.get(dl_url, headers=headers) as dl_resp:
+                                        if dl_resp.status == 200:
+                                            art_path.write_bytes(await dl_resp.read())
+            except Exception as e:
+                logger.warning("Failed to fetch artifacts: %s", e)
+        if artifacts_dir.exists() and any(artifacts_dir.iterdir()):
+            result["artifacts_dir"] = str(artifacts_dir)
+
+        # 4. Run jobs 列表（多节点场景需要）
+        import json
+        jobs_path = log_dir / f"run_{job.run_id}_jobs.json"
+        if not jobs_path.exists():
+            jobs_url = f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/jobs?per_page=100"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(jobs_url, headers=headers) as resp:
+                        if resp.status == 200:
+                            jobs_path.write_text(json.dumps(await resp.json(), ensure_ascii=False, indent=2))
+            except Exception as e:
+                logger.warning("Failed to fetch jobs list: %s", e)
+        if jobs_path.exists():
+            result["jobs_list"] = str(jobs_path)
+
+        downloaded = sum(1 for v in result.values() if v)
+        logger.info("Pre-fetched %d log sources for job %s", downloaded, job.job_id)
+        return result
