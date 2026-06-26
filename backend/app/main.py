@@ -30,6 +30,7 @@ from app.api.v1 import (
     test_board,
     users,
     workflows,
+    logs,
 )
 from app.core.config import settings
 from app.core.logging import setup_db_logging
@@ -342,6 +343,7 @@ def create_app() -> FastAPI:
     app.include_router(alert_rules.router, prefix="/api/v1", tags=["告警规则"])
     app.include_router(pr_pipeline.router, prefix="/api/v1/pr-pipeline", tags=["PR 流水线"])
     app.include_router(test_board.router, prefix="/api/v1", tags=["测试看板"])
+    app.include_router(logs.router, prefix="/api/v1/logs", tags=["日志中心"])
 
     @app.get("/health")
     async def health_check():

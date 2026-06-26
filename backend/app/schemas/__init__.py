@@ -66,6 +66,9 @@ __all__ = [
     "TestBoardSyncRequest", "FailureAnnotationRequest",
     # Common
     "Message", "PaginatedResponse",
+    # Log Center
+    "LogQueryRequest", "LogEntryResponse", "LogQueryResponse",
+    "LogSourceInfo", "LogSourcesResponse",
 ]
 
 
@@ -890,4 +893,12 @@ from .test_board import (
     ModuleHealthItem,
     TestBoardSyncRequest,
     FailureAnnotationRequest,
+)
+
+from .logs import (
+    LogQueryRequest,
+    LogEntryResponse,
+    LogQueryResponse,
+    LogSourceInfo,
+    LogSourcesResponse,
 )
