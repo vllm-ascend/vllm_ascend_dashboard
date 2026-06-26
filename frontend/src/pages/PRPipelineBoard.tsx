@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Tabs, Statistic, Row, Col, Table, Tag, Space, Button, message, Spin, Typography, Progress, Avatar, Tooltip, Badge, Select, Input, DatePicker } from 'antd'
-import { PullRequestOutlined, SyncOutlined, DashboardOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined, TeamOutlined, ClockCircleOutlined, CheckCircleOutlined, ExclamationCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { Card, Tabs, Statistic, Row, Col, Table, Tag, Space, Button, message, Spin, Typography, Progress, Avatar, Tooltip, Badge, Select, Input } from 'antd'
+import { PullRequestOutlined, SyncOutlined, DashboardOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined, TeamOutlined, ClockCircleOutlined, CheckCircleOutlined, ExclamationCircleOutlined, ThunderboltOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import * as hooks from '../hooks/usePRPipeline'
-import type { PullRequestResponse, PRPipelineOverview, PRPipelineKanban, PRPipelineMetrics, PRPipelineContributor, PRPipelineListResponse, PRPipelineTrendsResponse } from '../services/prPipeline'
+import type { PullRequestResponse, PRPipelineContributor } from '../services/prPipeline'
 import dayjs from 'dayjs'
 
 const { Text, Title } = Typography
@@ -61,6 +61,58 @@ const PERIOD_OPTIONS = [
 ]
 
 const STAGE_COLUMNS = ['submitted', 'reviewing', 'approved', 'ci_running', 'ci_passed', 'ci_failed', 'merging', 'merged', 'closed'] as const
+
+const METRIC_DEFINITIONS: Record<string, string> = {
+  open_count: '当前处于开启状态的 PR 总数（含草稿）',
+  merged_count: '已合并的 PR 总数',
+  closed_count: '已关闭（未合并）的 PR 总数',
+  draft_count: '当前处于草稿状态的 PR 数量',
+  backlog_index: '积压指数 = Open(非Draft) PR 数 / 日均合入量。阈值：绿<1.5 / 黄≥1.5 / 红≥3',
+  merge_rate: '合并率 = 已合并 PR / (已合并 + 已关闭) × 100%',
+  avg_first_review: '从 PR 创建到首次收到 Review 的平均时长',
+  avg_merge: '从 PR 创建到合并的平均时长',
+  first_response: '首次响应时长：从 PR 创建到首次 Review 的时间',
+  review_to_approval: '评审通过时长：从首次 Review 到首次 Approved 的时间',
+  ci_duration: 'CI 耗时：从 CI 开始到完成的时间',
+  merge_hours: '端到端合入时长：从 PR 创建到合并的时间',
+  total_cycle: '总周期：从 PR 创建到合并的完整时长（仅已合并 PR）',
+  analyzed_pr_count: '在统计周期内有完整生命周期数据的 PR 数量',
+  pr_count: '该作者提交的 PR 总数',
+  merged_count_contrib: '该作者已合并的 PR 数',
+  lines_added: '该作者新增的代码行数',
+  lines_removed: '该作者删除的代码行数',
+  review_count: '该评审人参与的 Review 总数',
+  avg_first_response_contrib: '该评审人的平均首次响应时长',
+}
+
+interface DrillDownFilters {
+  state?: string
+  author?: string
+  pipeline_stage?: string
+  review_status?: string
+  ci_status?: string
+  is_draft?: boolean
+  search?: string
+}
+
+interface ListTabProps {
+  filters: DrillDownFilters
+  onFiltersChange: (filters: DrillDownFilters) => void
+  page: number
+  pageSize: number
+  onPageChange: (page: number, pageSize: number) => void
+}
+
+const MetricTitle = ({ title, definitionKey }: { title: string; definitionKey?: string }) => {
+  if (!definitionKey || !METRIC_DEFINITIONS[definitionKey]) return <>{title}</>
+  return (
+    <Tooltip title={METRIC_DEFINITIONS[definitionKey]}>
+      <span style={{ cursor: 'help', borderBottom: '1px dashed #bbb' }}>
+        {title} <InfoCircleOutlined style={{ fontSize: 12, color: '#999' }} />
+      </span>
+    </Tooltip>
+  )
+}
 
 const renderPipelineStageTag = (stage: string | null) => {
   if (!stage) return <Tag>—</Tag>
@@ -122,7 +174,7 @@ const getBacklogColor = (index: number) => {
   return '#ff4d4f'
 }
 
-const OverviewTab = ({ period }: { period: number }) => {
+const OverviewTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: DrillDownFilters) => void }) => {
   const { data, isLoading } = hooks.usePRPipelineOverview(period)
 
   if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
@@ -134,32 +186,32 @@ const OverviewTab = ({ period }: { period: number }) => {
     <div>
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={6}>
-          <Card>
-            <Statistic title="开启" value={data.open_count} prefix={<PullRequestOutlined />} valueStyle={{ color: '#1677ff' }} />
+          <Card hoverable onClick={() => onDrillDown({ state: 'open' })} style={{ cursor: 'pointer' }}>
+            <Statistic title={<MetricTitle title="开启" definitionKey="open_count" />} value={data.open_count} prefix={<PullRequestOutlined />} valueStyle={{ color: '#1677ff' }} />
           </Card>
         </Col>
         <Col span={6}>
-          <Card>
-            <Statistic title="已合并" value={data.merged_count} prefix={<CheckCircleOutlined />} valueStyle={{ color: '#52c41a' }} />
+          <Card hoverable onClick={() => onDrillDown({ state: 'merged' })} style={{ cursor: 'pointer' }}>
+            <Statistic title={<MetricTitle title="已合并" definitionKey="merged_count" />} value={data.merged_count} prefix={<CheckCircleOutlined />} valueStyle={{ color: '#52c41a' }} />
           </Card>
         </Col>
         <Col span={6}>
-          <Card>
-            <Statistic title="已关闭" value={data.closed_count} prefix={<ExclamationCircleOutlined />} valueStyle={{ color: '#ff4d4f' }} />
+          <Card hoverable onClick={() => onDrillDown({ state: 'closed' })} style={{ cursor: 'pointer' }}>
+            <Statistic title={<MetricTitle title="已关闭" definitionKey="closed_count" />} value={data.closed_count} prefix={<ExclamationCircleOutlined />} valueStyle={{ color: '#ff4d4f' }} />
           </Card>
         </Col>
         <Col span={6}>
-          <Card>
-            <Statistic title="草稿" value={data.draft_count} prefix={<ClockCircleOutlined />} valueStyle={{ color: '#faad14' }} />
+          <Card hoverable onClick={() => onDrillDown({ state: 'open', is_draft: true })} style={{ cursor: 'pointer' }}>
+            <Statistic title={<MetricTitle title="草稿" definitionKey="draft_count" />} value={data.draft_count} prefix={<ClockCircleOutlined />} valueStyle={{ color: '#faad14' }} />
           </Card>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={6}>
-          <Card>
+          <Card hoverable onClick={() => onDrillDown({ state: 'open' })} style={{ cursor: 'pointer' }}>
             <Statistic
-              title="积压指数"
+              title={<MetricTitle title="积压指数" definitionKey="backlog_index" />}
               value={data.backlog_index}
               suffix="个PR"
               valueStyle={{ color: backlogColor }}
@@ -167,9 +219,9 @@ const OverviewTab = ({ period }: { period: number }) => {
           </Card>
         </Col>
         <Col span={6}>
-          <Card>
+          <Card hoverable onClick={() => onDrillDown({ state: 'merged' })} style={{ cursor: 'pointer' }}>
             <Statistic
-              title="合并率"
+              title={<MetricTitle title="合并率" definitionKey="merge_rate" />}
               value={data.merge_rate * 100}
               suffix="%"
               precision={1}
@@ -180,7 +232,7 @@ const OverviewTab = ({ period }: { period: number }) => {
         <Col span={6}>
           <Card>
             <Statistic
-              title="平均首次 Review"
+              title={<MetricTitle title="平均首次 Review" definitionKey="avg_first_review" />}
               value={formatHours(data.avg_time_to_first_review_hours)}
               prefix={<ClockCircleOutlined />}
             />
@@ -189,7 +241,7 @@ const OverviewTab = ({ period }: { period: number }) => {
         <Col span={6}>
           <Card>
             <Statistic
-              title="平均合并时间"
+              title={<MetricTitle title="平均合并时间" definitionKey="avg_merge" />}
               value={formatHours(data.avg_time_to_merge_hours)}
               prefix={<ThunderboltOutlined />}
             />
@@ -197,10 +249,15 @@ const OverviewTab = ({ period }: { period: number }) => {
         </Col>
       </Row>
 
-      <Card title="流水线阶段分布" style={{ marginBottom: 24 }}>
+      <Card title={<MetricTitle title="流水线阶段分布" />} style={{ marginBottom: 24 }}>
         <Space size={[8, 12]} wrap>
           {Object.entries(data.pipeline_stage_distribution || {}).map(([stage, count]: [string, number]) => (
-            <Tag key={stage} color={PIPELINE_STAGE_COLORS[stage] || 'default'} style={{ fontSize: 14, padding: '4px 12px' }}>
+            <Tag
+              key={stage}
+              color={PIPELINE_STAGE_COLORS[stage] || 'default'}
+              style={{ fontSize: 14, padding: '4px 12px', cursor: 'pointer' }}
+              onClick={() => onDrillDown({ pipeline_stage: stage, state: 'open' })}
+            >
               {STAGE_LABELS[stage] || stage}: {count}
             </Tag>
           ))}
@@ -216,7 +273,7 @@ const OverviewTab = ({ period }: { period: number }) => {
   )
 }
 
-const KanbanTab = () => {
+const KanbanTab = ({ onDrillDown }: { onDrillDown: (f: DrillDownFilters) => void }) => {
   const navigate = useNavigate()
   const [kanbanState, setKanbanState] = useState<string>('open')
   const [includeDraft, setIncludeDraft] = useState<boolean>(false)
@@ -295,7 +352,13 @@ const KanbanTab = () => {
                   <Tag color={PIPELINE_STAGE_COLORS[stage]} style={{ fontSize: 13 }}>
                     {STAGE_LABELS[stage]}
                   </Tag>
-                  <Badge count={prs.length} style={{ backgroundColor: '#666' }} />
+                  <Tooltip title="点击查看明细列表">
+                    <Badge
+                      count={prs.length}
+                      style={{ backgroundColor: '#666', cursor: 'pointer' }}
+                      onClick={() => onDrillDown({ pipeline_stage: stage })}
+                    />
+                  </Tooltip>
                 </div>
                 <div
                   style={{
@@ -357,23 +420,27 @@ const KanbanTab = () => {
   )
 }
 
-const ListTab = () => {
+const ListTab = ({ filters, onFiltersChange, page, pageSize, onPageChange }: ListTabProps) => {
   const navigate = useNavigate()
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
-  const [stateFilter, setStateFilter] = useState<string | undefined>(undefined)
-  const [authorFilter, setAuthorFilter] = useState<string | undefined>(undefined)
-  const [stageFilter, setStageFilter] = useState<string | undefined>(undefined)
-  const [searchFilter, setSearchFilter] = useState<string | undefined>(undefined)
+
+  const stateFilter = filters.state
+  const authorFilter = filters.author
+  const stageFilter = filters.pipeline_stage
+  const searchFilter = filters.search
 
   const { data, isLoading } = hooks.usePRPipelineList({
     state: stateFilter,
     author: authorFilter,
     pipeline_stage: stageFilter,
+    is_draft: filters.is_draft,
     search: searchFilter,
     page,
     page_size: pageSize,
   })
+
+  const updateFilter = (patch: Partial<DrillDownFilters>) => {
+    onFiltersChange({ ...filters, ...patch })
+  }
 
   const columns = [
     {
@@ -468,13 +535,25 @@ const ListTab = () => {
 
   return (
     <div>
+      {Object.keys(filters).length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <Tag
+            closable
+            onClose={() => onFiltersChange({})}
+            color="blue"
+            style={{ cursor: 'pointer' }}
+          >
+            已应用筛选：点击清除全部
+          </Tag>
+        </div>
+      )}
       <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <Select
           placeholder="状态"
           allowClear
           style={{ width: 120 }}
           value={stateFilter}
-          onChange={setStateFilter}
+          onChange={(v) => updateFilter({ state: v })}
           options={[
             { value: 'open', label: '开启' },
             { value: 'merged', label: '已合并' },
@@ -486,14 +565,14 @@ const ListTab = () => {
           allowClear
           style={{ width: 150 }}
           value={authorFilter}
-          onChange={(e) => setAuthorFilter(e.target.value || undefined)}
+          onChange={(e) => updateFilter({ author: e.target.value || undefined })}
         />
         <Select
           placeholder="流水线阶段"
           allowClear
           style={{ width: 150 }}
           value={stageFilter}
-          onChange={setStageFilter}
+          onChange={(v) => updateFilter({ pipeline_stage: v })}
           options={STAGE_COLUMNS.map((s) => ({ value: s, label: STAGE_LABELS[s] }))}
         />
         <Input.Search
@@ -501,8 +580,8 @@ const ListTab = () => {
           allowClear
           style={{ width: 200 }}
           value={searchFilter}
-          onChange={(e) => setSearchFilter(e.target.value || undefined)}
-          onSearch={(v) => setSearchFilter(v || undefined)}
+          onChange={(e) => updateFilter({ search: e.target.value || undefined })}
+          onSearch={(v) => updateFilter({ search: v || undefined })}
         />
       </div>
 
@@ -517,10 +596,7 @@ const ListTab = () => {
           total: data?.total || 0,
           showSizeChanger: true,
           showTotal: (total) => `共 ${total} 个 PR`,
-          onChange: (p, ps) => {
-            setPage(p)
-            setPageSize(ps)
-          },
+          onChange: (p, ps) => onPageChange(p, ps),
         }}
         scroll={{ x: 1400 }}
         onRow={(record: PullRequestResponse) => ({
@@ -532,7 +608,7 @@ const ListTab = () => {
   )
 }
 
-const MetricsTab = ({ period }: { period: number }) => {
+const MetricsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: DrillDownFilters) => void }) => {
   const { data, isLoading } = hooks.usePRPipelineMetrics(period)
 
   if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
@@ -541,20 +617,20 @@ const MetricsTab = ({ period }: { period: number }) => {
   const backlogColor = getBacklogColor(data.backlog_index)
 
   const metricRows = [
-    { label: '首次响应', key: 'first_response_hours', metric: data.first_response_hours },
-    { label: 'Review → 通过', key: 'review_to_approval_hours', metric: data.review_to_approval_hours },
-    { label: 'CI 耗时', key: 'ci_duration_hours', metric: data.ci_duration_hours },
-    { label: '合并时间', key: 'merge_hours', metric: data.merge_hours },
-    { label: '总周期', key: 'total_cycle_hours', metric: data.total_cycle_hours },
+    { label: <MetricTitle title="首次响应" definitionKey="first_response" />, key: 'first_response_hours', metric: data.first_response_hours },
+    { label: <MetricTitle title="Review → 通过" definitionKey="review_to_approval" />, key: 'review_to_approval_hours', metric: data.review_to_approval_hours },
+    { label: <MetricTitle title="CI 耗时" definitionKey="ci_duration" />, key: 'ci_duration_hours', metric: data.ci_duration_hours },
+    { label: <MetricTitle title="合并时间" definitionKey="merge_hours" />, key: 'merge_hours', metric: data.merge_hours },
+    { label: <MetricTitle title="总周期" definitionKey="total_cycle" />, key: 'total_cycle_hours', metric: data.total_cycle_hours },
   ]
 
   return (
     <div>
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={8}>
-          <Card>
+          <Card hoverable onClick={() => onDrillDown({ state: 'merged' })} style={{ cursor: 'pointer' }}>
             <Statistic
-              title="合并率"
+              title={<MetricTitle title="合并率" definitionKey="merge_rate" />}
               value={data.merge_rate * 100}
               suffix="%"
               precision={1}
@@ -563,9 +639,9 @@ const MetricsTab = ({ period }: { period: number }) => {
           </Card>
         </Col>
         <Col span={8}>
-          <Card>
+          <Card hoverable onClick={() => onDrillDown({ state: 'open' })} style={{ cursor: 'pointer' }}>
             <Statistic
-              title="积压指数"
+              title={<MetricTitle title="积压指数" definitionKey="backlog_index" />}
               value={data.backlog_index}
               suffix="个PR"
               valueStyle={{ color: backlogColor }}
@@ -573,8 +649,8 @@ const MetricsTab = ({ period }: { period: number }) => {
           </Card>
         </Col>
         <Col span={8}>
-          <Card>
-            <Statistic title="已分析 PR 数" value={data.total_cycle_hours?.count || 0} />
+          <Card hoverable onClick={() => onDrillDown({ state: 'merged' })} style={{ cursor: 'pointer' }}>
+            <Statistic title={<MetricTitle title="已分析 PR 数" definitionKey="analyzed_pr_count" />} value={data.total_cycle_hours?.count || 0} />
           </Card>
         </Col>
       </Row>
@@ -643,7 +719,7 @@ const MetricsTab = ({ period }: { period: number }) => {
   )
 }
 
-const ContributorsTab = ({ period }: { period: number }) => {
+const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: DrillDownFilters) => void }) => {
   const [contributorType, setContributorType] = useState<string | undefined>(undefined)
   const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, 20)
 
@@ -660,28 +736,34 @@ const ContributorsTab = ({ period }: { period: number }) => {
       render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
     },
     {
-      title: 'PR 数量',
+      title: <MetricTitle title="PR 数量" definitionKey="pr_count" />,
       dataIndex: 'pr_count',
       key: 'pr_count',
       width: 100,
       sorter: (a: PRPipelineContributor, b: PRPipelineContributor) => a.pr_count - b.pr_count,
+      render: (val: number, record: PRPipelineContributor) => (
+        <a onClick={() => onDrillDown({ author: record.username })}>{val}</a>
+      ),
     },
     {
-      title: '已合并',
+      title: <MetricTitle title="已合并" definitionKey="merged_count_contrib" />,
       dataIndex: 'merged_count',
       key: 'merged_count',
       width: 100,
       sorter: (a: PRPipelineContributor, b: PRPipelineContributor) => a.merged_count - b.merged_count,
+      render: (val: number, record: PRPipelineContributor) => (
+        <a onClick={() => onDrillDown({ author: record.username, state: 'merged' })}>{val}</a>
+      ),
     },
     {
-      title: '新增行数',
+      title: <MetricTitle title="新增行数" definitionKey="lines_added" />,
       dataIndex: 'lines_added',
       key: 'lines_added',
       width: 120,
       sorter: (a: PRPipelineContributor, b: PRPipelineContributor) => a.lines_added - b.lines_added,
     },
     {
-      title: '删除行数',
+      title: <MetricTitle title="删除行数" definitionKey="lines_removed" />,
       dataIndex: 'lines_removed',
       key: 'lines_removed',
       width: 120,
@@ -697,14 +779,14 @@ const ContributorsTab = ({ period }: { period: number }) => {
       render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
     },
     {
-      title: 'Review 数量',
+      title: <MetricTitle title="Review 数量" definitionKey="review_count" />,
       dataIndex: 'review_count',
       key: 'review_count',
       width: 120,
       sorter: (a: PRPipelineContributor, b: PRPipelineContributor) => a.review_count - b.review_count,
     },
     {
-      title: '平均首次响应',
+      title: <MetricTitle title="平均首次响应" definitionKey="avg_first_response_contrib" />,
       dataIndex: 'avg_first_response_hours',
       key: 'avg_first_response_hours',
       width: 150,
@@ -757,12 +839,20 @@ const ContributorsTab = ({ period }: { period: number }) => {
 }
 
 const PRPipelineBoard = () => {
-  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('overview')
   const [overviewPeriod, setOverviewPeriod] = useState(30)
   const [metricsPeriod, setMetricsPeriod] = useState(30)
   const [contributorsPeriod, setContributorsPeriod] = useState(30)
+  const [listFilters, setListFilters] = useState<DrillDownFilters>({})
+  const [listPage, setListPage] = useState(1)
+  const [listPageSize, setListPageSize] = useState(20)
   const syncMutation = hooks.usePRPipelineSync()
+
+  const handleDrillDown = (filters: DrillDownFilters) => {
+    setListFilters(filters)
+    setListPage(1)
+    setActiveTab('list')
+  }
 
   const handleSync = () => {
     syncMutation.mutate(undefined, {
@@ -794,7 +884,7 @@ const PRPipelineBoard = () => {
               style={{ width: 120 }}
             />
           </div>
-          <OverviewTab period={overviewPeriod} />
+          <OverviewTab period={overviewPeriod} onDrillDown={handleDrillDown} />
         </div>
       ),
     },
@@ -806,7 +896,7 @@ const PRPipelineBoard = () => {
             <span>看板</span>
           </Space>
       ),
-      children: <KanbanTab />,
+      children: <KanbanTab onDrillDown={handleDrillDown} />,
     },
     {
       key: 'list',
@@ -816,7 +906,15 @@ const PRPipelineBoard = () => {
             <span>列表</span>
           </Space>
       ),
-      children: <ListTab />,
+      children: (
+        <ListTab
+          filters={listFilters}
+          onFiltersChange={(f) => { setListFilters(f); setListPage(1) }}
+          page={listPage}
+          pageSize={listPageSize}
+          onPageChange={(p, ps) => { setListPage(p); setListPageSize(ps) }}
+        />
+      ),
     },
     {
       key: 'metrics',
@@ -836,7 +934,7 @@ const PRPipelineBoard = () => {
               style={{ width: 120 }}
             />
           </div>
-          <MetricsTab period={metricsPeriod} />
+          <MetricsTab period={metricsPeriod} onDrillDown={handleDrillDown} />
         </div>
       ),
     },
@@ -858,7 +956,7 @@ const PRPipelineBoard = () => {
               style={{ width: 120 }}
             />
           </div>
-          <ContributorsTab period={contributorsPeriod} />
+          <ContributorsTab period={contributorsPeriod} onDrillDown={handleDrillDown} />
         </div>
       ),
     },
