@@ -6,7 +6,7 @@ API Key 从数据库配置中获取，不再依赖环境变量
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,15 @@ class BaseLLMClient:
     ) -> LLMResult:
         raise NotImplementedError
 
+    async def generate_stream(
+        self,
+        model: str,
+        messages: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> AsyncGenerator[str, None]:
+        raise NotImplementedError
+
 
 class OpenAIClient(BaseLLMClient):
     """OpenAI API 客户端"""
@@ -84,6 +93,37 @@ class OpenAIClient(BaseLLMClient):
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
             raise LLMError(f"OpenAI API call failed: {str(e)}")
+
+    async def generate_stream(
+        self,
+        model: str,
+        messages: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ):
+        try:
+            from openai import AsyncOpenAI
+
+            client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.api_base or "https://api.openai.com/v1"
+            )
+
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+
+            async for chunk in response:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+        except Exception as e:
+            logger.error(f"OpenAI streaming failed: {e}")
+            raise LLMError(f"OpenAI streaming failed: {str(e)}")
 
 
 class AnthropicClient(BaseLLMClient):
@@ -133,6 +173,42 @@ class AnthropicClient(BaseLLMClient):
             logger.error(f"Anthropic API call failed: {e}")
             raise LLMError(f"Anthropic API call failed: {str(e)}")
 
+    async def generate_stream(
+        self,
+        model: str,
+        messages: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ):
+        try:
+            from anthropic import AsyncAnthropic
+
+            client = AsyncAnthropic(
+                api_key=self.api_key,
+                base_url=self.api_base or "https://api.anthropic.com"
+            )
+
+            system_prompt = ""
+            user_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_prompt = msg["content"]
+                else:
+                    user_messages.append(msg)
+
+            async with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=user_messages,
+                temperature=temperature,
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield text
+        except Exception as e:
+            logger.error(f"Anthropic streaming failed: {e}")
+            raise LLMError(f"Anthropic streaming failed: {str(e)}")
+
 
 class QwenClient(BaseLLMClient):
     """通义千问 API 客户端（兼容 OpenAI 格式）"""
@@ -170,6 +246,37 @@ class QwenClient(BaseLLMClient):
         except Exception as e:
             logger.error(f"Qwen API call failed: {e}")
             raise LLMError(f"Qwen API call failed: {str(e)}")
+
+    async def generate_stream(
+        self,
+        model: str,
+        messages: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ):
+        try:
+            from openai import AsyncOpenAI
+
+            client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
+
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+
+            async for chunk in response:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+        except Exception as e:
+            logger.error(f"Qwen streaming failed: {e}")
+            raise LLMError(f"Qwen streaming failed: {str(e)}")
 
 
 # 提供商对应的客户端类
@@ -245,6 +352,35 @@ class LLMClient:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+
+    async def generate_stream(
+        self,
+        provider: str,
+        model: str,
+        api_key: str,
+        api_base: Optional[str] = None,
+        system_prompt: str = "",
+        user_prompt: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ):
+        if not api_key:
+            raise LLMError(f"API Key not configured for provider: {provider}")
+
+        client = create_client(provider, api_key, api_base)
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        async for chunk in client.generate_stream(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        ):
+            yield chunk
 
     def get_supported_providers(self) -> list[str]:
         """获取支持的 LLM 提供商列表"""

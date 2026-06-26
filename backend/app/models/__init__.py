@@ -29,6 +29,8 @@ __all__ = [
     "AlertRule", "AlertConditionGroup", "AlertCondition", "AlertHistory",
     "JobFailureAnalysis",
     "PullRequest",
+    "UserLoginLog", "FeatureUsageLog", "TokenBlacklist",
+    "TestCase", "TestRun", "TestSuiteSnapshot", "FailureAnnotation",
 ]
 
 
@@ -44,13 +46,15 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), default="user", index=True)  # user, admin, super_admin
-    email = Column(String(100))
+    email = Column(String(100), unique=True, nullable=False, index=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     # 关系
     model_configs = relationship("ModelConfig", back_populates="creator")
+    login_logs = relationship("UserLoginLog", back_populates="user", cascade="all, delete-orphan")
+    usage_logs = relationship("FeatureUsageLog", back_populates="user", cascade="all, delete-orphan")
 
 
 class ModelConfig(Base):
@@ -409,8 +413,48 @@ class AlertHistory(Base):
     notification_error = Column(Text, nullable=True)
 
 
+class UserLoginLog(Base):
+    __tablename__ = "user_login_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    login_time = Column(TIMESTAMP, nullable=False, default=lambda: datetime.now(UTC), index=True)
+    ip_address = Column(String(64))
+    ip_address_hashed = Column(String(64))
+    user_agent = Column(String(500))
+    login_method = Column(String(20), default="password")
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+
+    user = relationship("User", back_populates="login_logs")
+
+
+class FeatureUsageLog(Base):
+    __tablename__ = "feature_usage_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    feature_name = Column(String(100), nullable=False, index=True)
+    request_path = Column(String(500), nullable=False, index=True)
+    access_time = Column(TIMESTAMP, nullable=False, default=lambda: datetime.now(UTC), index=True)
+    metadata_json = Column(JSON)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+
+    user = relationship("User", back_populates="usage_logs")
+
+
+class TokenBlacklist(Base):
+    __tablename__ = "token_blacklist"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token_jti = Column(String(100), unique=True, nullable=False, index=True)
+    blacklisted_at = Column(TIMESTAMP, nullable=False, default=lambda: datetime.now(UTC), index=True)
+    expires_at = Column(TIMESTAMP, nullable=False, index=True)
+
+
 # 导入每日总结相关模型
 from .daily_summary import DailyPR, DailyIssue, DailyCommit, DailySummary, LLMProviderConfig
+
+from .test_board import TestCase, TestRun, TestSuiteSnapshot, FailureAnnotation
 
 
 class PullRequest(Base):

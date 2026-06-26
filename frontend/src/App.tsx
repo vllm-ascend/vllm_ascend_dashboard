@@ -28,6 +28,10 @@ import ResourceDashboardConfig from './pages/ResourceDashboardConfig'
 import DailyReportConfigPage from './pages/DailyReportConfig'
 import SmtpConfig from './pages/SmtpConfig'
 import AlertRulesManagement from './pages/AlertRulesManagement'
+import IssueDiagnosis from './pages/IssueDiagnosis'
+import Register from './pages/Register'
+import UserStats from './pages/UserStats'
+import TestObservabilityDashboard from './pages/TestObservabilityDashboard'
 import { useCurrentUser } from './hooks/useCurrentUser'
 
 const queryClient = new QueryClient({
@@ -114,6 +118,8 @@ function App() {
           <Routes>
             {/* 登录页面 */}
             <Route path="/login" element={<Login />} />
+            {/* 注册页面 */}
+            <Route path="/register" element={<Register />} />
 
             {/* 需要登录的路由（默认） */}
             <Route path="/" element={
@@ -139,12 +145,32 @@ function App() {
               <Route path="models/reports/:date" element={<ModelDailyReport />} />
               {/* 告警规则 */}
               <Route path="alert-rules" element={<AlertRulesManagement />} />
+              {/* 问题定位（管理员） */}
+              <Route
+                path="issue-diagnosis"
+                element={
+                  <AdminRoute>
+                    <IssueDiagnosis />
+                  </AdminRoute>
+                }
+              />
+              {/* 用户统计（管理员） */}
+              <Route
+                path="user-stats"
+                element={
+                  <AdminRoute>
+                    <UserStats />
+                  </AdminRoute>
+                }
+              />
               {/* GitHub 动态详情页面 */}
               <Route path="github-activity/:project" element={<GitHubActivityDetail />} />
               <Route path="github-activity/:project/commits/:sha" element={<CommitAnalysisDetail />} />
               {/* PR Pipeline Kanban */}
               <Route path="pr-pipeline" element={<PRPipelineBoard />} />
               <Route path="pr-pipeline/:prNumber" element={<PRDetail />} />
+              {/* Test Observability Dashboard */}
+              <Route path="test-board" element={<TestObservabilityDashboard />} />
 
               {/* 仅管理员访问的路由 */}
               <Route
