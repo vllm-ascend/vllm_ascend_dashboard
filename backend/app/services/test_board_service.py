@@ -46,7 +46,9 @@ class TestBoardService:
         suite_dist_rows = (await self.db.execute(suite_dist_stmt)).all()
         suite_distribution = {}
         for row in suite_dist_rows:
-            key = f"{row[0]}-{row[1]}"
+            suite_name = row[0]
+            hardware = row[1]
+            key = suite_name if hardware and hardware in suite_name else f"{suite_name}-{hardware}"
             suite_distribution[key] = row[2]
 
         result_dist_stmt = select(TestCase.last_result, func.count(TestCase.id)).group_by(TestCase.last_result)
@@ -65,8 +67,22 @@ class TestBoardService:
         pass_rate_trend_rows = (await self.db.execute(pass_rate_trend_stmt)).all()
         pass_rate_trend = [{"date": r[0], "rate": round(r[1] or 0, 3)} for r in pass_rate_trend_rows]
 
+        avg_flaky_stmt = select(func.avg(TestCase.flaky_rate)).where(TestCase.flaky_rate.isnot(None))
+        avg_flaky = (await self.db.execute(avg_flaky_stmt)).scalar() or 0.0
+        stability = round(1.0 - avg_flaky, 2)
+
+        reliability = round(pass_rate_7d, 2)
+
+        dur_covered_stmt = select(func.count(TestCase.id)).where(TestCase.avg_duration_seconds.isnot(None))
+        dur_covered = (await self.db.execute(dur_covered_stmt)).scalar() or 0
+        timeliness = round(dur_covered / total, 2) if total > 0 else 0.0
+
+        owner_covered_stmt = select(func.count(TestCase.id)).where(TestCase.owner.isnot(None))
+        owner_covered = (await self.db.execute(owner_covered_stmt)).scalar() or 0
+        coverage = round(owner_covered / total, 2) if total > 0 else 0.0
+
         return {
-            "health_score": {"overall": round(avg_hs, 1), "pass_rate": round(pass_rate_7d, 3), "stability": 0.85, "reliability": 0.88, "timeliness": 0.78, "coverage": 0.71, "level": hs_level},
+            "health_score": {"overall": round(avg_hs, 1), "pass_rate": round(pass_rate_7d, 3), "stability": stability, "reliability": reliability, "timeliness": timeliness, "coverage": coverage, "level": hs_level},
             "total_cases": total, "pass_rate_7d": round(pass_rate_7d, 3),
             "flaky_case_count": flaky_count, "attention_case_count": attention,
             "avg_duration_p50": round(avg_dur, 1),
@@ -187,11 +203,15 @@ class TestBoardService:
         tb = cat_counts.get("test_bug", 0)
         infra = cat_counts.get("infrastructure", 0)
         unk = cat_counts.get("unknown", 0)
+        flaky_fail_stmt = select(func.count(TestCase.id)).where(
+            TestCase.is_flaky == True, TestCase.last_result == "failed"
+        )
+        flaky_failures = (await self.db.execute(flaky_fail_stmt)).scalar() or 0
         return {
             "product_bug": pb, "test_bug": tb, "infrastructure": infra, "unknown": unk, "total": total,
             "product_bug_ratio": round(pb / total, 2) if total else 0,
             "infrastructure_ratio": round(infra / total, 2) if total else 0,
-            "noise_ratio": round((infra + tb + unk) / total, 2) if total else 0,
+            "noise_ratio": round((flaky_failures + infra) / total, 2) if total else 0,
         }
 
     async def get_duration_analysis(self, days: int = 30, suite_name: str | None = None) -> dict[str, Any]:
@@ -253,7 +273,7 @@ class TestBoardService:
                 logger.warning(f"Failed to parse job {job.job_id}: {e}")
         if count > 0:
             calc = TestHealthCalculator(self.db)
-            calc.calculate_all_health_scores()
+            await calc.calculate_all_health_scores()
         await self.db.commit()
         return count
 
