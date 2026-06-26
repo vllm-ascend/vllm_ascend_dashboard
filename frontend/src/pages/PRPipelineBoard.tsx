@@ -490,11 +490,36 @@ const ListTab = ({ filters, onFiltersChange, page, pageSize, onPageChange }: Lis
       render: (status: string | null) => renderReviewStatusTag(status),
     },
     {
-      title: 'CI 状态',
+      title: 'CI 状态/耗时',
       dataIndex: 'ci_status',
       key: 'ci_status',
-      width: 100,
-      render: (status: string | null) => renderCIStatusTag(status),
+      width: 130,
+      render: (status: string | null, record: PullRequestResponse) => {
+        const tag = renderCIStatusTag(status)
+        if (!record.ci_started_at && !record.ci_completed_at) {
+          return tag
+        }
+        const tooltipContent = (
+          <div>
+            {record.ci_started_at && (
+              <div>开始: {dayjs(record.ci_started_at).format('YYYY-MM-DD HH:mm:ss')}</div>
+            )}
+            {record.ci_completed_at && (
+              <div>结束: {dayjs(record.ci_completed_at).format('YYYY-MM-DD HH:mm:ss')}</div>
+            )}
+          </div>
+        )
+        return (
+          <Tooltip title={tooltipContent}>
+            <div style={{ cursor: 'help' }}>
+              {tag}
+              {record.ci_duration_hours != null && (
+                <div style={{ fontSize: 11, color: '#999' }}>{formatHours(record.ci_duration_hours)}</div>
+              )}
+            </div>
+          </Tooltip>
+        )
+      },
     },
     {
       title: '草稿',
