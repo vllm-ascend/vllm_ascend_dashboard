@@ -1165,3 +1165,50 @@ async def read_claude_log(
         raise HTTPException(status_code=404, detail="Log file not found")
     content = filepath.read_text(encoding="utf-8")
     return {"filename": filename, "content": content}
+
+
+# ============ Claude Code CLI Config ============
+
+@router.get("/claude-cli-config")
+async def get_claude_cli_config(
+    current_user: CurrentAdminUser,
+    db: DbSession,
+):
+    """获取 Claude Code CLI 配置（max_turns、timeout）"""
+    from app.models import ProjectDashboardConfig
+
+    stmt = select(ProjectDashboardConfig).where(
+        ProjectDashboardConfig.config_key == "claude_code_cli_config"
+    )
+    result = await db.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row and row.config_value:
+        return dict(row.config_value)
+    return {"max_turns": 80, "timeout_seconds": 1800}
+
+
+@router.put("/claude-cli-config")
+async def update_claude_cli_config(
+    data: dict,
+    current_user: CurrentAdminUser,
+    db: DbSession,
+):
+    """更新 Claude Code CLI 配置"""
+    from app.models import ProjectDashboardConfig
+
+    max_turns = data.get("max_turns", 80)
+    timeout_seconds = data.get("timeout_seconds", 1800)
+    config_value = {"max_turns": max_turns, "timeout_seconds": timeout_seconds}
+
+    stmt = select(ProjectDashboardConfig).where(
+        ProjectDashboardConfig.config_key == "claude_code_cli_config"
+    )
+    result = await db.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row:
+        row.config_value = config_value
+    else:
+        row = ProjectDashboardConfig(config_key="claude_code_cli_config", config_value=config_value)
+        db.add(row)
+    await db.commit()
+    return config_value

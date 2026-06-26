@@ -191,6 +191,7 @@ class ClaudeCodeCLI:
                 upstream_model=model,
             )
             await proxy.start()
+            proxy.set_log_file(str(debug_file).replace("_debug.log", "_conversation.json"))
 
             env = self._build_env_direct(
                 api_key="PROXY_MANAGED",
@@ -217,6 +218,7 @@ class ClaudeCodeCLI:
                 upstream_model=model,
             )
             await proxy.start()
+            proxy.set_log_file(str(debug_file).replace("_debug.log", "_conversation.json"))
 
             env = self._build_env_direct(
                 api_key="PROXY_MANAGED",
@@ -499,12 +501,13 @@ async def run_with_fallback(
     system_prompt: str = "",
     work_dir: str | None = None,
     max_turns: int = 10,
+    timeout_seconds: int = 1800,
     output_format: str = "text",
 ) -> ClaudeCodeResult:
     """
     通过 Claude Code CLI 执行分析（仅 CLI，无降级）。
     """
-    cli = ClaudeCodeCLI()
+    cli = ClaudeCodeCLI(timeout_seconds=timeout_seconds)
 
     try:
         return await cli.run(

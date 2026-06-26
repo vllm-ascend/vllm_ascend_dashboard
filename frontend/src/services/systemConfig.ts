@@ -103,3 +103,19 @@ export const triggerConfigReload = async (): Promise<{ success: boolean; message
   const response = await api.post('/system/config/sync/trigger')
   return response.data
 }
+
+// Claude Code CLI config
+export interface ClaudeCLIConfig {
+  max_turns: number
+  timeout_seconds: number
+}
+
+export const getClaudeCLIConfig = async (): Promise<ClaudeCLIConfig> => {
+  const response = await api.get('/ci/claude-cli-config')
+  return response.data
+}
+
+export const updateClaudeCLIConfig = async (config: Partial<ClaudeCLIConfig>): Promise<ClaudeCLIConfig> => {
+  const response = await api.put('/ci/claude-cli-config', config)
+  return response.data
+}

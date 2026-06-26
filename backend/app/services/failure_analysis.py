@@ -42,6 +42,17 @@ class FailureAnalysisService:
             raise ValueError(f"API Key not configured for provider: {config.provider}")
         return config
 
+    async def _get_cli_config(self, db: AsyncSession) -> dict:
+        """从数据库读取 Claude Code CLI 配置"""
+        stmt = select(ProjectDashboardConfig).where(
+            ProjectDashboardConfig.config_key == "claude_code_cli_config"
+        )
+        result = await db.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row and row.config_value:
+            return dict(row.config_value)
+        return {"max_turns": 80, "timeout_seconds": 1800}
+
     def _get_default_prompt(self) -> str:
         from app.services.skill_registry import get_skill_registry
         registry = get_skill_registry()
@@ -131,8 +142,12 @@ class FailureAnalysisService:
                 await db.refresh(target)
                 return target
 
+        # 从数据库读取 CLI 配置（默认值兜底）
+        cli_config = await self._get_cli_config(db)
+        max_turns_val = cli_config.get("max_turns", 80)
+        timeout_val = cli_config.get("timeout_seconds", 1800)
         system_prompt = await self._get_system_prompt(db)
-        user_prompt = await self._build_job_context(job, db)
+        user_prompt = await self._build_job_context(job, db, max_turns=max_turns_val, timeout_seconds=timeout_val)
 
         # 如果之前有失败/卡住的记录，复用而不是插入新记录（避免 UNIQUE 冲突）
         if existing:
@@ -166,7 +181,8 @@ class FailureAnalysisService:
                     "default_model": llm_config.default_model,
                 },
                 system_prompt=system_prompt,
-                max_turns=50,
+                max_turns=max_turns_val,
+                timeout_seconds=timeout_val,
                 output_format="json",
             )
             # 清洗 GLM-5.1 的 <think> 和 tool call 噪音
@@ -248,7 +264,8 @@ class FailureAnalysisService:
                 logger.error(f"Batch analysis failed for job {job.job_id}: {e}")
         return results
 
-    async def _build_job_context(self, job: CIJob, db: AsyncSession) -> str:
+    async def _build_job_context(self, job: CIJob, db: AsyncSession, max_turns: int = 80, timeout_seconds: int = 1800) -> str:
+        timeout_min = timeout_seconds // 60
         lines = []
         lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败")
         lines.append("")
@@ -338,6 +355,7 @@ class FailureAnalysisService:
         github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}"
         lines.append(f"\n- **GitHub Job URL**: {github_url}")
         lines.append(f"\n请严格按照「CI 失败分析报告模板」的章节结构输出分析报告，包括：基本信息表、问题分类、根因分析（证据来源按优先级排序+根因链路）、影响范围、修复建议表（含优先级和负责方）、关联PR、结论。报告末尾必须包含 JSON 代码块。")
+        lines.append(f"\n注意：本会话有轮次上限，请在证据充足后及时撰写报告，确保 JSON 代码块完整输出。")
         lines.append(f"\n**强制要求**：根因分析必须全面，禁止只分析单层就下结论。必须同时验证：1) 错误的直接触发点（代码行）2) 上游调用链的数据流转 3) 是否为代码变更引入（对比 commit diff）。如果这三个层面指向不同的方向，说明分析不完整，需要继续深挖直到证据链收敛到同一个根因。")
         return "\n".join(lines)
 
