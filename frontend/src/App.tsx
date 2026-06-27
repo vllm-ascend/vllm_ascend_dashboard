@@ -33,6 +33,7 @@ import Register from './pages/Register'
 import UserStats from './pages/UserStats'
 import TestObservabilityDashboard from './pages/TestObservabilityDashboard'
 import LogCenter from './pages/LogCenter'
+import ShareReport from './pages/ShareReport'
 import { useCurrentUser } from './hooks/useCurrentUser'
 
 const queryClient = new QueryClient({
@@ -117,6 +118,8 @@ function App() {
       <ConfigProvider locale={zhCN}>
         <BrowserRouter>
           <Routes>
+            {/* 公开分享页面 */}
+            <Route path="/share/:token" element={<ShareReport />} />
             {/* 登录页面 */}
             <Route path="/login" element={<Login />} />
             {/* 注册页面 */}

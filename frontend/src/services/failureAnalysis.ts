@@ -21,6 +21,7 @@ export interface FailureAnalysis {
   analysis_status: string
   error_message: string | null
   triggered_by: string | null
+  share_token: string | null
   created_at: string | null
   updated_at: string | null
 }

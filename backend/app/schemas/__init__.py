@@ -588,6 +588,7 @@ class FailureAnalysisResponse(BaseModel):
     analysis_status: str = "pending"
     error_message: str | None = None
     triggered_by: str | None = None
+    share_token: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

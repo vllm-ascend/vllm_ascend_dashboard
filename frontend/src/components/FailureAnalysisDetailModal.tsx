@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Modal, Spin, Alert, Space, Tag, Descriptions, Button, Typography, message } from 'antd'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ReloadOutlined, FileSearchOutlined } from '@ant-design/icons'
+import { ReloadOutlined, FileSearchOutlined, ShareAltOutlined, DownloadOutlined } from '@ant-design/icons'
 import {
   useFailureAnalysis,
   useFailureAnalysisReport,
@@ -121,6 +121,27 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
       width={960}
       footer={[
         <Button key="close" onClick={onClose}>关闭</Button>,
+        currentAnalysis?.share_token && currentAnalysis.analysis_status === 'completed' && (
+          <Button
+            key="pdf"
+            icon={<DownloadOutlined />}
+            onClick={() => { window.location.href = `/api/v1/ci/public/analysis/${currentAnalysis.share_token}/pdf` }}
+          >
+            下载 PDF
+          </Button>
+        ),
+        currentAnalysis?.share_token && currentAnalysis.analysis_status === 'completed' && (
+          <Button
+            key="share"
+            icon={<ShareAltOutlined />}
+            onClick={() => {
+              const url = `${window.location.origin}/share/${currentAnalysis.share_token}`
+              navigator.clipboard.writeText(url).then(() => message.success('分享链接已复制'))
+            }}
+          >
+            复制分享链接
+          </Button>
+        ),
         currentAnalysis && currentAnalysis.analysis_status !== 'analyzing' && (
           <Button
             key="reanalyze"

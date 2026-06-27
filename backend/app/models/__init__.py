@@ -357,6 +357,7 @@ class JobFailureAnalysis(Base):
     root_cause_summary = Column(String(500))
     improvement_measures_summary = Column(String(500))
     report_file_path = Column(String(200))
+    pdf_file_path = Column(String(200))
 
     llm_provider = Column(String(50))
     llm_model = Column(String(100))
@@ -367,6 +368,7 @@ class JobFailureAnalysis(Base):
     analysis_status = Column(String(20), default="pending", index=True)
     error_message = Column(String(500))
     triggered_by = Column(String(20), default="manual")  # "manual" | "scheduler"
+    share_token = Column(String(64), unique=True, index=True)  # 公开分享 token
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 

@@ -215,6 +215,16 @@ class FailureAnalysisService:
                 report_path = None
 
             analysis.analysis_status = "completed"
+            # 生成公开分享 token
+            if not analysis.share_token:
+                import secrets
+                analysis.share_token = secrets.token_urlsafe(32)
+            # 后台异步生成 PDF，不阻塞状态更新
+            if report_content:
+                import asyncio
+                asyncio.create_task(self._generate_pdf_async(
+                    analysis.id, report_content, job.workflow_name, job.job_name, job_id
+                ))
             analysis.problem_category = parsed["problem_category"]
             analysis.root_cause_summary = parsed["root_cause_summary"]
             analysis.improvement_measures_summary = parsed["improvement_measures_summary"]
@@ -700,6 +710,49 @@ class FailureAnalysisService:
         stmt = select(CIResult).where(CIResult.run_id == run_id).limit(1)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def _generate_pdf_async(self, analysis_id: int, md_content: str, workflow: str, job_name: str, job_id: int):
+        """后台异步生成 PDF，完成后更新 DB"""
+        try:
+            pdf_path = await self._generate_pdf(md_content, workflow, job_name, job_id)
+            from app.db.base import SessionLocal
+            async with SessionLocal() as db:
+                from sqlalchemy import update
+                await db.execute(
+                    update(JobFailureAnalysis)
+                    .where(JobFailureAnalysis.id == analysis_id)
+                    .values(pdf_file_path=pdf_path)
+                )
+                await db.commit()
+        except Exception as e:
+            logger.warning("Async PDF generation failed: %s", e)
+
+    async def _generate_pdf(self, md_content: str, workflow: str, job_name: str, job_id: int) -> str | None:
+        """将 markdown 报告生成为 PDF 文件，返回文件路径"""
+        import markdown
+        from pathlib import Path
+        from weasyprint import HTML
+
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+body {{ font-family: 'Noto Sans CJK SC', 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; color: #333; line-height: 1.6; }}
+h1 {{ border-bottom: 2px solid #1890ff; padding-bottom: 8px; }}
+h2 {{ margin-top: 24px; color: #1890ff; }}
+table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
+th, td {{ border: 1px solid #d9d9d9; padding: 8px 12px; text-align: left; }}
+th {{ background: #f5f5f5; }}
+pre {{ background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; }}
+code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }}
+</style></head><body>
+{markdown.markdown(md_content, extensions=['tables', 'fenced_code'])}
+</body></html>"""
+
+        pdf_dir = Path(f"/app/data/failure-analysis/{workflow}")
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = pdf_dir / f"{job_id}.pdf"
+        HTML(string=html).write_pdf(target=str(pdf_path))
+        logger.info("PDF generated: %s", pdf_path)
+        return str(pdf_path)
 
     async def _download_all_logs(self, job: CIJob) -> dict[str, str | None]:
         """预拉取所有可用日志到本地文件，返回路径 dict 供 CLI 读取"""

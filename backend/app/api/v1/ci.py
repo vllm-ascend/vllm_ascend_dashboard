@@ -1212,3 +1212,95 @@ async def update_claude_cli_config(
         db.add(row)
     await db.commit()
     return config_value
+
+
+# ============ Public Share API (no auth) ============
+
+@router.get("/public/analysis/{share_token}")
+async def get_public_analysis(
+    share_token: str,
+    db: DbSession,
+):
+    """通过分享链接查看分析报告（无需登录）"""
+    from app.models import JobFailureAnalysis
+
+    stmt = select(JobFailureAnalysis).where(JobFailureAnalysis.share_token == share_token)
+    result = await db.execute(stmt)
+    analysis = result.scalar_one_or_none()
+    if not analysis:
+        raise HTTPException(status_code=404, detail="分享链接不存在或已过期")
+    return analysis
+
+
+@router.get("/public/analysis/{share_token}/report")
+async def get_public_analysis_report(
+    share_token: str,
+    db: DbSession,
+    download: bool = Query(default=False),
+):
+    """通过分享链接查看/下载分析报告全文（无需登录）"""
+    from app.models import JobFailureAnalysis
+
+    stmt = select(JobFailureAnalysis).where(JobFailureAnalysis.share_token == share_token)
+    result = await db.execute(stmt)
+    analysis = result.scalar_one_or_none()
+    if not analysis or not analysis.report_file_path:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    from app.services.failure_analysis_file_store import FailureAnalysisFileStore
+
+    file_store = FailureAnalysisFileStore()
+    content = await file_store.read_report_by_path(analysis.report_file_path) or ""
+    if download:
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(content, media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=report_{analysis.job_id}.md"})
+    return {"content": content, "analysis": analysis}
+
+
+@router.get("/public/analysis/{share_token}/pdf")
+async def download_public_analysis_pdf(
+    share_token: str,
+    db: DbSession,
+):
+    """下载分析报告 PDF（无需登录）"""
+    from io import BytesIO
+
+    import markdown
+    from fastapi.responses import StreamingResponse
+
+    from app.models import JobFailureAnalysis
+
+    stmt = select(JobFailureAnalysis).where(JobFailureAnalysis.share_token == share_token)
+    result = await db.execute(stmt)
+    analysis = result.scalar_one_or_none()
+    if not analysis:
+        raise HTTPException(status_code=404, detail="报告不存在")
+
+    # 优先使用预生成的 PDF 缓存
+    if analysis.pdf_file_path:
+        from pathlib import Path
+        pdf_path = Path("/app/data") / analysis.pdf_file_path
+        if pdf_path.exists():
+            from fastapi.responses import FileResponse
+            return FileResponse(str(pdf_path), media_type="application/pdf",
+                filename=f"report_{analysis.job_id}.pdf")
+
+    # 无缓存时现场生成（稍慢但保证可用）
+    if not analysis.report_file_path:
+        raise HTTPException(status_code=404, detail="报告文件不存在")
+
+    from app.services.failure_analysis_file_store import FailureAnalysisFileStore
+    file_store = FailureAnalysisFileStore()
+    md_content = await file_store.read_report_by_path(analysis.report_file_path) or ""
+
+    from app.services.failure_analysis import FailureAnalysisService
+    svc = FailureAnalysisService()
+    pdf_path = await svc._generate_pdf(md_content, analysis.workflow_name, "", analysis.job_id)
+    if pdf_path:
+        analysis.pdf_file_path = pdf_path
+        await db.commit()
+        from fastapi.responses import FileResponse
+        return FileResponse(pdf_path, media_type="application/pdf",
+            filename=f"report_{analysis.job_id}.pdf")
+
+    raise HTTPException(status_code=500, detail="PDF 生成失败")
