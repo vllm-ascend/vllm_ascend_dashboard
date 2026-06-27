@@ -41,6 +41,15 @@ class FormatProxy:
         self._runner: web.AppRunner | None = None
         self._session: aiohttp.ClientSession | None = None
 
+        # 对话轮次日志
+        self._turn_counter: int = 0
+        self._conversation_log: list[dict] = []
+        self._log_file_path: str | None = None
+
+    def set_log_file(self, path: str) -> None:
+        """设置对话日志文件路径"""
+        self._log_file_path = path
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -89,6 +98,22 @@ class FormatProxy:
         if self._session:
             await self._session.close()
             self._session = None
+
+        # 保存对话轮次日志
+        if self._log_file_path and self._conversation_log:
+            try:
+                from pathlib import Path
+                log_path = Path(self._log_file_path)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.write_text(json.dumps({
+                    "total_turns": len(self._conversation_log),
+                    "model": self.upstream_model,
+                    "conversation": self._conversation_log,
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
+                logger.info("Conversation log saved: %s (%d turns)", log_path, len(self._conversation_log))
+            except Exception as e:
+                logger.warning("Failed to save conversation log: %s", e)
+
         logger.info("FormatProxy stopped")
 
     # ------------------------------------------------------------------
@@ -142,16 +167,53 @@ class FormatProxy:
         """非流式转发"""
         url = self._chat_completions_url()
         headers = self._upstream_headers()
+        self._turn_counter += 1
+        turn = self._turn_counter
+        t0 = time.monotonic()
 
         try:
             async with self._session.post(url, json=openai_body, headers=headers) as resp:
                 openai_resp = await resp.json()
+                elapsed = time.monotonic() - t0
                 if resp.status != 200:
                     return web.json_response(
                         self._openai_error_to_anthropic(openai_resp, resp.status),
                         status=resp.status,
                     )
                 anthropic_resp = self._openai_resp_to_anthropic(openai_resp, openai_body)
+
+                # 记录对话轮次（含 tool_calls）
+                messages_log = []
+                for m in openai_body.get("messages", []):
+                    entry = {"role": m.get("role", ""), "content": str(m.get("content", ""))[:3000]}
+                    # assistant 的 tool_calls
+                    if m.get("tool_calls"):
+                        entry["tool_calls"] = [
+                            {"name": tc.get("function", {}).get("name", ""),
+                             "args": str(tc.get("function", {}).get("arguments", ""))[:500]}
+                            for tc in m["tool_calls"]
+                        ]
+                    messages_log.append(entry)
+
+                self._conversation_log.append({
+                    "turn": turn,
+                    "request": {
+                        "model": openai_body.get("model", ""),
+                        "messages": messages_log,
+                    },
+                    "response": {
+                        "choices": [
+                            {
+                                "finish_reason": c.get("finish_reason", ""),
+                                "content": str(c.get("message", {}).get("content", ""))[:3000],
+                            }
+                            for c in openai_resp.get("choices", [])
+                        ],
+                        "usage": openai_resp.get("usage", {}),
+                    },
+                    "elapsed_ms": int(elapsed * 1000),
+                })
+
                 return web.json_response(anthropic_resp)
         except Exception as e:
             logger.error("Non-stream forward failed: %s", e)

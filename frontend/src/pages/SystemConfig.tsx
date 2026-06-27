@@ -25,6 +25,7 @@ import {
   Badge,
   Popconfirm,
   Progress,
+  Spin,
 } from 'antd'
 import {
   SettingOutlined,
@@ -72,6 +73,50 @@ import {
   getForceMergeRecords,
   type ProjectDashboardConfig,
 } from '../services/projectDashboard'
+import { getClaudeCLIConfig, updateClaudeCLIConfig, type ClaudeCLIConfig } from '../services/systemConfig'
+
+// Claude Code CLI config tab
+function ClaudeCLIConfigTab() {
+  const queryClient = useQueryClient()
+  const { data: config, isLoading } = useQuery({
+    queryKey: ['claude-cli-config'],
+    queryFn: getClaudeCLIConfig,
+  })
+  const mutation = useMutation({
+    mutationFn: updateClaudeCLIConfig,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['claude-cli-config'] })
+      message.success('Claude Code CLI 配置已更新')
+    },
+    onError: () => message.error('更新失败'),
+  })
+  const [form] = Form.useForm()
+
+  useEffect(() => {
+    if (config) form.setFieldsValue(config)
+  }, [config, form])
+
+  if (isLoading) return <Spin />
+
+  return (
+    <Card title={<Space><CodeOutlined />Claude Code CLI 配置</Space>} size="small">
+      <Form form={form} layout="inline" onFinish={(v) => mutation.mutate(v)}>
+        <Form.Item name="max_turns" label="最大轮次" rules={[{ required: true }]}>
+          <InputNumber min={10} max={200} style={{ width: 100 }} />
+        </Form.Item>
+        <Form.Item name="timeout_seconds" label="超时(秒)" rules={[{ required: true }]}>
+          <InputNumber min={300} max={7200} step={300} style={{ width: 120 }} />
+        </Form.Item>
+        <Form.Item>
+          <Button type="primary" htmlType="submit" loading={mutation.isPending}>保存</Button>
+        </Form.Item>
+      </Form>
+      <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
+        修改后下次分析生效。当前值: 最大 {config?.max_turns ?? 80} 轮, 超时 {(config?.timeout_seconds ?? 1800) / 60} 分钟
+      </div>
+    </Card>
+  )
+}
 import {
   getSyncConfigs as getModelSyncConfigs,
   deleteSyncConfig as deleteModelSyncConfig,
@@ -1441,6 +1486,16 @@ function SystemConfig() {
         </Space>
       ),
       children: llmProviderConfigTabContent,
+    },
+    {
+      key: 'cli_config',
+      label: (
+        <Space>
+          <CodeOutlined />
+          Claude Code CLI 配置
+        </Space>
+      ),
+      children: <ClaudeCLIConfigTab />,
     },
     {
       key: 'sync_config',

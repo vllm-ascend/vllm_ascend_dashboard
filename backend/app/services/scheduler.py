@@ -399,6 +399,16 @@ class DataSyncScheduler:
                 )
                 await db.commit()
 
+                # 同步完成后，更新本地代码仓库
+                try:
+                    from app.services.github_cache import get_github_cache
+                    cache = get_github_cache()
+                    if cache.clone():
+                        cache.pull()
+                    logger.info("Local repo updated after CI sync")
+                except Exception as e:
+                    logger.warning(f"Failed to update local repo (non-fatal): {e}")
+
                 # 同步完成后，分析新发现的失败 jobs
                 try:
                     await self._analyze_failed_jobs(db)

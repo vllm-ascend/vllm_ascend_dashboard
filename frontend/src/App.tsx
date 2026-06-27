@@ -32,6 +32,7 @@ import IssueDiagnosis from './pages/IssueDiagnosis'
 import Register from './pages/Register'
 import UserStats from './pages/UserStats'
 import TestObservabilityDashboard from './pages/TestObservabilityDashboard'
+import LogCenter from './pages/LogCenter'
 import { useCurrentUser } from './hooks/useCurrentUser'
 
 const queryClient = new QueryClient({
@@ -171,6 +172,8 @@ function App() {
               <Route path="pr-pipeline/:prNumber" element={<PRDetail />} />
               {/* Test Observability Dashboard */}
               <Route path="test-board" element={<TestObservabilityDashboard />} />
+              {/* 日志中心 */}
+              <Route path="logs" element={<LogCenter />} />
 
               {/* 仅管理员访问的路由 */}
               <Route
