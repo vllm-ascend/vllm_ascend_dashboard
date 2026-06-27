@@ -1,30 +1,23 @@
-"""Test fixtures for PR Pipeline bug fix tests."""
-import os
+"""Test fixtures for PR Pipeline and Test Board bug fix tests."""
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-
-# Ensure settings validation passes before any app imports
-os.environ.setdefault("JWT_SECRET", "test-jwt-secret-key-at-least-32-chars-long!!")
-os.environ.setdefault("GITHUB_TOKEN", "github_pat_test_token_for_ci_tests")
-os.environ.setdefault("GITHUB_OWNER", "vllm-ascend")
-os.environ.setdefault("GITHUB_REPO", "vllm-ascend")
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-# Ensure backend/ is on sys.path so `app` is importable
 backend_dir = str(Path(__file__).resolve().parent.parent)
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
 from app.models import Base, CIResult, PullRequest  # noqa: E402
+from app.models.test_board import TestCase, TestRun, TestSuiteSnapshot  # noqa: E402
 
 
 @pytest_asyncio.fixture
 async def db_session():
-    """Create an in-memory SQLite database with PullRequest and CIResult tables."""
+    """Create an in-memory SQLite database with all test tables."""
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         poolclass=StaticPool,
@@ -33,7 +26,13 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(
-                sync_conn, tables=[PullRequest.__table__, CIResult.__table__]
+                sync_conn, tables=[
+                    PullRequest.__table__,
+                    CIResult.__table__,
+                    TestCase.__table__,
+                    TestRun.__table__,
+                    TestSuiteSnapshot.__table__,
+                ]
             )
         )
 
@@ -43,6 +42,10 @@ async def db_session():
 
     await engine.dispose()
 
+
+# ---------------------------------------------------------------------------
+# PR Pipeline test helpers
+# ---------------------------------------------------------------------------
 
 def make_pr(
     pr_number: int,
@@ -110,4 +113,70 @@ def make_ci_result(
         hardware="A2",
         created_at=now,
         updated_at=now,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test Board test helpers
+# ---------------------------------------------------------------------------
+
+def make_test_case(
+    test_name: str = "test_example",
+    test_suite: str = "Nightly-A2",
+    hardware: str = "A2",
+    test_type: str = "e2e",
+    owner: str | None = None,
+    is_flaky: bool = False,
+    flaky_rate: float = 0.0,
+    pass_rate_7d: float | None = None,
+    health_score: float | None = None,
+    health_level: str | None = None,
+    avg_duration_seconds: float | None = None,
+    last_result: str = "passed",
+    module_name: str | None = None,
+) -> TestCase:
+    now = datetime.now(UTC)
+    return TestCase(
+        test_name=test_name,
+        test_suite=test_suite,
+        test_type=test_type,
+        hardware=hardware,
+        owner=owner,
+        is_flaky=is_flaky,
+        flaky_rate=flaky_rate,
+        pass_rate_7d=pass_rate_7d,
+        health_score=health_score,
+        health_level=health_level,
+        avg_duration_seconds=avg_duration_seconds,
+        last_result=last_result,
+        module_name=module_name,
+        first_seen_at=now,
+        last_seen_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def make_test_run(
+    test_case_id: int,
+    result: str = "passed",
+    duration_seconds: float | None = 60.0,
+    head_sha: str = "abc123",
+    failure_category: str | None = None,
+    started_at: datetime | None = None,
+    workflow_name: str = "Nightly-A2",
+    job_name: str = "Run Pytest",
+) -> TestRun:
+    now = started_at or datetime.now(UTC)
+    return TestRun(
+        test_case_id=test_case_id,
+        result=result,
+        duration_seconds=duration_seconds,
+        head_sha=head_sha,
+        failure_category=failure_category if result == "failed" else None,
+        workflow_name=workflow_name,
+        job_name=job_name,
+        started_at=now,
+        completed_at=now,
+        created_at=now,
     )
