@@ -2,7 +2,7 @@ import axios, { AxiosError, AxiosResponse } from 'axios'
 
 // 获取 API 基础 URL - 使用简单的方式避免 TypeScript 错误
 const API_BASE_URL = (typeof import.meta !== 'undefined' &&
-  (import.meta as any).env?.VITE_API_BASE_URL) || 'http://localhost:8000/api/v1'
+  (import.meta as any).env?.VITE_API_BASE_URL) || '/api/v1'
 
 // 创建 axios 实例
 const apiClient = axios.create({

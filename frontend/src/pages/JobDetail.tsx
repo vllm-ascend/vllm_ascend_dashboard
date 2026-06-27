@@ -89,7 +89,7 @@ function JobDetail() {
 
   const handleAnalyze = () => {
     if (!jobIdNum) return
-    analyzeMutation.mutate({ jobId: jobIdNum, force: !analysis })
+    analyzeMutation.mutate({ jobId: jobIdNum, force: true })
   }
 
   const handleReAnalyze = () => {

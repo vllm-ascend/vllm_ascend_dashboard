@@ -191,6 +191,7 @@ class ClaudeCodeCLI:
                 upstream_model=model,
             )
             await proxy.start()
+            proxy.set_log_file(str(debug_file).replace("_debug.log", "_conversation.json"))
 
             env = self._build_env_direct(
                 api_key="PROXY_MANAGED",
@@ -217,6 +218,7 @@ class ClaudeCodeCLI:
                 upstream_model=model,
             )
             await proxy.start()
+            proxy.set_log_file(str(debug_file).replace("_debug.log", "_conversation.json"))
 
             env = self._build_env_direct(
                 api_key="PROXY_MANAGED",
@@ -243,7 +245,7 @@ class ClaudeCodeCLI:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -251,8 +253,9 @@ class ClaudeCodeCLI:
             )
 
             try:
+                prompt_bytes = (getattr(self, "_stdin_prompt", prompt)).encode("utf-8")
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(),
+                    proc.communicate(input=prompt_bytes),
                     timeout=self._timeout,
                 )
             except asyncio.TimeoutError:
@@ -322,6 +325,15 @@ class ClaudeCodeCLI:
             return result
 
         finally:
+            # 清理临时文件
+            for attr in ("_sys_prompt_file",):
+                path = getattr(self, attr, None)
+                if path:
+                    try:
+                        import os as _os
+                        _os.unlink(path)
+                    except Exception:
+                        pass
             if proxy:
                 await proxy.stop()
 
@@ -437,8 +449,12 @@ class ClaudeCodeCLI:
         output_format: str,
         debug_file: str = "",
     ) -> list[str]:
-        """构建 claude CLI 命令行参数"""
-        args = ["-p", prompt, "--print", "--max-turns", str(max_turns)]
+        """构建 claude CLI 命令行参数（prompt 较大时通过 stdin 传入）"""
+        import tempfile
+        from pathlib import Path
+
+        self._stdin_prompt = prompt  # 通过 stdin 传入
+        args = ["--print", "--max-turns", str(max_turns)]
 
         if debug_file:
             args.extend(["--debug", "--debug-file", debug_file])
@@ -447,7 +463,18 @@ class ClaudeCodeCLI:
             args.extend(["--output-format", "json"])
 
         if system_prompt:
-            args.extend(["--system-prompt", system_prompt])
+            # 写到 appuser 可读的目录（/tmp 对 su 用户不可见）
+            sp_dir = Path("/home/appuser/.claude/tmp")
+            sp_dir.mkdir(parents=True, exist_ok=True)
+            sys_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, encoding="utf-8", dir=str(sp_dir)
+            )
+            sys_file.write(system_prompt)
+            sys_file.close()
+            import shutil
+            shutil.chown(sys_file.name, user="appuser")
+            args.extend(["--system-prompt-file", sys_file.name])
+            self._sys_prompt_file = sys_file.name
 
         # 跳过权限确认（仅非 root 用户可用）
         args.append("--dangerously-skip-permissions")
@@ -499,12 +526,13 @@ async def run_with_fallback(
     system_prompt: str = "",
     work_dir: str | None = None,
     max_turns: int = 10,
+    timeout_seconds: int = 1800,
     output_format: str = "text",
 ) -> ClaudeCodeResult:
     """
     通过 Claude Code CLI 执行分析（仅 CLI，无降级）。
     """
-    cli = ClaudeCodeCLI()
+    cli = ClaudeCodeCLI(timeout_seconds=timeout_seconds)
 
     try:
         return await cli.run(

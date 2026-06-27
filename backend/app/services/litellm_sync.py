@@ -140,12 +140,10 @@ class LiteLLMSync:
 
         content = _build_config_yaml(model_list)
 
-        try:
-            Path(_CONFIG_FILE).write_text(content, encoding="utf-8")
-            logger.info("LiteLLM config written to %s (%d models)", _CONFIG_FILE, len(model_list))
-        except Exception as e:
-            logger.error("Failed to write LiteLLM config: %s", e)
-            return 0
+        config_path = Path(_CONFIG_FILE)
+        config_path.chmod(0o666)  # 修复部署时可能存在的权限问题
+        config_path.write_text(content, encoding="utf-8")
+        logger.info("LiteLLM config written to %s (%d models)", _CONFIG_FILE, len(model_list))
 
         if self.litellm_url:
             await self._reload()

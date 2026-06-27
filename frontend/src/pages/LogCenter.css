@@ -1,0 +1,128 @@
+/* LogCenter.css — Datadog-style log viewer */
+
+.log-center {
+  display: flex;
+  height: calc(100vh - 64px - 48px);
+  gap: 0;
+  background: #f5f5f5;
+}
+
+.log-center-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  padding: 20px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.log-center-sidebar h3 {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 8px 0;
+  opacity: 0.7;
+}
+
+.log-center-sidebar .ant-checkbox-wrapper {
+  color: #ccc;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.log-center-sidebar .ant-checkbox-wrapper:hover {
+  color: #fff;
+}
+
+.log-center-sidebar .ant-radio-wrapper {
+  color: #ccc;
+  font-size: 13px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.log-center-sidebar .ant-radio-wrapper:hover {
+  color: #fff;
+}
+
+.log-center-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e8e8e8;
+  background: #fafafa;
+  flex-shrink: 0;
+}
+
+.log-list-container {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.log-list-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #999;
+  font-size: 14px;
+}
+
+.log-pagination {
+  display: flex;
+  justify-content: center;
+  padding: 12px 16px;
+  border-top: 1px solid #e8e8e8;
+  background: #fafafa;
+  flex-shrink: 0;
+}
+
+.source-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.source-stat .count {
+  color: #fff;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+
+/* Sidebar Ant Design overrides */
+.log-center-sidebar .ant-checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.log-center-sidebar .ant-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.log-center-sidebar .ant-divider {
+  border-color: rgba(255, 255, 255, 0.1);
+  margin: 8px 0;
+}
