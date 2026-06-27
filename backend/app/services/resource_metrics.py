@@ -205,8 +205,8 @@ class ResourceMetricsService:
 
     def _normalize_metric(self, m: ResourceNpuMetrics | dict) -> dict:
         if isinstance(m, ResourceNpuMetrics):
-            return {
-                "collected_at": m.collected_at,
+            dt = m.collected_at
+            result = {
                 "npu_utilization": m.npu_utilization,
                 "npu_total": m.npu_total,
                 "npu_used": m.npu_used,
@@ -215,7 +215,16 @@ class ResourceMetricsService:
                 "pr_count": m.pr_count,
                 "top_pods": m.top_pods_json or [],
             }
-        return m
+        else:
+            dt = m.get("collected_at")
+            result = dict(m)
+        # MySQL TIMESTAMP 按 session 时区返回 naive datetime（容器为 UTC），
+        # 补上 UTC 时区，使 Pydantic 序列化为带 +00:00 的 ISO 串，
+        # 前端 dayjs 据此按浏览器本地时区显示，避免 8 小时偏差。
+        if dt is not None and getattr(dt, "tzinfo", None) is None:
+            dt = dt.replace(tzinfo=UTC)
+        result["collected_at"] = dt
+        return result
 
     def _time_bucket(self, dt: datetime, granularity_minutes: int) -> str:
         total_minutes = int(dt.timestamp()) // 60
