@@ -86,6 +86,14 @@ export interface PRPipelineMetrics {
     cumulative_percent: number
     count: number
   }[]
+  slowest_prs: {
+    pr_number: number
+    title: string
+    author: string
+    author_avatar_url: string | null
+    html_url: string | null
+    hours: number
+  }[]
 }
 
 export interface PRPipelineContributor {

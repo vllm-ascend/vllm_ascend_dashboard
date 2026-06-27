@@ -130,6 +130,7 @@ class PRPipelineMetrics(BaseModel):
     merge_rate: float = 0.0
     backlog_index: float = 0.0
     survival_distribution: list[dict[str, Any]] = []
+    slowest_prs: list[dict[str, Any]] = []
 
 
 class PRPipelineContributor(BaseModel):

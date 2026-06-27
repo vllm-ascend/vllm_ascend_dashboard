@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Tabs, Statistic, Row, Col, Table, Tag, Space, Button, message, Spin, Typography, Progress, Avatar, Tooltip, Badge, Select, Input } from 'antd'
+import { Card, Tabs, Statistic, Row, Col, Table, Tag, Space, Button, message, Spin, Typography, Avatar, Tooltip, Badge, Select, Input } from 'antd'
 import { PullRequestOutlined, SyncOutlined, DashboardOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined, TeamOutlined, ClockCircleOutlined, CheckCircleOutlined, ExclamationCircleOutlined, ThunderboltOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import * as hooks from '../hooks/usePRPipeline'
 import type { PullRequestResponse, PRPipelineContributor } from '../services/prPipeline'
 import dayjs from 'dayjs'
+import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, ReferenceLine, Cell } from 'recharts'
 
 const { Text, Title } = Typography
 
@@ -649,6 +650,29 @@ const MetricsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: 
     { label: <MetricTitle title="总周期" definitionKey="total_cycle" />, key: 'total_cycle_hours', metric: data.total_cycle_hours },
   ]
 
+  const shortName: Record<string, string> = {
+    first_response_hours: '首次响应',
+    review_to_approval_hours: 'Review→通过',
+    ci_duration_hours: 'CI耗时',
+    merge_hours: '合并时间',
+    total_cycle_hours: '总周期',
+  }
+  const percentileChartData = metricRows.map((r) => ({
+    name: shortName[r.key] || r.key,
+    P50: r.metric?.p50 ?? 0,
+    P90: r.metric?.p90 ?? 0,
+    均值: r.metric?.avg ?? 0,
+  }))
+
+  const survivalChartData = (data.survival_distribution || []).map((p) => ({ day: p.day, percent: p.cumulative_percent }))
+  const p50Day = survivalChartData.find((p) => p.percent >= 50)?.day ?? null
+  const p90Day = survivalChartData.find((p) => p.percent >= 90)?.day ?? null
+
+  const slowestChartData = (data.slowest_prs || []).map((p) => ({
+    name: `#${p.pr_number} ${p.title.length > 28 ? p.title.slice(0, 28) + '…' : p.title}`,
+    hours: p.hours,
+  }))
+
   return (
     <div>
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
@@ -681,63 +705,71 @@ const MetricsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: 
       </Row>
 
       <Card title="百分位指标（小时）" style={{ marginBottom: 24 }}>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={percentileChartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+            <YAxis tickFormatter={(v: any) => formatHours(Number(v))} tick={{ fontSize: 12 }} />
+            <RechartsTooltip formatter={(v: any) => formatHours(Number(v))} />
+            <Legend />
+            <Bar dataKey="P50" fill="#1677ff" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="P90" fill="#faad14" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="均值" fill="#52c41a" radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
         <Table
           dataSource={metricRows}
           rowKey="key"
           pagination={false}
+          size="small"
+          style={{ marginTop: 16 }}
           columns={[
-            {
-              title: '指标',
-              dataIndex: 'label',
-              key: 'label',
-              width: 200,
-            },
-            {
-              title: 'P50',
-              key: 'p50',
-              width: 120,
-              render: (_, row) => formatHours(row.metric?.p50),
-            },
-            {
-              title: 'P90',
-              key: 'p90',
-              width: 120,
-              render: (_, row) => formatHours(row.metric?.p90),
-            },
-            {
-              title: '平均值',
-              key: 'avg',
-              width: 120,
-              render: (_, row) => formatHours(row.metric?.avg),
-            },
-            {
-              title: '数量',
-              key: 'count',
-              width: 80,
-              render: (_, row) => row.metric?.count || 0,
-            },
+            { title: '指标', dataIndex: 'label', key: 'label', width: 200 },
+            { title: 'P50', key: 'p50', width: 100, render: (_, row) => formatHours(row.metric?.p50) },
+            { title: 'P90', key: 'p90', width: 100, render: (_, row) => formatHours(row.metric?.p90) },
+            { title: '平均值', key: 'avg', width: 100, render: (_, row) => formatHours(row.metric?.avg) },
+            { title: '数量', key: 'count', width: 80, render: (_, row) => row.metric?.count || 0 },
           ]}
         />
       </Card>
 
-      {data.survival_distribution && data.survival_distribution.length > 0 && (
-        <Card title="存活分布">
-          <Space direction="vertical" size={8}>
-            {data.survival_distribution.map((point: { day: number; hours_threshold: number; cumulative_percent: number; count: number }) => (
-              <div key={point.day} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Text strong>{Math.round(point.cumulative_percent)}%</Text>
-                <Text type="secondary">的 PR 在</Text>
-                <Text>{point.day} 天内</Text>
-                <Text type="secondary">合并 ({Math.round(point.hours_threshold)}h)</Text>
-                <Progress
-                  percent={Math.round(point.cumulative_percent)}
-                  size="small"
-                  style={{ width: 200 }}
-                  strokeColor={point.cumulative_percent >= 80 ? '#52c41a' : '#1677ff'}
-                />
-              </div>
-            ))}
-          </Space>
+      {survivalChartData.length > 0 && (
+        <Card title="存活分布（累计合并率）" style={{ marginBottom: 24 }}>
+          <ResponsiveContainer width="100%" height={280}>
+            <AreaChart data={survivalChartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="survivalGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#1677ff" stopOpacity={0.6} />
+                  <stop offset="100%" stopColor="#1677ff" stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="day" tickFormatter={(d: any) => `${d}d`} tick={{ fontSize: 12 }} />
+              <YAxis domain={[0, 100]} tickFormatter={(v: any) => `${v}%`} tick={{ fontSize: 12 }} />
+              <RechartsTooltip formatter={(v: any) => `${Math.round(Number(v))}%`} labelFormatter={(d: any) => `${d} 天内`} />
+              <Area type="monotone" dataKey="percent" stroke="#1677ff" fill="url(#survivalGrad)" name="累计合并率" />
+              {p50Day !== null && <ReferenceLine x={p50Day} stroke="#52c41a" strokeDasharray="4 4" label={{ value: `P50 ${p50Day}d`, position: 'top', fill: '#52c41a', fontSize: 11 }} />}
+              {p90Day !== null && <ReferenceLine x={p90Day} stroke="#faad14" strokeDasharray="4 4" label={{ value: `P90 ${p90Day}d`, position: 'top', fill: '#faad14', fontSize: 11 }} />}
+            </AreaChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
+
+      {slowestChartData.length > 0 && (
+        <Card title="最慢合并 PR Top 10（created → merged）" style={{ marginBottom: 24 }}>
+          <ResponsiveContainer width="100%" height={Math.max(260, slowestChartData.length * 34)}>
+            <BarChart data={slowestChartData} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" tickFormatter={(v: any) => formatHours(Number(v))} tick={{ fontSize: 12 }} />
+              <YAxis type="category" dataKey="name" width={240} tick={{ fontSize: 11 }} />
+              <RechartsTooltip formatter={(v: any) => formatHours(Number(v))} />
+              <Bar dataKey="hours" name="合并耗时" radius={[0, 3, 3, 0]}>
+                {slowestChartData.map((entry, i) => (
+                  <Cell key={i} fill={entry.hours >= 72 ? '#ff4d4f' : entry.hours >= 24 ? '#faad14' : '#52c41a'} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
       )}
     </div>
