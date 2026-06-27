@@ -398,7 +398,7 @@ class FailureAnalysisService:
         github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}"
         lines.append(f"\n- **GitHub Job URL**: {github_url}")
         lines.append(f"\n请严格按照「CI 失败分析报告模板」的章节结构输出分析报告，包括：基本信息表、问题分类、根因分析（证据来源按优先级排序+根因链路）、影响范围、修复建议表（含优先级和负责方）、关联PR、结论。报告末尾必须包含 JSON 代码块。")
-        lines.append(f"\n注意：本会话有轮次上限，请在证据充足后及时撰写报告，确保 JSON 代码块完整输出。")
+        lines.append(f"\n**⚠️ 关键**：本会话有轮次上限（{max_turns}轮），必须在轮次耗尽前完成报告。证据收集到 60%-70% 时就应该开始撰写，不要追求完美。报告末尾的 JSON 代码块是必须的——没有它分析会被标记为失败。")
         lines.append(f"\n**强制要求**：根因分析必须全面，禁止只分析单层就下结论。必须同时验证：1) 错误的直接触发点（代码行）2) 上游调用链的数据流转 3) 是否为代码变更引入（对比 commit diff）。如果这三个层面指向不同的方向，说明分析不完整，需要继续深挖直到证据链收敛到同一个根因。")
         lines.append(f"\n**代码修复建议**：利用本地代码仓（`{repo_path}`），通过 git show 查看关联文件完整内容，给出具体的代码修改建议（diff 格式优先），包括：修改文件路径、修改前代码、修改后代码、修改原因。")
         return "\n".join(lines)
@@ -645,6 +645,21 @@ class FailureAnalysisService:
                     break
             if category not in VALID_CATEGORIES:
                 category = "其他"
+
+        # JSON 块缺失时，从报告正文提取摘要
+        if not cause:
+            # 尝试匹配中文格式：**根因摘要**：xxx 或 根因: xxx
+            cause_match = re.search(r'(?:\*\*)?根因(?:摘要)?(?:\*\*)?\s*[:：]\s*(.+?)(?:\n|$)', raw)
+            if not cause_match:
+                cause_match = re.search(r'(?:\*\*)?Root Cause(?:\*\*)?\s*[:：]\s*(.+?)(?:\n|$)', raw)
+            if cause_match:
+                cause = cause_match.group(1).strip()[:200]
+        if not measures:
+            measures_match = re.search(r'(?:\*\*)?改进(?:建议|措施)(?:摘要)?(?:\*\*)?\s*[:：]\s*(.+?)(?:\n|$)', raw)
+            if not measures_match:
+                measures_match = re.search(r'(?:\*\*)?改进措施(?:\*\*)?\s*[:：]\s*(.+?)(?:\n|$)', raw)
+            if measures_match:
+                measures = measures_match.group(1).strip()[:200]
 
         return {
             "problem_category": category or "其他",
