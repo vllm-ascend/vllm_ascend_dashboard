@@ -259,7 +259,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting vLLM Ascend Dashboard application...")
 
     # 安装 DB 日志处理器，将应用日志持久化到数据库
-    setup_db_logging()
+    # TODO: setup_db_logging 与 uvicorn 事件循环冲突，暂时禁用
+    # setup_db_logging()
 
     # 启动时初始化数据库
     await init_db()
