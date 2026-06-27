@@ -31,6 +31,36 @@ _CLI_LOG_DIR = Path(settings.DATA_DIR) / "claude_logs"
 _FAILURE_ANALYSIS_DIR = Path(settings.DATA_DIR) / "failure-analysis"
 
 
+def _to_utc_datetime(value) -> datetime:
+    """Convert a DB timestamp value (str or datetime) to tz-aware UTC."""
+    if value is None:
+        return datetime.now(timezone.utc)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError:
+            for fmt in (
+                "%Y-%m-%d %H:%M:%S.%f",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+            ):
+                try:
+                    dt = datetime.strptime(value, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                return datetime.now(timezone.utc)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    return datetime.now(timezone.utc)
+
+
 # ---------------------------------------------------------------------------
 # File parsers
 # ---------------------------------------------------------------------------
@@ -368,11 +398,7 @@ class LogService:
                             if row.level
                             else "info"
                         ),
-                        timestamp=row.timestamp.replace(
-                            tzinfo=timezone.utc
-                        )
-                        if row.timestamp
-                        else datetime.now(timezone.utc),
+                        timestamp=_to_utc_datetime(row.timestamp),
                         summary=(row.message or "")[:200],
                         content=(
                             (row.message or "")
@@ -522,11 +548,7 @@ class LogService:
                             if row.level
                             else "info"
                         ),
-                        timestamp=row.timestamp.replace(
-                            tzinfo=timezone.utc
-                        )
-                        if row.timestamp
-                        else datetime.now(timezone.utc),
+                        timestamp=_to_utc_datetime(row.timestamp),
                         summary=(row.message or "")[:200],
                         content=(
                             (row.message or "")
