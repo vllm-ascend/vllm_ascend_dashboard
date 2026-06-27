@@ -763,10 +763,13 @@ class FailureAnalysisService:
             logger.warning("Async PDF generation failed: %s", e)
 
     async def _generate_pdf(self, md_content: str, workflow: str, job_name: str, job_id: int) -> str | None:
-        """将 markdown 报告生成为 PDF 文件，返回文件路径"""
+        """将 markdown 报告生成为 PDF 文件，返回文件路径（weasyprint 不可用时返回 None）"""
+        try:
+            from weasyprint import HTML
+        except ImportError:
+            return None
         import markdown
         from pathlib import Path
-        from weasyprint import HTML
 
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
