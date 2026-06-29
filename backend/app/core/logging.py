@@ -16,6 +16,14 @@ from app.db.base import SessionLocal
 
 logger = logging.getLogger(__name__)
 
+# Worker 专用 logger：不传播到 root，避免 flush 失败的 warning 经 DBLogHandler
+# 回流队列形成反馈循环。
+_worker_logger = logging.getLogger("app.core.logging._worker")
+_worker_logger.propagate = False
+if not _worker_logger.handlers:
+    _worker_logger.addHandler(logging.StreamHandler())
+    _worker_logger.setLevel(logging.WARNING)
+
 # Shared queue between the log handler (producer) and the DB worker (consumer).
 _log_queue: queue.Queue = queue.Queue(maxsize=10000)
 
@@ -50,12 +58,18 @@ class DBLogHandler(logging.Handler):
 
 
 async def _db_log_worker() -> None:
-    """Background worker: drain the queue and batch-insert into app_logs."""
+    """Background worker: drain the queue and batch-insert into app_logs.
+
+    注意：queue.Queue.get(timeout=1) 是阻塞同步调用，不能直接在事件循环
+    线程中执行，否则会阻塞 uvicorn 事件循环（启动时卡在 create_all）。
+    通过 run_in_executor 将阻塞 get 放到线程池执行，事件循环保持畅通。
+    """
+    loop = asyncio.get_running_loop()
     batch: list[dict] = []
 
     while True:
         try:
-            entry = _log_queue.get(timeout=1)
+            entry = await loop.run_in_executor(None, lambda: _log_queue.get(timeout=1))
             batch.append(entry)
 
             for _ in range(99):
@@ -73,7 +87,8 @@ async def _db_log_worker() -> None:
                 await _flush_batch(batch)
                 batch = []
         except Exception as e:
-            logger.warning("DB log worker error: %s", e)
+            # 用不传播到 root 的 worker logger，避免失败日志回流队列形成反馈循环
+            _worker_logger.warning("DB log worker error: %s", e)
             await asyncio.sleep(1)
 
 
