@@ -770,14 +770,17 @@ class FailureAnalysisService:
 
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
-body {{ font-family: 'Noto Sans CJK SC', 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; color: #333; line-height: 1.6; }}
-h1 {{ border-bottom: 2px solid #1890ff; padding-bottom: 8px; }}
-h2 {{ margin-top: 24px; color: #1890ff; }}
-table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
-th, td {{ border: 1px solid #d9d9d9; padding: 8px 12px; text-align: left; }}
+@page {{ size: A4; margin: 15mm; }}
+body {{ font-family: 'Noto Sans CJK SC', 'Segoe UI', Arial, sans-serif; max-width: 100%; margin: 0 auto; color: #333; line-height: 1.6; font-size: 12px; }}
+h1 {{ border-bottom: 2px solid #1890ff; padding-bottom: 8px; font-size: 18px; }}
+h2 {{ margin-top: 24px; color: #1890ff; font-size: 15px; page-break-before: auto; }}
+h3 {{ page-break-after: avoid; }}
+table {{ border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 11px; page-break-inside: avoid; }}
+th, td {{ border: 1px solid #d9d9d9; padding: 6px 8px; text-align: left; word-break: break-all; }}
 th {{ background: #f5f5f5; }}
-pre {{ background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; }}
-code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }}
+pre {{ background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 10px; white-space: pre-wrap; word-wrap: break-word; max-width: 100%; }}
+code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 10px; }}
+img {{ max-width: 100%; }}
 </style></head><body>
 {markdown.markdown(md_content, extensions=['tables', 'fenced_code'])}
 </body></html>"""

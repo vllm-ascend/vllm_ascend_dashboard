@@ -136,7 +136,13 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
             icon={<ShareAltOutlined />}
             onClick={() => {
               const url = `${window.location.origin}/share/${currentAnalysis.share_token}`
-              navigator.clipboard.writeText(url).then(() => message.success('分享链接已复制'))
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(url).then(() => message.success('分享链接已复制')).catch(() => {
+                  const input = document.createElement('input'); input.value = url; document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove(); message.success('分享链接已复制')
+                })
+              } else {
+                const input = document.createElement('input'); input.value = url; document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove(); message.success('分享链接已复制')
+              }
             }}
           >
             复制分享链接
