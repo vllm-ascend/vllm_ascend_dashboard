@@ -110,6 +110,39 @@ def _parse_cli_log_file(filepath: Path) -> Optional[LogEntryResponse]:
             stdout_text = stdout_text[:stderr_start]
         summary = stdout_text.strip()[:200]
 
+    # 尝试加载 conversation.json 获取轮次详情
+    conversation_content = ""
+    conv_path = filepath.parent / filepath.name.replace(".log", "_conversation.json")
+    if conv_path.exists():
+        try:
+            import json
+            conv_data = json.loads(conv_path.read_text(encoding="utf-8"))
+            turns = conv_data.get("conversation", [])
+            if turns:
+                lines = [f"总轮数: {len(turns)}"]
+                for t in turns:
+                    tn = t.get("turn", "?")
+                    resp = t.get("response", {})
+                    choices = resp.get("choices", [])
+                    elapsed = t.get("elapsed_ms", 0)
+                    is_tool = all(c.get("content", "") == "" for c in choices)
+                    if is_tool:
+                        lines.append(f"\n[轮次 {tn}] (工具调用, {elapsed}ms)")
+                        # 列出 tool calls
+                        for m in t.get("request", {}).get("messages", []):
+                            for tc in m.get("tool_calls", []):
+                                lines.append(f"  → {tc.get('name', '?')}: {tc.get('args', '')[:200]}")
+                    else:
+                        content_preview = ""
+                        for c in choices:
+                            if c.get("content"):
+                                content_preview = c["content"][:300]
+                                break
+                        lines.append(f"\n[轮次 {tn}] ({elapsed}ms): {content_preview}")
+                conversation_content = "\n".join(lines)
+        except Exception:
+            pass
+
     stat = filepath.stat()
     timestamp = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
 
@@ -123,7 +156,7 @@ def _parse_cli_log_file(filepath: Path) -> Optional[LogEntryResponse]:
         level=level,
         timestamp=timestamp,
         summary=summary,
-        content=content,
+        content=conversation_content if conversation_content else content,
         metadata=LogEntryMetadata(
             provider=provider,
             model=model,

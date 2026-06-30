@@ -175,8 +175,8 @@ function App() {
               <Route path="pr-pipeline/:prNumber" element={<PRDetail />} />
               {/* Test Observability Dashboard */}
               <Route path="test-board" element={<TestObservabilityDashboard />} />
-              {/* 日志中心 */}
-              <Route path="logs" element={<LogCenter />} />
+              {/* 日志中心（仅开发模式） */}
+              {import.meta.env.DEV && <Route path="logs" element={<LogCenter />} />}
 
               {/* 仅管理员访问的路由 */}
               <Route
