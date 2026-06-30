@@ -31,6 +31,7 @@ __all__ = [
     "PullRequest",
     "UserLoginLog", "FeatureUsageLog", "TokenBlacklist",
     "TestCase", "TestRun", "TestSuiteSnapshot", "FailureAnnotation",
+    "AppLog",
 ]
 
 
@@ -504,3 +505,17 @@ class PullRequest(Base):
     __table_args__ = (
         UniqueConstraint("pr_number", "owner", "repo", name="uq_pr_owner_repo"),
     )
+
+
+class AppLog(Base):
+    """应用日志（DB 日志 handler 持久化目标表）"""
+    __tablename__ = "app_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(String(30))
+    level = Column(String(10), index=True)
+    module = Column(String(200))
+    function_name = Column(String(200))
+    line_number = Column(Integer)
+    message = Column(Text)
+    traceback = Column(Text)
