@@ -248,6 +248,7 @@ class PRPipelineService:
             backlog_index = round(float(open_non_draft), 1) if open_non_draft > 0 else 0.0
 
         survival = await self._survival_distribution(db, owner, repo, days)
+        slowest = await self._slowest_prs(db, owner, repo, since)
 
         return PRPipelineMetrics(
             first_response_hours=first_response,
@@ -258,6 +259,7 @@ class PRPipelineService:
             merge_rate=merge_rate,
             backlog_index=backlog_index,
             survival_distribution=survival,
+            slowest_prs=slowest,
         )
 
     async def get_contributors(
@@ -511,6 +513,48 @@ class PRPipelineService:
         p90 = round(values[int(n * 0.9)], 1) if n > 1 else round(values[-1], 1) if n > 0 else None
 
         return PRPipelinePercentileMetric(p50=p50, p90=p90, avg=avg, count=n)
+
+    async def _slowest_prs(
+        self,
+        db: AsyncSession,
+        owner: str,
+        repo: str,
+        since: datetime,
+        limit: int = 10,
+    ) -> list[dict]:
+        """最慢合并的 PR（按 created_at → merged_at 耗时倒序）Top N。"""
+        stmt = select(
+            PullRequest.pr_number,
+            PullRequest.title,
+            PullRequest.author,
+            PullRequest.author_avatar_url,
+            PullRequest.html_url,
+            PullRequest.merged_at,
+            PullRequest.created_at,
+        ).where(
+            PullRequest.owner == owner,
+            PullRequest.repo == repo,
+            PullRequest.state == "merged",
+            PullRequest.merged_at.isnot(None),
+            PullRequest.created_at >= since,
+        )
+        result = await db.execute(stmt)
+        rows = result.all()
+        items: list[dict] = []
+        for r in rows:
+            if r[5] is None or r[6] is None:
+                continue
+            hours = round((r[5] - r[6]).total_seconds() / 3600, 1)
+            items.append({
+                "pr_number": r[0],
+                "title": r[1],
+                "author": r[2],
+                "author_avatar_url": r[3],
+                "html_url": r[4],
+                "hours": hours,
+            })
+        items.sort(key=lambda x: x["hours"], reverse=True)
+        return items[:limit]
 
     async def _survival_distribution(
         self,

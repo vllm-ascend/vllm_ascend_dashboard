@@ -77,7 +77,14 @@ export default function ShareReport() {
 
       <Space style={{ marginBottom: 24 }}>
         <Button type="primary" icon={<DownloadOutlined />} onClick={() => { window.location.href = `/api/v1/ci/public/analysis/${token}/pdf` }}>下载 PDF</Button>
-        <Button icon={<ShareAltOutlined />} onClick={() => { navigator.clipboard.writeText(window.location.href) }}>复制链接</Button>
+        <Button icon={<ShareAltOutlined />} onClick={() => {
+          const url = window.location.href
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(url).catch(() => { const i=document.createElement('input'); i.value=url; document.body.appendChild(i); i.select(); document.execCommand('copy'); i.remove() })
+          } else {
+            const i=document.createElement('input'); i.value=url; document.body.appendChild(i); i.select(); document.execCommand('copy'); i.remove()
+          }
+        }}>复制链接</Button>
         <Button onClick={() => { window.location.href = `/api/v1/ci/public/analysis/${token}/report?download=1` }}>下载报告(.md)</Button>
       </Space>
 

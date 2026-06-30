@@ -199,6 +199,13 @@ class FailureAnalysisService:
                     f"content_len={len(raw)}, stderr={llm_result.stderr[:200] if llm_result.stderr else 'none'}"
                 )
 
+            # 检测 LLM/API 层错误：CLI 会把上游 API 错误（如 400 Invalid model name）
+            # 作为 content 返回，此类输出不是有效分析结果，应标记为 failed
+            # 而非被 parse_llm_response 兜底为 completed/其他
+            api_err = self._detect_api_error(raw)
+            if api_err:
+                raise RuntimeError(f"LLM API error: {api_err}")
+
             parsed = self.parse_llm_response(raw)
             if not parsed.get("problem_category"):
                 raise RuntimeError(
@@ -479,7 +486,15 @@ class FailureAnalysisService:
 
         last_success = None
         for run in recent_runs:
-            if run.conclusion == "success" and run.run_id != current_run_id:
+            if run.run_id == current_run_id:
+                continue
+            # 找到此 job 真正执行的 run（不是 skipped）
+            job_stmt = select(CIJob).where(
+                and_(CIJob.run_id == run.run_id, CIJob.job_name == job.job_name)
+            ).limit(1)
+            jr = await db.execute(job_stmt)
+            hj = jr.scalar_one_or_none()
+            if hj and hj.conclusion == "success":
                 last_success = run
                 break
 
@@ -592,6 +607,34 @@ class FailureAnalysisService:
             fingerprint_data = json.dumps({"failed_steps": failed_steps}, sort_keys=True)
 
         return hashlib.md5(fingerprint_data.encode()).hexdigest()
+
+    @staticmethod
+    def _detect_api_error(raw: str) -> str | None:
+        """检测 CLI 输出是否实为上游 LLM/API 错误（而非分析结果）。
+
+        Claude Code CLI 在上游返回错误时，会把错误信息作为 content 返回
+        （如 "API Error: 400 /chat/completions: Invalid model name ..."）。
+        此类内容会被 parse_llm_response 兜底为 problem_category="其他"，
+        从而把失败误标为 completed。这里提前识别并返回错误描述，
+        由上层 except 标记 analysis_status="failed" 并写入 error_message。
+        """
+        text = raw.strip()
+        if not text:
+            return None
+        low = text.lower()
+        signatures = (
+            "api error",
+            "invalid model name",
+            "model not found",
+            "model is not supported",
+            "call `/v1/models`",
+        )
+        # 仅当内容较短（疑似纯错误消息）时判定，避免误伤含 error 字样的正常分析
+        if len(text) < 400:
+            for sig in signatures:
+                if sig in low:
+                    return text[:300]
+        return None
 
     @staticmethod
     def parse_llm_response(raw: str) -> dict:
@@ -735,14 +778,17 @@ class FailureAnalysisService:
 
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
-body {{ font-family: 'Noto Sans CJK SC', 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; color: #333; line-height: 1.6; }}
-h1 {{ border-bottom: 2px solid #1890ff; padding-bottom: 8px; }}
-h2 {{ margin-top: 24px; color: #1890ff; }}
-table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
-th, td {{ border: 1px solid #d9d9d9; padding: 8px 12px; text-align: left; }}
+@page {{ size: A4; margin: 15mm; }}
+body {{ font-family: 'Noto Sans CJK SC', 'Segoe UI', Arial, sans-serif; max-width: 100%; margin: 0 auto; color: #333; line-height: 1.6; font-size: 12px; }}
+h1 {{ border-bottom: 2px solid #1890ff; padding-bottom: 8px; font-size: 18px; }}
+h2 {{ margin-top: 24px; color: #1890ff; font-size: 15px; page-break-before: auto; }}
+h3 {{ page-break-after: avoid; }}
+table {{ border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 11px; page-break-inside: avoid; }}
+th, td {{ border: 1px solid #d9d9d9; padding: 6px 8px; text-align: left; word-break: break-all; }}
 th {{ background: #f5f5f5; }}
-pre {{ background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; }}
-code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; }}
+pre {{ background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 10px; white-space: pre-wrap; word-wrap: break-word; max-width: 100%; }}
+code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 10px; }}
+img {{ max-width: 100%; }}
 </style></head><body>
 {markdown.markdown(md_content, extensions=['tables', 'fenced_code'])}
 </body></html>"""
