@@ -486,7 +486,15 @@ class FailureAnalysisService:
 
         last_success = None
         for run in recent_runs:
-            if run.conclusion == "success" and run.run_id != current_run_id:
+            if run.run_id == current_run_id:
+                continue
+            # 找到此 job 真正执行的 run（不是 skipped）
+            job_stmt = select(CIJob).where(
+                and_(CIJob.run_id == run.run_id, CIJob.job_name == job.job_name)
+            ).limit(1)
+            jr = await db.execute(job_stmt)
+            hj = jr.scalar_one_or_none()
+            if hj and hj.conclusion == "success":
                 last_success = run
                 break
 
