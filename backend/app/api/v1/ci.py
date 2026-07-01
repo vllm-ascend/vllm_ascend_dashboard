@@ -326,6 +326,12 @@ async def get_ci_trends(
                 else_=None
             )
         ).label('avg_duration'),
+        func.max(
+            case(
+                (CIResult.duration_seconds.isnot(None), CIResult.duration_seconds),
+                else_=None
+            )
+        ).label('max_duration'),
     ).where(
         CIResult.created_at >= start_date,
         CIResult.created_at <= end_date,
@@ -355,6 +361,7 @@ async def get_ci_trends(
             success_runs=row.success_runs,
             success_rate=round(row.success_runs / row.total_runs * 100, 2) if row.total_runs > 0 else 0.0,
             avg_duration_seconds=float(row.avg_duration) if row.avg_duration else None,
+            max_duration_seconds=float(row.max_duration) if row.max_duration else None,
         ))
 
     return trends

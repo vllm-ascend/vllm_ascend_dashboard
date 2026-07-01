@@ -65,6 +65,7 @@ export interface CITrend {
   success_runs: number
   success_rate: number
   avg_duration_seconds: number | null
+  max_duration_seconds: number | null
 }
 
 export interface CISyncResponse {

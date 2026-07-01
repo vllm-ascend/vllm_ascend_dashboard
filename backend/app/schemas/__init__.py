@@ -280,6 +280,7 @@ class CITrend(BaseModel):
     success_runs: int
     success_rate: float
     avg_duration_seconds: float | None = None
+    max_duration_seconds: float | None = None
 
 
 class CISyncResponse(BaseModel):
