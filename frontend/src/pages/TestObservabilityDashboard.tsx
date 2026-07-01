@@ -93,6 +93,22 @@ function TestObservabilityDashboard() {
       ellipsis: true,
     },
     {
+      title: '归类',
+      dataIndex: 'category',
+      key: 'category',
+      width: 100,
+      render: (category: string | null) => {
+        if (!category) return '-'
+        const colors: Record<string, string> = {
+          nightly: 'blue',
+          weekly: 'purple',
+          'e2e-full': 'cyan',
+          other: 'default',
+        }
+        return <Tag color={colors[category] || 'default'}>{category}</Tag>
+      },
+    },
+    {
       title: '硬件',
       dataIndex: 'hardware',
       key: 'hardware',

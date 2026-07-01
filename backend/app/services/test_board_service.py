@@ -309,8 +309,10 @@ class TestBoardService:
             test_steps = [s for s in steps if "test" in s.get("name", "").lower()]
             if test_steps:
                 for step in test_steps:
+                    step_name = step.get("name", "")
                     parsed_results.append({
-                        "test_name": step.get("name", ""), "test_file": step.get("name", ""),
+                        "test_name": f"{ci_job.job_name} / {step_name}" if ci_job.job_name else step_name,
+                        "test_file": step_name,
                         "result": "passed" if step.get("conclusion") == "success" else "failed" if step.get("conclusion") == "failure" else "skipped",
                         "duration_seconds": None, "data_granularity": "step_level",
                     })
@@ -364,6 +366,8 @@ class TestBoardService:
             existing.last_seen_at = datetime.now(UTC)
             existing.last_result = parsed_result.get("result")
             existing.inference_confidence = metadata.get("inference_confidence", existing.inference_confidence)
+            if not existing.category:
+                existing.category = metadata.get("category", "other")
             return existing
 
         owner_stmt = select(JobOwner.owner, JobOwner.email).where(
@@ -373,6 +377,7 @@ class TestBoardService:
 
         tc = TestCase(
             test_name=test_name, test_suite=suite, test_type=metadata.get("test_type", "unknown"),
+            category=metadata.get("category", "other"),
             hardware=hardware, card_count=metadata.get("card_count"),
             module_name=metadata.get("module_name"), file_path=parsed_result.get("test_file"),
             class_name=parsed_result.get("class_name"),
@@ -391,6 +396,14 @@ class TestBoardService:
         jn = job_name.lower()
         wf = workflow_name.lower()
         test_type = "e2e" if "e2e" in jn or "nightly" in wf else "ut" if "ut" in jn else "unknown"
+        if "nightly" in wf:
+            category = "nightly"
+        elif "weekly" in wf:
+            category = "weekly"
+        elif "e2e-full" in wf or "e2e_full" in wf:
+            category = "e2e-full"
+        else:
+            category = "other"
         hw = hardware or ("A3" if "a3" in wf else "A2" if "a2" in wf else "unknown")
         card = 4 if "4card" in jn or "four_card" in jn else 2 if "2card" in jn or "two_card" in jn else 1 if "1card" in jn or "one_card" in jn or "single" in jn else None
         module = None
@@ -403,7 +416,7 @@ class TestBoardService:
         if hw != "unknown": confidence += 0.25
         if card is not None: confidence += 0.25
         if module is not None: confidence += 0.25
-        return {"test_type": test_type, "test_suite": workflow_name, "hardware": hw, "card_count": card, "module_name": module, "inference_confidence": confidence}
+        return {"test_type": test_type, "category": category, "test_suite": workflow_name, "hardware": hw, "card_count": card, "module_name": module, "inference_confidence": confidence}
 
     async def _get_recent_results(self, test_case_id: int, days: int) -> list[str]:
         cutoff = datetime.now(UTC) - timedelta(days=days)
