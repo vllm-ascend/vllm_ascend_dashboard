@@ -424,8 +424,9 @@ class CICollector:
         """
         计算运行时长（秒）
 
-        优先使用 GitHub 的 run_started_at / run_updated_at（实际执行窗口），
-        回退到 created_at / updated_at。
+        started_at 优先使用 GitHub 的 run_started_at（实际执行开始），
+        排除排队等待时间；completed_at 使用 updated_at（GitHub API
+        无 run_updated_at 字段，updated_at 即为运行结束时间）。
 
         Args:
             run: workflow run 数据
@@ -434,7 +435,7 @@ class CICollector:
             时长（秒），无法计算时返回 None
         """
         started_at = self._parse_datetime(run.get("run_started_at") or run.get("created_at"))
-        completed_at = self._parse_datetime(run.get("run_updated_at") or run.get("updated_at"))
+        completed_at = self._parse_datetime(run.get("updated_at"))
 
         if started_at and completed_at:
             return int((completed_at - started_at).total_seconds())

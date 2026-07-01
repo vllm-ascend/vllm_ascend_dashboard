@@ -5,6 +5,7 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   ReloadOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons'
 import { useJobStats, useHiddenJobsList } from '../hooks/useJobOwners'
 import { useFailureAnalysisList } from '../hooks/useFailureAnalysis'
@@ -278,6 +279,12 @@ function JobBoard() {
       </div>
 
       {/* 汇总卡片 */}
+      {(() => {
+        const longestJob = filteredJobStats.length > 0
+          ? filteredJobStats.reduce((max, j) => (j.max_duration_seconds || 0) > (max?.max_duration_seconds || 0) ? j : max, filteredJobStats[0])
+          : undefined
+        const avgSumMinutes = Math.round(filteredJobStats.reduce((sum, j) => sum + (j.avg_duration_seconds || 0), 0) / 60)
+        return (
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={6}>
           <Card>
@@ -296,8 +303,12 @@ function JobBoard() {
         <Col span={6}>
           <Card>
             <Statistic
-              title="平均时长之和"
-              value={Math.round(filteredJobStats.reduce((sum, j) => sum + (j.avg_duration_seconds || 0), 0) / 60)}
+              title={
+                <Tooltip title="各 Job 平均时长的累加值，反映总计算负载，非流水线壁钟时长">
+                  <span style={{ cursor: 'help', borderBottom: '1px dashed #bbb' }}>平均时长之和 <InfoCircleOutlined style={{ fontSize: 12, color: '#999' }} /></span>
+                </Tooltip>
+              }
+              value={avgSumMinutes}
               suffix="分钟"
             />
           </Card>
@@ -306,21 +317,17 @@ function JobBoard() {
           <Card>
             <Statistic
               title="最长 Job"
-              value={
-                filteredJobStats.length > 0
-                  ? filteredJobStats.reduce((max, j) => (j.max_duration_seconds || 0) > (max?.max_duration_seconds || 0) ? j : max, filteredJobStats[0])?.job_name || '—'
-                  : '—'
-              }
+              value={longestJob?.job_name || '—'}
               valueStyle={{ fontSize: 14 }}
             />
             <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-              {filteredJobStats.length > 0
-                ? formatDuration(filteredJobStats.reduce((max, j) => (j.max_duration_seconds || 0) > (max?.max_duration_seconds || 0) ? j : max, filteredJobStats[0])?.max_duration_seconds)
-                : '—'}
+              {longestJob ? formatDuration(longestJob.max_duration_seconds) : '—'}
             </div>
           </Card>
         </Col>
       </Row>
+        )
+      })()}
 
       {/* 统计表格 */}
       <Card>

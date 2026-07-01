@@ -307,13 +307,13 @@ function CIBoard() {
                         <ResponsiveContainer width="100%" height={220}>
                           <LineChart data={trends.map(t => ({
                             date: dayjs(t.date).format('MM-DD'),
-                            duration: t.avg_duration_seconds ? Math.round(t.avg_duration_seconds / 60) : 0,
+                            duration: t.avg_duration_seconds ? Math.round(t.avg_duration_seconds / 60) : null,
                           }))}>
                             <CartesianGrid strokeDasharray="3 3" />
                             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                            <YAxis tickFormatter={(v: any) => `${v}m`} tick={{ fontSize: 11 }} />
-                            <RechartsTooltip formatter={(v: any) => `${v} 分钟`} />
-                            <Line type="monotone" dataKey="duration" stroke="#1677ff" strokeWidth={2} name="平均时长" dot={{ r: 3 }} />
+                            <YAxis tickFormatter={(v: number) => `${v}m`} tick={{ fontSize: 11 }} />
+                            <RechartsTooltip formatter={(v: number) => `${v} 分钟`} />
+                            <Line type="monotone" dataKey="duration" stroke="#1677ff" strokeWidth={2} name="平均时长" dot={{ r: 3 }} connectNulls />
                           </LineChart>
                         </ResponsiveContainer>
                       </Card>
@@ -327,8 +327,8 @@ function CIBoard() {
                           }))}>
                             <CartesianGrid strokeDasharray="3 3" />
                             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                            <YAxis domain={[0, 100]} tickFormatter={(v: any) => `${v}%`} tick={{ fontSize: 11 }} />
-                            <RechartsTooltip formatter={(v: any) => `${v}%`} />
+                            <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 11 }} />
+                            <RechartsTooltip formatter={(v: number) => `${v}%`} />
                             <Line type="monotone" dataKey="rate" stroke="#52c41a" strokeWidth={2} name="成功率" dot={{ r: 3 }} />
                           </LineChart>
                         </ResponsiveContainer>
