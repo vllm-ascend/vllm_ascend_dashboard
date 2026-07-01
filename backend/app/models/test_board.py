@@ -26,6 +26,7 @@ class TestCase(Base):
     test_suite = Column(String(100), nullable=False, index=True)
     module_name = Column(String(100), index=True)
     test_type = Column(String(20), nullable=False, index=True)
+    category = Column(String(20), index=True)  # nightly, weekly, e2e-full, other
     hardware = Column(String(20), index=True)
     card_count = Column(Integer)
     file_path = Column(String(500))

@@ -16,6 +16,7 @@ export interface TestCaseItem {
   test_suite: string
   module_name: string | null
   test_type: string
+  category: string | null
   hardware: string | null
   card_count: number | null
   owner: string | null

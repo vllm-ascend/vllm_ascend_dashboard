@@ -22,6 +22,7 @@ class TestCaseResponse(BaseModel):
     test_suite: str
     module_name: str | None = None
     test_type: str
+    category: str | None = None
     hardware: str | None = None
     card_count: int | None = None
     file_path: str | None = None
