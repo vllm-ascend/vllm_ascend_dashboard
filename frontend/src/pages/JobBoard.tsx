@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Space, Tag, Select, Typography, Button, Tooltip } from 'antd'
+import { Card, Table, Space, Tag, Select, Typography, Button, Tooltip, Row, Col, Statistic } from 'antd'
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   ReloadOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons'
 import { useJobStats, useHiddenJobsList } from '../hooks/useJobOwners'
 import { useFailureAnalysisList } from '../hooks/useFailureAnalysis'
@@ -276,6 +277,57 @@ function JobBoard() {
           </Button>
         </Space>
       </div>
+
+      {/* 汇总卡片 */}
+      {(() => {
+        const longestJob = filteredJobStats.length > 0
+          ? filteredJobStats.reduce((max, j) => (j.max_duration_seconds || 0) > (max?.max_duration_seconds || 0) ? j : max, filteredJobStats[0])
+          : undefined
+        const avgSumMinutes = Math.round(filteredJobStats.reduce((sum, j) => sum + (j.avg_duration_seconds || 0), 0) / 60)
+        return (
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col span={6}>
+          <Card>
+            <Statistic title="Job 总数" value={filteredJobStats.length} suffix="个" />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="有耗时数据"
+              value={filteredJobStats.filter(j => j.avg_duration_seconds != null).length}
+              suffix="个"
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title={
+                <Tooltip title="各 Job 平均时长的累加值，反映总计算负载，非流水线壁钟时长">
+                  <span style={{ cursor: 'help', borderBottom: '1px dashed #bbb' }}>平均时长之和 <InfoCircleOutlined style={{ fontSize: 12, color: '#999' }} /></span>
+                </Tooltip>
+              }
+              value={avgSumMinutes}
+              suffix="分钟"
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="最长 Job"
+              value={longestJob?.job_name || '—'}
+              valueStyle={{ fontSize: 14 }}
+            />
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+              {longestJob ? formatDuration(longestJob.max_duration_seconds) : '—'}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+        )
+      })()}
 
       {/* 统计表格 */}
       <Card>

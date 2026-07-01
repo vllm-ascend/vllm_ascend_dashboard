@@ -6,7 +6,7 @@ import {
   BarChartOutlined,
   RobotOutlined,
 } from '@ant-design/icons'
-import { useCIStats, useRuns } from '../hooks/useCI'
+import { useCIStats, useRuns, useCITrends } from '../hooks/useCI'
 import { useAnalyzeBatch } from '../hooks/useFailureAnalysis'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
@@ -15,6 +15,7 @@ import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
 import api from '../services/api'
 import { renderStatusTag, renderConclusionTag, formatDuration, renderHardwareTag } from '../utils/ciRenderers'
 import { CIResult } from '../services/ci'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
 import JobBoard from './JobBoard'
 import './CIBoard.css'
 
@@ -69,6 +70,12 @@ function CIBoard() {
     workflow_name: workflowFilter.length > 0 ? workflowFilter[0] : undefined,
     hardware: hardwareFilter.length > 0 ? hardwareFilter[0] : undefined,
     limit: 50,
+  })
+
+  const { data: trends } = useCITrends({
+    days: 30,
+    workflow_name: workflowFilter.length > 0 ? workflowFilter[0] : undefined,
+    hardware: hardwareFilter.length > 0 ? hardwareFilter[0] : undefined,
   })
 
   const analyzeBatchMutation = useAnalyzeBatch()
@@ -291,6 +298,44 @@ function CIBoard() {
                     </Card>
                   </Col>
                 </Row>
+
+                {/* 趋势图表 */}
+                {trends && trends.length > 0 && (
+                  <Row gutter={16} style={{ marginBottom: 24 }}>
+                    <Col span={12}>
+                      <Card title="时长变化趋势（近 30 天）">
+                        <ResponsiveContainer width="100%" height={220}>
+                          <LineChart data={trends.map(t => ({
+                            date: dayjs(t.date).format('MM-DD'),
+                            duration: t.avg_duration_seconds ? Math.round(t.avg_duration_seconds / 60) : null,
+                          }))}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                            <YAxis tickFormatter={(v: number) => `${v}m`} tick={{ fontSize: 11 }} />
+                            <RechartsTooltip formatter={(v: number) => `${v} 分钟`} />
+                            <Line type="monotone" dataKey="duration" stroke="#1677ff" strokeWidth={2} name="平均时长" dot={{ r: 3 }} connectNulls />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </Card>
+                    </Col>
+                    <Col span={12}>
+                      <Card title="成功率变化趋势（近 30 天）">
+                        <ResponsiveContainer width="100%" height={220}>
+                          <LineChart data={trends.map(t => ({
+                            date: dayjs(t.date).format('MM-DD'),
+                            rate: t.success_rate,
+                          }))}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                            <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 11 }} />
+                            <RechartsTooltip formatter={(v: number) => `${v}%`} />
+                            <Line type="monotone" dataKey="rate" stroke="#52c41a" strokeWidth={2} name="成功率" dot={{ r: 3 }} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </Card>
+                    </Col>
+                  </Row>
+                )}
 
                 {/* 运行记录表格 */}
                 <Card title="运行记录">
