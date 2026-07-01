@@ -6,6 +6,8 @@ echo "Starting vLLM Ascend Dashboard backend..."
 # Fix permissions on mounted volumes
 chown -R appuser:appuser /app/data /app/logs
 chmod -R 755 /app/data /app/logs
+# LiteLLM 配置文件也需要可写
+[ -f /app/litellm_config.yaml ] && chmod 666 /app/litellm_config.yaml
 
 echo "Permissions fixed, starting application..."
 
