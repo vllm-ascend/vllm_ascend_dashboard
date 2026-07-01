@@ -14,6 +14,7 @@ import {
 import { useJobsByRun, useRuns } from '../hooks/useCI'
 import { useJobOwners } from '../hooks/useJobOwners'
 import { useFailureAnalysisList, useAnalyzeFailedJob } from '../hooks/useFailureAnalysis'
+import { useCurrentUser } from '../hooks/useCurrentUser'
 import { PROBLEM_CATEGORY_MAP, ANALYSIS_STATUS_MAP } from '../services/failureAnalysis'
 import { FailureAnalysisDetailModal } from '../components/FailureAnalysisDetailModal'
 import dayjs from 'dayjs'
@@ -44,6 +45,8 @@ function WorkflowDetail() {
   const { data: jobOwners } = useJobOwners()
   const { data: analysisData } = useFailureAnalysisList({ days_back: 30 })
   const analyzeMutation = useAnalyzeFailedJob()
+  const { data: currentUser } = useCurrentUser()
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin'
 
   const currentRun = runs?.find(r => r.run_id === runIdNum)
 
@@ -218,6 +221,7 @@ function WorkflowDetail() {
                   loading={analyzeMutation.isPending && analyzeMutation.variables?.jobId === record.job_id}
                   onClick={() => handleQuickAnalyze(record.job_id)}
                   style={{ padding: 0 }}
+                  disabled={!isAdmin}
                 >
                   分析
                 </Button>
