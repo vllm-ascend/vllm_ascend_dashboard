@@ -280,6 +280,7 @@ class CITrend(BaseModel):
     success_runs: int
     success_rate: float
     avg_duration_seconds: float | None = None
+    max_duration_seconds: float | None = None
 
 
 class CISyncResponse(BaseModel):
@@ -482,6 +483,8 @@ class WorkflowConfigBase(BaseModel):
     description: str | None = None
     enabled: bool = True
     display_order: int = 0
+    stats_start_hour: int | None = Field(None, description="统计时间窗口起始小时（0-23），None=不过滤")
+    stats_end_hour: int | None = Field(None, description="统计时间窗口结束小时（0-23），None=不过滤")
     last_sync_at: datetime | None = Field(None, description="上次同步时间")
 
 
@@ -500,6 +503,8 @@ class WorkflowConfigUpdate(BaseModel):
     description: str | None = None
     enabled: bool | None = None
     display_order: int | None = None
+    stats_start_hour: int | None = None
+    stats_end_hour: int | None = None
 
 
 class WorkflowConfigResponse(WorkflowConfigBase):

@@ -171,6 +171,8 @@ class WorkflowConfig(Base):
     description = Column(String(500))  # 描述信息
     enabled = Column(Boolean, default=True)  # 是否启用
     display_order = Column(Integer, default=0)  # 显示顺序
+    stats_start_hour = Column(Integer, nullable=True)  # 统计时间窗口起始小时（0-23），默认21
+    stats_end_hour = Column(Integer, nullable=True)  # 统计时间窗口结束小时（0-23），默认3
 
     # 新增字段：同步状态跟踪（用于前端显示）
     last_sync_at = Column(TIMESTAMP)  # 上次同步时间（包括手动和自动）

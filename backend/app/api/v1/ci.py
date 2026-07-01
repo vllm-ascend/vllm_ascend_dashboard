@@ -13,9 +13,9 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import CurrentSuperAdminUser, DbSession, CurrentAdminUser
+from app.api.deps import CurrentAdminUser, CurrentSuperAdminUser, DbSession
 from app.core.config import settings
-from app.models import CIJob, CIResult, JobOwner, User, WorkflowConfig, JobFailureAnalysis
+from app.models import CIJob, CIResult, JobFailureAnalysis, JobOwner, User, WorkflowConfig
 from app.schemas import (
     CIDailyReport,
     CIJobDetailResponse,
@@ -24,12 +24,13 @@ from app.schemas import (
     CIStats,
     CISyncResponse,
     CITrend,
-    WorkflowLatestResult,
-    FailureAnalysisResponse,
     FailureAnalysisListResponse,
+    FailureAnalysisResponse,
+    WorkflowLatestResult,
 )
 from app.services.scheduler import get_scheduler
 from app.services.sync_progress import get_sync_progress
+from app.utils.ci_filters import build_workflow_time_filter
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +57,22 @@ async def list_runs(
     limit: int = Query(100, ge=1, le=500)
 ):
     """获取 CI 运行列表（只返回启用的 workflow 的运行记录）"""
-    # 获取启用的 workflow 名称列表
-    enabled_stmt = select(WorkflowConfig.workflow_name).where(WorkflowConfig.enabled == True)
+    # 获取启用的 workflow 配置（含时间窗口）
+    enabled_stmt = select(
+        WorkflowConfig.workflow_name,
+        WorkflowConfig.stats_start_hour,
+        WorkflowConfig.stats_end_hour,
+    ).where(WorkflowConfig.enabled == True)
     enabled_result = await db.execute(enabled_stmt)
-    enabled_workflows = [row[0] for row in enabled_result.all()]
+    wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
+    enabled_workflows = [wc[0] for wc in wf_configs]
 
     # 如果没有启用的 workflow，直接返回空列表
     if not enabled_workflows:
         return []
 
-    stmt = select(CIResult).where(CIResult.workflow_name.in_(enabled_workflows))
+    wf_filter = build_workflow_time_filter(CIResult, wf_configs)
+    stmt = select(CIResult).where(wf_filter)
 
     if workflow_name:
         stmt = stmt.where(CIResult.workflow_name == workflow_name)
@@ -142,13 +149,23 @@ async def get_ci_stats(
     hardware: str | None = None
 ):
     """获取 CI 统计数据（只统计启用的 workflow）"""
-    # 获取启用的 workflow 名称列表
-    enabled_stmt = select(WorkflowConfig.workflow_name).where(WorkflowConfig.enabled == True)
+    # 获取启用的 workflow 配置（含时间窗口）
+    enabled_stmt = select(
+        WorkflowConfig.workflow_name,
+        WorkflowConfig.stats_start_hour,
+        WorkflowConfig.stats_end_hour,
+    ).where(WorkflowConfig.enabled == True)
     enabled_result = await db.execute(enabled_stmt)
-    enabled_workflows = [row[0] for row in enabled_result.all()]
+    wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
+
+    if not wf_configs:
+        return {"total_runs": 0, "success_rate": 0.0, "avg_duration_seconds": None,
+                "last_7_days": {"runs": 0, "success_rate": 0.0, "avg_duration_seconds": None}}
+
+    wf_filter = build_workflow_time_filter(CIResult, wf_configs)
 
     # 构建基础查询（只查询启用的 workflow）
-    base_query = select(CIResult).where(CIResult.workflow_name.in_(enabled_workflows))
+    base_query = select(CIResult).where(wf_filter)
     if workflow_name:
         base_query = base_query.where(CIResult.workflow_name == workflow_name)
     if hardware:
@@ -163,7 +180,7 @@ async def get_ci_stats(
     success_query = select(func.count()).select_from(
         select(CIResult)
         .where(CIResult.conclusion == "success")
-        .where(CIResult.workflow_name.in_(enabled_workflows))
+        .where(wf_filter)
         .subquery()
     )
     if workflow_name:
@@ -171,7 +188,7 @@ async def get_ci_stats(
             select(CIResult)
             .where(CIResult.conclusion == "success")
             .where(CIResult.workflow_name == workflow_name)
-            .where(CIResult.workflow_name.in_(enabled_workflows))
+            .where(wf_filter)
             .subquery()
         )
     if hardware:
@@ -179,7 +196,7 @@ async def get_ci_stats(
             select(CIResult)
             .where(CIResult.conclusion == "success")
             .where(CIResult.hardware == hardware)
-            .where(CIResult.workflow_name.in_(enabled_workflows))
+            .where(wf_filter)
             .subquery()
         )
     success_runs_result = await db.execute(success_query)
@@ -191,7 +208,7 @@ async def get_ci_stats(
     # 平均时长
     avg_query = select(func.avg(CIResult.duration_seconds)).where(
         CIResult.duration_seconds.isnot(None)
-    ).where(CIResult.workflow_name.in_(enabled_workflows))
+    ).where(wf_filter)
     if workflow_name:
         avg_query = avg_query.where(CIResult.workflow_name == workflow_name)
     if hardware:
@@ -206,7 +223,7 @@ async def get_ci_stats(
     last_7_days_query = select(func.count()).select_from(
         select(CIResult)
         .where(CIResult.completed_at >= seven_days_ago)
-        .where(CIResult.workflow_name.in_(enabled_workflows))
+        .where(wf_filter)
         .subquery()
     )
     if workflow_name:
@@ -214,7 +231,7 @@ async def get_ci_stats(
             select(CIResult)
             .where(CIResult.completed_at >= seven_days_ago)
             .where(CIResult.workflow_name == workflow_name)
-            .where(CIResult.workflow_name.in_(enabled_workflows))
+            .where(wf_filter)
             .subquery()
         )
     if hardware:
@@ -222,7 +239,7 @@ async def get_ci_stats(
             select(CIResult)
             .where(CIResult.completed_at >= seven_days_ago)
             .where(CIResult.hardware == hardware)
-            .where(CIResult.workflow_name.in_(enabled_workflows))
+            .where(wf_filter)
             .subquery()
         )
 
@@ -234,7 +251,7 @@ async def get_ci_stats(
         select(CIResult)
         .where(CIResult.completed_at >= seven_days_ago)
         .where(CIResult.conclusion == "success")
-        .where(CIResult.workflow_name.in_(enabled_workflows))
+        .where(wf_filter)
         .subquery()
     )
     if workflow_name:
@@ -262,7 +279,7 @@ async def get_ci_stats(
     last_7_days_avg_query = select(func.avg(CIResult.duration_seconds)).where(
         CIResult.completed_at >= seven_days_ago,
         CIResult.duration_seconds.isnot(None),
-        CIResult.workflow_name.in_(enabled_workflows),
+        wf_filter,
     )
     if workflow_name:
         last_7_days_avg_query = last_7_days_avg_query.where(CIResult.workflow_name == workflow_name)
@@ -301,14 +318,21 @@ async def get_ci_trends(
     end_date = datetime.now(UTC)
     start_date = end_date - timedelta(days=days)
 
-    # 获取启用的 workflow 名称列表
-    enabled_stmt = select(WorkflowConfig.workflow_name).where(WorkflowConfig.enabled == True)
+    # 获取启用的 workflow 配置（含时间窗口）
+    enabled_stmt = select(
+        WorkflowConfig.workflow_name,
+        WorkflowConfig.stats_start_hour,
+        WorkflowConfig.stats_end_hour,
+    ).where(WorkflowConfig.enabled == True)
     enabled_result = await db.execute(enabled_stmt)
-    enabled_workflows = [row[0] for row in enabled_result.all()]
+    wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
+    enabled_workflows = [wc[0] for wc in wf_configs]
 
     # 如果没有启用的 workflow，直接返回空列表
     if not enabled_workflows:
         return []
+
+    wf_filter = build_workflow_time_filter(CIResult, wf_configs)
 
     # 构建基础查询
     stmt = select(
@@ -326,10 +350,16 @@ async def get_ci_trends(
                 else_=None
             )
         ).label('avg_duration'),
+        func.max(
+            case(
+                (CIResult.duration_seconds.isnot(None), CIResult.duration_seconds),
+                else_=None
+            )
+        ).label('max_duration'),
     ).where(
         CIResult.created_at >= start_date,
         CIResult.created_at <= end_date,
-        CIResult.workflow_name.in_(enabled_workflows),
+        wf_filter,
     )
 
     if workflow_name:
@@ -355,6 +385,7 @@ async def get_ci_trends(
             success_runs=row.success_runs,
             success_rate=round(row.success_runs / row.total_runs * 100, 2) if row.total_runs > 0 else 0.0,
             avg_duration_seconds=float(row.avg_duration) if row.avg_duration else None,
+            max_duration_seconds=float(row.max_duration) if row.max_duration else None,
         ))
 
     return trends
@@ -653,10 +684,15 @@ async def get_daily_report(
         start_datetime_utc = start_datetime.astimezone(UTC)
         end_datetime_utc = end_datetime.astimezone(UTC)
 
-        # 获取启用的 workflow 名称列表
-        enabled_stmt = select(WorkflowConfig.workflow_name).where(WorkflowConfig.enabled == True)
+        # 获取启用的 workflow 配置（含时间窗口）
+        enabled_stmt = select(
+            WorkflowConfig.workflow_name,
+            WorkflowConfig.stats_start_hour,
+            WorkflowConfig.stats_end_hour,
+        ).where(WorkflowConfig.enabled == True)
         enabled_result = await db.execute(enabled_stmt)
-        enabled_workflows = [row[0] for row in enabled_result.all()]
+        wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
+        enabled_workflows = [wc[0] for wc in wf_configs]
 
         # 如果没有启用的 workflow，返回空报告
         if not enabled_workflows:
@@ -678,7 +714,7 @@ async def get_daily_report(
         stmt = select(CIResult).where(
             CIResult.started_at >= start_datetime_utc,
             CIResult.started_at < end_datetime_utc,
-            CIResult.workflow_name.in_(enabled_workflows)
+            CIResult.workflow_name.in_([wc[0] for wc in wf_configs])
         ).order_by(CIResult.started_at.desc())
 
         result = await db.execute(stmt)

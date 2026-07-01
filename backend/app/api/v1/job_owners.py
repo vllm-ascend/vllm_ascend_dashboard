@@ -321,16 +321,25 @@ async def get_job_summary_stats(
     end_date = datetime.now(UTC)
     start_date = end_date - timedelta(days=days) if days is not None else None
 
-    # 获取启用的 workflow 名称列表
-    enabled_stmt = select(WorkflowConfig.workflow_name).where(WorkflowConfig.enabled == True)
+    # 获取启用的 workflow 配置（含时间窗口）
+    enabled_stmt = select(
+        WorkflowConfig.workflow_name,
+        WorkflowConfig.stats_start_hour,
+        WorkflowConfig.stats_end_hour,
+    ).where(WorkflowConfig.enabled == True)
     if workflow_name:
         enabled_stmt = enabled_stmt.where(WorkflowConfig.workflow_name == workflow_name)
     enabled_result = await db.execute(enabled_stmt)
-    enabled_workflows = [row[0] for row in enabled_result.all()]
+    wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
+    enabled_workflows = [wc[0] for wc in wf_configs]
 
     # 如果没有启用的 workflow，直接返回空列表
     if not enabled_workflows:
         return []
+
+    # 构建按 workflow 的时间窗口过滤条件
+    from app.utils.ci_filters import build_workflow_time_filter
+    wf_filter = build_workflow_time_filter(CIJob, wf_configs)
 
     # 构建基础查询
     stmt = select(
@@ -362,7 +371,7 @@ async def get_job_summary_stats(
 
     stmt = stmt.where(
         *time_filters,
-        CIJob.workflow_name.in_(enabled_workflows),
+        wf_filter,
     )
 
     if workflow_name:
@@ -393,6 +402,7 @@ async def get_job_summary_stats(
         func.max(CIJob.started_at).label('max_started_at'),
     ).where(
         *latest_filters,
+        wf_filter,
     )
 
     if workflow_name:
