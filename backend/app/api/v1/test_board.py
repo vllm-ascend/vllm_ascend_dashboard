@@ -49,6 +49,20 @@ async def get_suites(db: AsyncSession = Depends(get_db), user: User = Depends(ge
     return await svc.get_suites()
 
 
+@router.get("/filter-options")
+async def get_filter_options(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    from sqlalchemy import select, distinct
+    from app.models.test_board import TestCase
+    test_types = (await db.execute(select(distinct(TestCase.test_type)).where(TestCase.test_type.isnot(None)))).all()
+    suites = (await db.execute(select(distinct(TestCase.test_suite)).where(TestCase.test_suite.isnot(None)))).all()
+    hardwares = (await db.execute(select(distinct(TestCase.hardware)).where(TestCase.hardware.isnot(None)))).all()
+    return {
+        "test_types": [r[0] for r in test_types],
+        "suites": [r[0] for r in suites],
+        "hardwares": [r[0] for r in hardwares],
+    }
+
+
 @router.get("/cases")
 async def get_cases(
     test_type: str | None = None, suite_name: str | None = None, module_name: str | None = None,
@@ -58,7 +72,7 @@ async def get_cases(
     page: int = 1, per_page: int = 20,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    filters = {"test_type": test_type, "suite_name": suite_name, "module_name": module_name,
+    filters = {"test_type": test_type, "test_suite": suite_name, "module_name": module_name,
                "hardware": hardware, "result": result, "health_level": health_level,
                "is_flaky": is_flaky, "owner": owner, "sort": sort, "order": order}
     filters = {k: v for k, v in filters.items() if v is not None}

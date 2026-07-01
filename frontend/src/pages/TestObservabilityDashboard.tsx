@@ -6,7 +6,7 @@ import {
   BugOutlined, CheckCircleOutlined, WarningOutlined, ClockCircleOutlined,
   SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined,
 } from '@ant-design/icons'
-import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites } from '../hooks/useTestBoard'
+import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions } from '../hooks/useTestBoard'
 import type { TestCaseItem, FlakyCaseDetail, FailureBreakdown, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
 import './TestObservabilityDashboard.css'
 
@@ -48,6 +48,7 @@ function TestObservabilityDashboard() {
     page: casePage,
     per_page: 20,
   })
+  const { data: filterOptions } = useFilterOptions()
 
   const [flakyPage, setFlakyPage] = useState(1)
   const { data: flakyData, isLoading: flakyLoading } = useFlakyCases({ page: flakyPage, per_page: 20 })
@@ -156,6 +157,18 @@ function TestObservabilityDashboard() {
       key: 'last_result',
       width: 100,
       render: getResultTag,
+    },
+    {
+      title: '最近成功耗时',
+      dataIndex: 'last_pass_duration_seconds',
+      key: 'last_pass_duration_seconds',
+      width: 110,
+      render: (seconds: number | null) => {
+        if (seconds == null) return <Text type="secondary">—</Text>
+        if (seconds < 60) return `${Math.round(seconds)}s`
+        if (seconds < 3600) return `${Math.round(seconds / 60)}m`
+        return `${(seconds / 3600).toFixed(1)}h`
+      },
     },
     {
       title: '负责人',
@@ -464,9 +477,15 @@ function TestObservabilityDashboard() {
             children: (
               <Card title="测试用例列表">
                 <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
-                  <Select placeholder="类型" allowClear style={{ width: 120 }} onChange={(v) => setCaseFilters({ ...caseFilters, test_type: v })} />
-                  <Select placeholder="套件" allowClear style={{ width: 150 }} onChange={(v) => setCaseFilters({ ...caseFilters, suite_name: v })} />
-                  <Select placeholder="硬件" allowClear style={{ width: 100 }} onChange={(v) => setCaseFilters({ ...caseFilters, hardware: v })} />
+                  <Select placeholder="类型" allowClear style={{ width: 120 }} onChange={(v) => setCaseFilters({ ...caseFilters, test_type: v })}
+                    options={(filterOptions?.test_types || []).map((v: string) => ({ label: v, value: v }))}
+                  />
+                  <Select placeholder="套件" allowClear style={{ width: 150 }} onChange={(v) => setCaseFilters({ ...caseFilters, suite_name: v })}
+                    options={(filterOptions?.suites || []).map((v: string) => ({ label: v, value: v }))}
+                  />
+                  <Select placeholder="硬件" allowClear style={{ width: 100 }} onChange={(v) => setCaseFilters({ ...caseFilters, hardware: v })}
+                    options={(filterOptions?.hardwares || []).map((v: string) => ({ label: v, value: v }))}
+                  />
                   <Select placeholder="结果" allowClear style={{ width: 100 }} onChange={(v) => setCaseFilters({ ...caseFilters, result: v })}
                     options={[
                       { label: '通过', value: 'passed' },

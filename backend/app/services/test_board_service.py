@@ -365,6 +365,8 @@ class TestBoardService:
             existing.inference_confidence = metadata.get("inference_confidence", existing.inference_confidence)
             if not existing.category:
                 existing.category = metadata.get("category", "other")
+            if parsed_result.get("result") == "passed" and parsed_result.get("duration_seconds") is not None:
+                existing.last_pass_duration_seconds = parsed_result["duration_seconds"]
             return existing
 
         owner_stmt = select(JobOwner.owner, JobOwner.email).where(

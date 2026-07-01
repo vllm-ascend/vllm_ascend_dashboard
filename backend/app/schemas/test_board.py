@@ -38,6 +38,7 @@ class TestCaseResponse(BaseModel):
     pass_rate_30d: float | None = None
     avg_duration_seconds: float | None = None
     duration_p90_seconds: float | None = None
+    last_pass_duration_seconds: float | None = None
     health_score: float | None = None
     health_level: str | None = None
     last_result: str | None = None
