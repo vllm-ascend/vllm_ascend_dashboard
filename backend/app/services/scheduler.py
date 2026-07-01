@@ -987,6 +987,25 @@ class DataSyncScheduler:
             })
         return jobs
 
+    async def _sync_support_matrix_job(self) -> None:
+        """每日同步上游支持矩阵"""
+        try:
+            from app.db.base import SessionLocal
+            from app.services.support_matrix_sync import sync_support_matrix
+
+            async with SessionLocal() as db:
+                result = await sync_support_matrix(db, dry_run=False)
+                if result.get("success"):
+                    logger.info(
+                        f"Support matrix sync: {result.get('models_synced', 0)} models, "
+                        f"{len(result.get('new_models', []))} new, "
+                        f"{len(result.get('updated_models', []))} updated"
+                    )
+                else:
+                    logger.error(f"Support matrix sync failed: {result.get('error')}")
+        except Exception as e:
+            logger.error(f"Support matrix sync job error: {e}", exc_info=True)
+
 
 # 全局调度器实例
 _scheduler: DataSyncScheduler | None = None

@@ -1093,3 +1093,67 @@ async def sync_reports(
     # 目前返回成功消息，实际同步在后台任务中进行
 
     return {"message": "同步任务已触发，请稍后刷新查看结果"}
+
+
+# ============ 支持矩阵 ============
+
+@router.get("/support-matrix")
+async def get_support_matrix_endpoint(
+    db: DbSession,
+    model_type: str | None = Query(None),
+    role: str | None = Query(None),
+    series: str | None = Query(None),
+    support_status: str | None = Query(None),
+    tier: str | None = Query(None),
+):
+    """获取完整支持矩阵（模型×特性交叉表）"""
+    from app.services.support_matrix_sync import get_support_matrix as _get_matrix
+
+    return await _get_matrix(
+        db,
+        model_type=model_type,
+        role=role,
+        series=series,
+        support_status=support_status,
+        tier=tier,
+    )
+
+
+@router.get("/feature-compatibility")
+async def get_feature_compatibility_endpoint(db: DbSession):
+    """获取 25×25 特性互操作矩阵"""
+    from app.services.support_matrix_sync import get_feature_compatibility as _get_compat
+
+    return await _get_compat(db)
+
+
+@router.get("/global-features")
+async def get_global_features_endpoint(db: DbSession):
+    """获取全局功能支持状态（来自 supported_features.md）"""
+    from app.services.support_matrix_sync import get_global_features as _get_gf
+
+    return await _get_gf(db)
+
+
+@router.get("/sync-status")
+async def get_sync_status_endpoint(db: DbSession):
+    """获取最近同步状态"""
+    from app.services.support_matrix_sync import get_sync_status as _get_ss
+
+    return await _get_ss(db)
+
+
+@router.post("/sync-upstream")
+async def sync_upstream_endpoint(
+    db: DbSession,
+    current_user: CurrentAdminUser,
+    dry_run: bool = Query(False),
+):
+    """手动触发上游支持矩阵同步（管理员）
+
+    参数 dry_run=True 时只返回 diff 不落库
+    """
+    from app.services.support_matrix_sync import sync_support_matrix as _sync
+
+    result = await _sync(db, dry_run=dry_run)
+    return result
