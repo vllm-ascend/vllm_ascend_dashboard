@@ -303,7 +303,7 @@ function CIBoard() {
                 {trends && trends.length > 0 && (
                   <Row gutter={16} style={{ marginBottom: 24 }}>
                     <Col span={12}>
-                      <Card title="时长变化趋势（近 30 天）">
+                      <Card title="最大时长变化趋势（近 30 天）">
                         <ResponsiveContainer width="100%" height={220}>
                           <LineChart data={trends.map(t => ({
                             date: dayjs(t.date).format('MM-DD'),

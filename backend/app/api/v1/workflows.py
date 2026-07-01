@@ -83,6 +83,8 @@ async def create_workflow(
         description=workflow_data.description,
         enabled=workflow_data.enabled,
         display_order=workflow_data.display_order,
+        stats_start_hour=workflow_data.stats_start_hour,
+        stats_end_hour=workflow_data.stats_end_hour,
     )
     db.add(workflow)
     await db.commit()

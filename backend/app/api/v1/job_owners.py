@@ -5,7 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, select
 
 from app.api.deps import DbSession
 from app.models import CIJob, JobOwner, WorkflowConfig
@@ -338,17 +338,8 @@ async def get_job_summary_stats(
         return []
 
     # 构建按 workflow 的时间窗口过滤条件
-    wf_filter_conditions = []
-    for wf_name, start_h, end_h in wf_configs:
-        wf_cond = CIJob.workflow_name == wf_name
-        if start_h is not None and end_h is not None:
-            hour_expr = func.hour(CIJob.started_at)
-            if start_h >= end_h:
-                wf_cond = and_(wf_cond, or_(hour_expr >= start_h, hour_expr < end_h))
-            else:
-                wf_cond = and_(wf_cond, hour_expr >= start_h, hour_expr < end_h)
-        wf_filter_conditions.append(wf_cond)
-    wf_filter = or_(*wf_filter_conditions) if wf_filter_conditions else None
+    from app.utils.ci_filters import build_workflow_time_filter
+    wf_filter = build_workflow_time_filter(CIJob, wf_configs)
 
     # 构建基础查询
     stmt = select(

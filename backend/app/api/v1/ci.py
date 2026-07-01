@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import Date, and_, case, cast, func, or_, select
+from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import CurrentSuperAdminUser, DbSession, CurrentAdminUser
+from app.api.deps import CurrentAdminUser, CurrentSuperAdminUser, DbSession
 from app.core.config import settings
-from app.models import CIJob, CIResult, JobOwner, User, WorkflowConfig, JobFailureAnalysis
+from app.models import CIJob, CIResult, JobFailureAnalysis, JobOwner, User, WorkflowConfig
 from app.schemas import (
     CIDailyReport,
     CIJobDetailResponse,
@@ -24,36 +24,17 @@ from app.schemas import (
     CIStats,
     CISyncResponse,
     CITrend,
-    WorkflowLatestResult,
-    FailureAnalysisResponse,
     FailureAnalysisListResponse,
+    FailureAnalysisResponse,
+    WorkflowLatestResult,
 )
 from app.services.scheduler import get_scheduler
 from app.services.sync_progress import get_sync_progress
+from app.utils.ci_filters import build_workflow_time_filter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _build_workflow_time_filter(model_cls, wf_configs: list):
-    """构建按 workflow 的时间窗口过滤条件。
-
-    每个 workflow 可配置 stats_start_hour / stats_end_hour。
-    若两者均不为 None，仅统计该时间窗口内启动的运行。
-    start >= end 表示跨午夜（如 21-3）。
-    """
-    conditions = []
-    for wf_name, start_h, end_h in wf_configs:
-        wf_cond = model_cls.workflow_name == wf_name
-        if start_h is not None and end_h is not None:
-            hour_expr = func.hour(model_cls.started_at)
-            if start_h >= end_h:
-                wf_cond = and_(wf_cond, or_(hour_expr >= start_h, hour_expr < end_h))
-            else:
-                wf_cond = and_(wf_cond, hour_expr >= start_h, hour_expr < end_h)
-        conditions.append(wf_cond)
-    return or_(*conditions) if conditions else None
 
 
 @router.get("/workflows", response_model=list[str])
@@ -90,7 +71,7 @@ async def list_runs(
     if not enabled_workflows:
         return []
 
-    wf_filter = _build_workflow_time_filter(CIResult, wf_configs)
+    wf_filter = build_workflow_time_filter(CIResult, wf_configs)
     stmt = select(CIResult).where(wf_filter)
 
     if workflow_name:
@@ -181,7 +162,7 @@ async def get_ci_stats(
         return {"total_runs": 0, "success_rate": 0.0, "avg_duration_seconds": None,
                 "last_7_days": {"runs": 0, "success_rate": 0.0, "avg_duration_seconds": None}}
 
-    wf_filter = _build_workflow_time_filter(CIResult, wf_configs)
+    wf_filter = build_workflow_time_filter(CIResult, wf_configs)
 
     # 构建基础查询（只查询启用的 workflow）
     base_query = select(CIResult).where(wf_filter)
@@ -351,7 +332,7 @@ async def get_ci_trends(
     if not enabled_workflows:
         return []
 
-    wf_filter = _build_workflow_time_filter(CIResult, wf_configs)
+    wf_filter = build_workflow_time_filter(CIResult, wf_configs)
 
     # 构建基础查询
     stmt = select(
@@ -729,13 +710,11 @@ async def get_daily_report(
                 markdown_report=f"# CI 每日报告\n\n## {date}\n\n暂无数据"
             )
 
-        wf_filter = _build_workflow_time_filter(CIResult, wf_configs)
-
         # 查询当天的 CI 结果 (使用 UTC 时间查询)
         stmt = select(CIResult).where(
             CIResult.started_at >= start_datetime_utc,
             CIResult.started_at < end_datetime_utc,
-            wf_filter
+            CIResult.workflow_name.in_([wc[0] for wc in wf_configs])
         ).order_by(CIResult.started_at.desc())
 
         result = await db.execute(stmt)
