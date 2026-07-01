@@ -44,6 +44,7 @@ class TestCase(Base):
     pass_rate_30d = Column(Float)
     avg_duration_seconds = Column(Float)
     duration_p90_seconds = Column(Float)
+    last_pass_duration_seconds = Column(Float)  # 最近一次成功执行的耗时（秒）
     health_score = Column(Float)
     health_level = Column(String(1), index=True)
     first_seen_at = Column(TIMESTAMP)
