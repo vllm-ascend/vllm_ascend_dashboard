@@ -54,26 +54,23 @@ async def upgrade():
             print(f"  [DONE] Backfilled {result.rowcount} cases as other")
         await db.commit()
 
-        # 3. Remap step_level test_names: old format "step_name" → new "job_name / step_name"
+        # 3. Delete historical step_level test cases (replaced by job_level)
         result = await db.execute(text(
-            "SELECT tc.id, tc.test_name, MAX(tr.job_name) AS job_name "
-            "FROM test_cases tc "
-            "JOIN test_runs tr ON tr.test_case_id = tc.id "
-            "WHERE tc.data_granularity = 'step_level' "
-            "AND tr.job_name IS NOT NULL "
-            "AND tc.test_name NOT LIKE '%/%' "
-            "GROUP BY tc.id"
+            "SELECT COUNT(*) FROM test_cases WHERE data_granularity = 'step_level'"
         ))
-        remapped = 0
-        for row in result:
-            new_name = f"{row[2]} / {row[1]}"
+        step_count = result.scalar()
+        if step_count and step_count > 0:
             await db.execute(text(
-                "UPDATE test_cases SET test_name = :new_name WHERE id = :id"
-            ), {"new_name": new_name, "id": row[0]})
-            remapped += 1
-        if remapped:
+                "DELETE FROM test_runs WHERE test_case_id IN "
+                "(SELECT id FROM test_cases WHERE data_granularity = 'step_level')"
+            ))
+            await db.execute(text(
+                "DELETE FROM test_cases WHERE data_granularity = 'step_level'"
+            ))
             await db.commit()
-            print(f"  [DONE] Remapped {remapped} step_level test_names")
+            print(f"  [DONE] Deleted {step_count} step_level test cases (and their runs)")
+        else:
+            print("  [OK] No step_level test cases to delete")
 
     print("\n" + "=" * 60)
     print("  Upgrade v0.0.22 complete!")
