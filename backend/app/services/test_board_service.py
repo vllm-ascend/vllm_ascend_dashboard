@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -305,17 +304,15 @@ class TestBoardService:
                 logger.warning(f"Failed to download timing artifact: {e}")
 
         if not parsed_results:
-            steps = json.loads(ci_job.steps_data) if ci_job.steps_data else []
-            test_steps = [s for s in steps if "test" in s.get("name", "").lower()]
-            if test_steps:
-                for step in test_steps:
-                    step_name = step.get("name", "")
-                    parsed_results.append({
-                        "test_name": f"{ci_job.job_name} / {step_name}" if ci_job.job_name else step_name,
-                        "test_file": step_name,
-                        "result": "passed" if step.get("conclusion") == "success" else "failed" if step.get("conclusion") == "failure" else "skipped",
-                        "duration_seconds": None, "data_granularity": "step_level",
-                    })
+            if ci_job.job_name:
+                name = ci_job.job_name.split(" / inputs.")[0].strip()
+                parsed_results.append({
+                    "test_name": name,
+                    "test_file": ci_job.job_name,
+                    "result": "passed" if ci_job.conclusion == "success" else "failed" if ci_job.conclusion else "unknown",
+                    "duration_seconds": ci_job.duration_seconds,
+                    "data_granularity": "job_level",
+                })
 
         run_stmt = select(CIResult).where(CIResult.run_id == ci_job.run_id).limit(1)
         ci_result = (await self.db.execute(run_stmt)).scalar_one_or_none()

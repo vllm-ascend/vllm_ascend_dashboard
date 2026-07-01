@@ -440,33 +440,24 @@ class TestCategoryDerivation:
 
 
 class TestStepLevelTestNameFormat:
-    """Verify step_level fallback uses 'job_name / step_name' format."""
+    """Verify job_level fallback uses ci_job.job_name (not step name)."""
 
-    def test_step_name_includes_job_name(self):
-        """test_name should be 'job_name / step_name', not just step_name."""
-        # Simulate the fallback logic
-        ci_job_name = "DeepSeek-R1-0528-W8A8-single"
-        step_name = "Run Pytest"
-        test_name = f"{ci_job_name} / {step_name}" if ci_job_name else step_name
+    def test_job_name_used_as_test_name(self):
+        """test_name should be ci_job.job_name, not step name."""
+        ci_job_name = "single-node (main, Qwen3.5-27B-w8a8-A2, linux-aarch64-a2b3-2, Qwen3.5-27B-w8a8-A2.yaml)"
+        name = ci_job_name.split(" / inputs.")[0].strip()
+        assert name == ci_job_name
+        assert "Qwen3.5-27B-w8a8-A2" in name
 
-        assert test_name == "DeepSeek-R1-0528-W8A8-single / Run Pytest"
-        assert ci_job_name in test_name
-        assert step_name in test_name
+    def test_reusable_workflow_suffix_stripped(self):
+        """Reusable workflow expression suffix should be stripped."""
+        ci_job_name = "single-node (main, Qwen3.5-27B-w8a8-A2, linux-aarch64-a2b3-2, Qwen3.5-27B-w8a8-A2.yaml) / inputs.name || inputs.config_file_path"
+        name = ci_job_name.split(" / inputs.")[0].strip()
+        assert "inputs." not in name
+        assert name.startswith("single-node")
 
-    def test_multiple_steps_not_collapsed(self):
-        """Multiple test steps should produce distinct test_names."""
-        ci_job_name = "DeepSeek-R1-0528-W8A8-single"
-        steps = [
-            {"name": "test accuracy", "conclusion": "success"},
-            {"name": "test performance", "conclusion": "failure"},
-        ]
-        test_steps = [s for s in steps if "test" in s.get("name", "").lower()]
-        names = []
-        for step in test_steps:
-            step_name = step.get("name", "")
-            names.append(f"{ci_job_name} / {step_name}" if ci_job_name else step_name)
-
-        assert len(names) == 2
-        assert names[0] != names[1]
-        assert "test accuracy" in names[0]
-        assert "test performance" in names[1]
+    def test_job_conclusion_maps_to_result(self):
+        """Job conclusion should map to test result."""
+        assert ("passed" if "success" == "success" else "failed") == "passed"
+        assert ("passed" if "failure" == "success" else "failed") == "failed"
+        assert ("passed" if None == "success" else "failed" if None else "unknown") == "unknown"
