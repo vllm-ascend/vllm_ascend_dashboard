@@ -88,6 +88,7 @@ class ModelReport(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_config_id = Column(Integer, ForeignKey("model_configs.id"), index=True)
+    model_registry_id = Column(Integer, ForeignKey("model_registry.id"), index=True)  # 过渡期双写
     workflow_run_id = Column(BigInteger, index=True)  # GitHub workflow run ID
     report_json = Column(JSON, nullable=False)
     pass_fail = Column(String(10))  # pass, fail
@@ -521,3 +522,80 @@ class AppLog(Base):
     line_number = Column(Integer)
     message = Column(Text)
     traceback = Column(Text)
+
+
+class ModelRegistry(Base):
+    """统一模型注册表 — 合并 ModelConfig + 支持矩阵条目"""
+    __tablename__ = "model_registry"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_name = Column(String(255), nullable=False, index=True)
+    role = Column(String(20), nullable=False, default="generative")
+    display_name = Column(String(255))
+    series = Column(String(50), index=True)
+    model_type = Column(String(50), nullable=False, default="text_generative")
+    tier = Column(String(20))
+    support_status = Column(String(30), nullable=False, default="untested")
+    weight_formats = Column(JSON)
+    kv_cache_types = Column(JSON)
+    supported_hardware = Column(JSON)
+    max_model_len = Column(String(50))
+    note = Column(Text)
+    upstream_issue = Column(String(255))
+    official_doc_url = Column(String(500))
+    config_yaml = Column(Text)
+    startup_commands = Column(JSON)
+    key_metrics_config = Column(JSON)
+    pass_threshold = Column(JSON)
+    first_supported_version = Column(String(50))
+    manual_overrides = Column(JSON)
+    status = Column(String(20), default="active")
+    created_by = Column(Integer, ForeignKey("users.id"))
+    source = Column(String(20), default="manual")
+    upstream_synced_at = Column(TIMESTAMP)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    feature_matrix = relationship("ModelFeatureMatrix", back_populates="registry", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("model_name", "role", name="uq_model_name_role"),
+    )
+
+
+class ModelFeatureMatrix(Base):
+    """模型特性矩阵 — 替代原 JSON toggle 字段"""
+    __tablename__ = "model_feature_matrix"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_id = Column(Integer, ForeignKey("model_registry.id"), nullable=False, index=True)
+    feature_key = Column(String(50), nullable=False)
+    feature_status = Column(String(20), nullable=False)
+    hardware_scope = Column(JSON)
+    note = Column(Text)
+    verified_by_report = Column(Boolean, default=False)
+    verified_report_id = Column(Integer)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    registry = relationship("ModelRegistry", back_populates="feature_matrix")
+
+    __table_args__ = (
+        UniqueConstraint("model_id", "feature_key", name="uq_model_feature"),
+    )
+
+
+class FeatureCompatibility(Base):
+    """特性互操作矩阵 — 来自 feature_matrix.md"""
+    __tablename__ = "feature_compatibility"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    feature_a = Column(String(100), nullable=False)
+    feature_b = Column(String(100), nullable=False)
+    compatibility = Column(String(20), nullable=False)
+    footnote = Column(Text)
+    synced_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint("feature_a", "feature_b", name="uq_feature_pair"),
+    )

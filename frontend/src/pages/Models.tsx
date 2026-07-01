@@ -8,26 +8,36 @@ import {
   Select,
   Tag,
   Typography,
+  Tabs,
 } from 'antd'
 import {
   SearchOutlined,
   LinkOutlined,
+  AppstoreOutlined,
+  TableOutlined,
+  HeatMapOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnsType } from 'antd/es/table'
 import { getModels } from '../services/models'
 import type { ModelConfig } from '../types/models'
 import dayjs from 'dayjs'
+import SupportMatrixTab from '../components/SupportMatrixTab'
+import FeatureCompatibilityTab from '../components/FeatureCompatibilityTab'
 import './Models.css'
 
 const { Title, Text } = Typography
 
 /**
- * 模型看板页面 - 只读 (Stripe Design System)
- * 仅用于查看和搜索模型，管理功能请前往系统管理 > 模型看板配置
+ * 模型看板页面 - 增强版（Tab 式布局）
+ * Tab 1: 模型总览（原有模型列表）
+ * Tab 2: 支持矩阵（模型×特性交叉表）
+ * Tab 3: 特性互操作（25×25 热力图）
  */
 function Models() {
   const navigate = useNavigate()
+  const [activeTab, setActiveTab] = useState('overview')
   const [searchText, setSearchText] = useState('')
   const [seriesFilter, setSeriesFilter] = useState<string[]>([])
   const [statusFilter, setStatusFilter] = useState<string[]>([])
@@ -120,6 +130,78 @@ function Models() {
     },
   ]
 
+  const tabItems = [
+    {
+      key: 'overview',
+      label: (
+        <span>
+          <AppstoreOutlined /> 模型总览
+        </span>
+      ),
+      children: (
+        <>
+          <Card className="stripe-card stripe-filter-card">
+            <Space size="middle" wrap>
+              <Input
+                placeholder="搜索模型名称"
+                prefix={<SearchOutlined />}
+                className="stripe-search-input"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                allowClear
+              />
+              <Select
+                mode="multiple"
+                placeholder="模型系列"
+                className="stripe-filter-select"
+                value={seriesFilter}
+                onChange={setSeriesFilter}
+                options={seriesOptions}
+                allowClear
+              />
+            </Space>
+          </Card>
+          <Card className="stripe-card stripe-table-card">
+            <Table
+              columns={columns}
+              dataSource={models}
+              loading={isLoading}
+              rowKey="id"
+              pagination={{
+                pageSize: 20,
+                showSizeChanger: false,
+              }}
+              scroll={{ x: 1000 }}
+              className="stripe-table"
+              onRow={(record) => ({
+                onClick: () => navigate(`/models/${record.id}`),
+                style: { cursor: 'pointer' },
+              })}
+            />
+          </Card>
+        </>
+      ),
+    },
+    {
+      key: 'support-matrix',
+      label: (
+        <span>
+          <TableOutlined /> 支持矩阵
+        </span>
+      ),
+      children: <SupportMatrixTab />,
+    },
+    {
+      key: 'feature-compatibility',
+      label: (
+        <span>
+          <HeatMapOutlined /> 特性互操作
+        </span>
+      ),
+      children: <FeatureCompatibilityTab />,
+    },
+  ]
+
   return (
     <div className="stripe-models-page">
       {/* 页面标题 */}
@@ -128,52 +210,16 @@ function Models() {
           模型看板
         </Title>
         <Text className="stripe-page-description">
-          查看模型配置和验证报告
+          模型验证报告 · 支持矩阵 · 特性互操作
         </Text>
       </div>
 
-      {/* 筛选栏 */}
-      <Card className="stripe-card stripe-filter-card">
-          <Space size="middle" wrap>
-            <Input
-              placeholder="搜索模型名称"
-              prefix={<SearchOutlined />}
-              className="stripe-search-input"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              allowClear
-            />
-            <Select
-              mode="multiple"
-              placeholder="模型系列"
-              className="stripe-filter-select"
-              value={seriesFilter}
-              onChange={setSeriesFilter}
-              options={seriesOptions}
-              allowClear
-            />
-          </Space>
-        </Card>
-
-        {/* 模型列表表格 */}
-        <Card className="stripe-card stripe-table-card">
-          <Table
-            columns={columns}
-            dataSource={models}
-            loading={isLoading}
-            rowKey="id"
-            pagination={{
-              pageSize: 20,
-              showSizeChanger: false,
-            }}
-            scroll={{ x: 1000 }}
-            className="stripe-table"
-            onRow={(record) => ({
-              onClick: () => navigate(`/models/${record.id}`),
-              style: { cursor: 'pointer' },
-            })}
-          />
-        </Card>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={tabItems}
+        size="large"
+      />
     </div>
   )
 }

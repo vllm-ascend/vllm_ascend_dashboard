@@ -90,11 +90,11 @@ class TestBoardService:
         }
 
     async def get_suites(self) -> list[dict[str, Any]]:
-        stmt = select(TestCase.test_suite, TestCase.test_type, TestCase.hardware, TestCase.card_count,
+        stmt = select(TestCase.test_suite, TestCase.test_type, TestCase.hardware,
                        func.count(TestCase.id), func.avg(TestCase.health_score), func.avg(TestCase.pass_rate_7d),
                        func.sum(case((TestCase.is_flaky == True, 1), else_=0)),
                        func.avg(TestCase.avg_duration_seconds)).group_by(
-            TestCase.test_suite, TestCase.test_type, TestCase.hardware, TestCase.card_count)
+            TestCase.test_suite, TestCase.test_type, TestCase.hardware)
         rows = (await self.db.execute(stmt)).all()
         max_run_stmt = select(TestCase.test_suite, TestCase.hardware, func.max(TestCase.last_run_at)).group_by(TestCase.test_suite, TestCase.hardware)
         max_run_rows = (await self.db.execute(max_run_stmt)).all()
@@ -103,11 +103,11 @@ class TestBoardService:
         for r in rows:
             key = f"{r[0]}-{r[2]}"
             results.append({
-                "suite_name": r[0], "test_type": r[1], "hardware": r[2], "card_count": r[3],
-                "total_cases": r[4], "health_score": round(r[5] or 0, 1),
-                "health_level": TestHealthCalculator._score_to_level(r[5] or 0),
-                "pass_rate": round(r[6] or 0, 3), "flaky_cases": r[7] or 0,
-                "avg_duration_seconds": round(r[8] or 0, 1),
+                "suite_name": r[0], "test_type": r[1], "hardware": r[2], "card_count": None,
+                "total_cases": r[3], "health_score": round(r[4] or 0, 1),
+                "health_level": TestHealthCalculator._score_to_level(r[4] or 0),
+                "pass_rate": round(r[5] or 0, 3), "flaky_cases": r[6] or 0,
+                "avg_duration_seconds": round(r[7] or 0, 1),
                 "last_run_at": last_run_map.get(key),
             })
         return results
@@ -304,8 +304,8 @@ class TestBoardService:
                 logger.warning(f"Failed to download timing artifact: {e}")
 
         if not parsed_results:
-            if ci_job.job_name:
-                name = ci_job.job_name.split(" / inputs.")[0].strip()
+            if ci_job.job_name and TestBoardService._is_test_job(ci_job.job_name):
+                name = ci_job.job_name.split(" / ")[0].strip()
                 parsed_results.append({
                     "test_name": name,
                     "test_file": ci_job.job_name,
@@ -388,6 +388,15 @@ class TestBoardService:
         self.db.add(tc)
         await self.db.flush()
         return tc
+
+    @staticmethod
+    def _is_test_job(job_name: str) -> bool:
+        """Check if a CI job is a test execution job (not build/setup/cleanup)."""
+        test_prefixes = (
+            "single-node", "double-node", "multi-node",
+            "doc-test", "e2e-upstream",
+        )
+        return any(job_name.startswith(prefix) for prefix in test_prefixes)
 
     def _infer_metadata(self, job_name: str, workflow_name: str, hardware: str | None) -> dict:
         jn = job_name.lower()
