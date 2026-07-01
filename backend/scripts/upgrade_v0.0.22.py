@@ -56,7 +56,7 @@ async def upgrade():
 
         # 3. Remap step_level test_names: old format "step_name" → new "job_name / step_name"
         result = await db.execute(text(
-            "SELECT tc.id, tc.test_name, tr.job_name "
+            "SELECT tc.id, tc.test_name, MAX(tr.job_name) AS job_name "
             "FROM test_cases tc "
             "JOIN test_runs tr ON tr.test_case_id = tc.id "
             "WHERE tc.data_granularity = 'step_level' "
