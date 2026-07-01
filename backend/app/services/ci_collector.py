@@ -423,15 +423,18 @@ class CICollector:
     def _calculate_duration(self, run: dict[str, Any]) -> int | None:
         """
         计算运行时长（秒）
-        
+
+        优先使用 GitHub 的 run_started_at / run_updated_at（实际执行窗口），
+        回退到 created_at / updated_at。
+
         Args:
             run: workflow run 数据
-            
+
         Returns:
             时长（秒），无法计算时返回 None
         """
-        started_at = self._parse_datetime(run.get("created_at"))
-        completed_at = self._parse_datetime(run.get("updated_at"))
+        started_at = self._parse_datetime(run.get("run_started_at") or run.get("created_at"))
+        completed_at = self._parse_datetime(run.get("run_updated_at") or run.get("updated_at"))
 
         if started_at and completed_at:
             return int((completed_at - started_at).total_seconds())

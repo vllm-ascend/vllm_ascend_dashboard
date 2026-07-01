@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Space, Tag, Select, Typography, Button, Tooltip } from 'antd'
+import { Card, Table, Space, Tag, Select, Typography, Button, Tooltip, Row, Col, Statistic } from 'antd'
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -276,6 +276,51 @@ function JobBoard() {
           </Button>
         </Space>
       </div>
+
+      {/* 汇总卡片 */}
+      <Row gutter={16} style={{ marginBottom: 24 }}>
+        <Col span={6}>
+          <Card>
+            <Statistic title="Job 总数" value={filteredJobStats.length} suffix="个" />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="有耗时数据"
+              value={filteredJobStats.filter(j => j.avg_duration_seconds != null).length}
+              suffix="个"
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="平均时长之和"
+              value={Math.round(filteredJobStats.reduce((sum, j) => sum + (j.avg_duration_seconds || 0), 0) / 60)}
+              suffix="分钟"
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="最长 Job"
+              value={
+                filteredJobStats.length > 0
+                  ? filteredJobStats.reduce((max, j) => (j.max_duration_seconds || 0) > (max?.max_duration_seconds || 0) ? j : max, filteredJobStats[0])?.job_name || '—'
+                  : '—'
+              }
+              valueStyle={{ fontSize: 14 }}
+            />
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+              {filteredJobStats.length > 0
+                ? formatDuration(filteredJobStats.reduce((max, j) => (j.max_duration_seconds || 0) > (max?.max_duration_seconds || 0) ? j : max, filteredJobStats[0])?.max_duration_seconds)
+                : '—'}
+            </div>
+          </Card>
+        </Col>
+      </Row>
 
       {/* 统计表格 */}
       <Card>
