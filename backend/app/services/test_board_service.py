@@ -309,9 +309,10 @@ class TestBoardService:
             test_steps = [s for s in steps if "test" in s.get("name", "").lower()]
             if test_steps:
                 for step in test_steps:
+                    step_name = step.get("name", "")
                     parsed_results.append({
-                        "test_name": ci_job.job_name or step.get("name", ""),
-                        "test_file": ci_job.job_name or step.get("name", ""),
+                        "test_name": f"{ci_job.job_name} / {step_name}" if ci_job.job_name else step_name,
+                        "test_file": step_name,
                         "result": "passed" if step.get("conclusion") == "success" else "failed" if step.get("conclusion") == "failure" else "skipped",
                         "duration_seconds": None, "data_granularity": "step_level",
                     })

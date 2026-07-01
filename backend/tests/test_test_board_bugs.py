@@ -409,3 +409,64 @@ class TestD4SuiteDistributionKey:
 
         keys = list(result["suite_distribution"].keys())
         assert "Nightly-A3" in keys, f"Key should be 'Nightly-A3', got {keys}"
+
+
+# ============================================================================
+# PR #110: Category derivation + step_level test_name format
+# ============================================================================
+
+class TestCategoryDerivation:
+    """Verify _infer_metadata derives category from workflow_name."""
+
+    def test_nightly_category(self):
+        svc = TestBoardService.__new__(TestBoardService)
+        meta = svc._infer_metadata("test job", "Nightly-A2", "A2")
+        assert meta["category"] == "nightly"
+
+    def test_weekly_category(self):
+        svc = TestBoardService.__new__(TestBoardService)
+        meta = svc._infer_metadata("test job", "vLLM Weekly", "A2")
+        assert meta["category"] == "weekly"
+
+    def test_e2e_full_category(self):
+        svc = TestBoardService.__new__(TestBoardService)
+        meta = svc._infer_metadata("test job", "e2e-full-A2", "A2")
+        assert meta["category"] == "e2e-full"
+
+    def test_other_category(self):
+        svc = TestBoardService.__new__(TestBoardService)
+        meta = svc._infer_metadata("test job", "Custom Workflow", "A2")
+        assert meta["category"] == "other"
+
+
+class TestStepLevelTestNameFormat:
+    """Verify step_level fallback uses 'job_name / step_name' format."""
+
+    def test_step_name_includes_job_name(self):
+        """test_name should be 'job_name / step_name', not just step_name."""
+        # Simulate the fallback logic
+        ci_job_name = "DeepSeek-R1-0528-W8A8-single"
+        step_name = "Run Pytest"
+        test_name = f"{ci_job_name} / {step_name}" if ci_job_name else step_name
+
+        assert test_name == "DeepSeek-R1-0528-W8A8-single / Run Pytest"
+        assert ci_job_name in test_name
+        assert step_name in test_name
+
+    def test_multiple_steps_not_collapsed(self):
+        """Multiple test steps should produce distinct test_names."""
+        ci_job_name = "DeepSeek-R1-0528-W8A8-single"
+        steps = [
+            {"name": "test accuracy", "conclusion": "success"},
+            {"name": "test performance", "conclusion": "failure"},
+        ]
+        test_steps = [s for s in steps if "test" in s.get("name", "").lower()]
+        names = []
+        for step in test_steps:
+            step_name = step.get("name", "")
+            names.append(f"{ci_job_name} / {step_name}" if ci_job_name else step_name)
+
+        assert len(names) == 2
+        assert names[0] != names[1]
+        assert "test accuracy" in names[0]
+        assert "test performance" in names[1]

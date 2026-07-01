@@ -46,31 +46,6 @@ async def upgrade():
         await db.commit()
         print(f"  [DONE] Set default 21:00-03:00 for {result.rowcount} nightly workflow(s)")
 
-        # Add category column to test_cases
-        if await check_column_exists("test_cases", "category"):
-            print("  [OK] Column 'category' already exists in test_cases")
-        else:
-            await db.execute(text("ALTER TABLE test_cases ADD COLUMN category VARCHAR(20) NULL"))
-            await db.execute(text("CREATE INDEX ix_test_cases_category ON test_cases(category)"))
-            await db.commit()
-            print("  [DONE] Added column 'category' to test_cases")
-
-            # Backfill category from test_suite (workflow name)
-            await db.execute(text(
-                "UPDATE test_cases SET category='nightly' WHERE test_suite LIKE '%nightly%' AND category IS NULL"
-            ))
-            await db.execute(text(
-                "UPDATE test_cases SET category='weekly' WHERE test_suite LIKE '%weekly%' AND category IS NULL"
-            ))
-            await db.execute(text(
-                "UPDATE test_cases SET category='e2e-full' WHERE (test_suite LIKE '%e2e-full%' OR test_suite LIKE '%e2e_full%') AND category IS NULL"
-            ))
-            await db.execute(text(
-                "UPDATE test_cases SET category='other' WHERE category IS NULL"
-            ))
-            await db.commit()
-            print("  [DONE] Backfilled category from test_suite")
-
         result = await db.execute(text(
             f"SELECT workflow_name, stats_start_hour, stats_end_hour FROM {TABLE_NAME}"
         ))
