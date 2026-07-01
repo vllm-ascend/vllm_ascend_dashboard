@@ -14,6 +14,7 @@ import api from '../services/api'
 import { formatDuration, renderStatusTag, renderConclusionTag } from '../utils/ciRenderers'
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
 import { useFailureAnalysisList, useAnalyzeFailedJob } from '../hooks/useFailureAnalysis'
+import { useCurrentUser } from '../hooks/useCurrentUser'
 import { PROBLEM_CATEGORY_MAP, ANALYSIS_STATUS_MAP } from '../services/failureAnalysis'
 import { FailureAnalysisDetailModal } from '../components/FailureAnalysisDetailModal'
 
@@ -76,6 +77,8 @@ function JobRuns() {
   })
 
   const analyzeMutation = useAnalyzeFailedJob()
+  const { data: currentUser } = useCurrentUser()
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin'
 
   const jobOwner = jobOwners?.find(
     (jo) => jo.workflow_name === workflowName && jo.job_name === jobName
@@ -203,7 +206,7 @@ function JobRuns() {
                 >
                   查看分析
                 </Button>
-              ) : (
+              ) : isAdmin ? (
                 <Button
                   type="link"
                   icon={<RobotOutlined />}
@@ -212,7 +215,7 @@ function JobRuns() {
                 >
                   分析
                 </Button>
-              )}
+              ) : null}
             </Space>
           )}
         </Space>
