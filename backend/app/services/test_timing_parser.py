@@ -40,11 +40,6 @@ class TestTimingParser:
                     else:
                         result = TestTimingParser._map_result(entry)
                     duration = TestTimingParser._extract_duration(entry)
-                    if duration is None and "elapsed" in entry:
-                        try:
-                            duration = float(entry["elapsed"])
-                        except (ValueError, TypeError):
-                            pass
                     results.append({
                         "test_name": name,
                         "test_file": name,
