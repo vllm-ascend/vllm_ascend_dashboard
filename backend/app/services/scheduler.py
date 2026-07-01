@@ -326,6 +326,23 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add test board cleanup job: {e}", exc_info=True)
 
+        # 上游支持矩阵同步任务 - 每日同步
+        if getattr(settings, 'SUPPORT_MATRIX_SYNC_ENABLED', True):
+            try:
+                from apscheduler.triggers.cron import CronTrigger
+                sync_hour = getattr(settings, 'SUPPORT_MATRIX_SYNC_CRON_HOUR', 6)
+                sync_minute = getattr(settings, 'SUPPORT_MATRIX_SYNC_CRON_MINUTE', 0)
+                self.scheduler.add_job(
+                    self._sync_support_matrix_job,
+                    trigger=CronTrigger(hour=sync_hour, minute=sync_minute, timezone=timezone_str),
+                    id="support_matrix_sync",
+                    name="Sync Upstream Support Matrix",
+                    replace_existing=True,
+                )
+                logger.info(f"Support matrix sync scheduled at {sync_hour}:{sync_minute:02d} {timezone_str}")
+            except Exception as e:
+                logger.error(f"Failed to add support matrix sync job: {e}", exc_info=True)
+
     def stop(self) -> None:
         """停止调度器"""
         if self.scheduler.running:

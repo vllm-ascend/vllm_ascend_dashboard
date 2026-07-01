@@ -88,6 +88,7 @@ class ModelReport(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_config_id = Column(Integer, ForeignKey("model_configs.id"), index=True)
+    model_registry_id = Column(Integer, ForeignKey("model_registry.id"), index=True)  # 过渡期双写
     workflow_run_id = Column(BigInteger, index=True)  # GitHub workflow run ID
     report_json = Column(JSON, nullable=False)
     pass_fail = Column(String(10))  # pass, fail

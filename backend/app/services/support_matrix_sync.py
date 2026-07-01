@@ -6,7 +6,6 @@
 """
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -52,6 +51,12 @@ async def sync_support_matrix(
     """
     try:
         github_cache = get_github_cache()
+        # Fix #D: 确保本地 clone 是最新的
+        try:
+            github_cache.pull()
+        except Exception as e:
+            logger.warning(f"Failed to pull latest from upstream, using cached version: {e}")
+
         repo_dir = github_cache.cache_dir
 
         models_path = repo_dir / settings.SUPPORT_MATRIX_MODELS_PATH
@@ -71,6 +76,15 @@ async def sync_support_matrix(
         upstream_models = parse_supported_models(models_content)
         upstream_features = parse_supported_features(features_content)
         upstream_compat = parse_feature_compatibility(compat_content)
+
+        # Fix #F: 空结果校验 — 上游格式变更时 parser 返回空列表
+        if not upstream_models:
+            msg = "Parser returned 0 models, upstream Markdown format may have changed"
+            logger.warning(msg)
+            if not dry_run:
+                await _record_sync_status(db, success=False, error=msg, dry_run=dry_run)
+                await db.commit()
+            return {"success": False, "error": msg, "models_synced": 0}
 
         new_models: list[dict] = []
         updated_models: list[dict] = []
@@ -142,6 +156,8 @@ async def sync_support_matrix(
     except Exception as e:
         logger.error(f"Support matrix sync failed: {e}", exc_info=True)
         if not dry_run:
+            # Fix #B: 先 rollback 撤销部分变更，再记录错误状态
+            await db.rollback()
             await _record_sync_status(db, success=False, error=str(e))
             try:
                 await db.commit()
@@ -167,7 +183,9 @@ def _merge_upstream_data(existing: ModelRegistry, upstream: dict) -> list[str]:
             setattr(existing, field, upstream_value)
             changed.append(field)
 
-    existing.source = "upstream_sync"
+    # Fix #9: 仅在有字段变更时更新 source
+    if changed:
+        existing.source = "upstream_sync"
     existing.upstream_synced_at = datetime.now(UTC)
     return changed
 
@@ -175,17 +193,21 @@ def _merge_upstream_data(existing: ModelRegistry, upstream: dict) -> list[str]:
 async def _update_feature_matrix(
     db: AsyncSession, registry_id: int, features: dict[str, str]
 ) -> None:
-    """更新模型特性矩阵，保留 verified_by_report"""
-    for feature_key, feature_status in features.items():
-        fm = (
-            await db.execute(
-                select(ModelFeatureMatrix).where(
-                    ModelFeatureMatrix.model_id == registry_id,
-                    ModelFeatureMatrix.feature_key == feature_key,
-                )
-            )
-        ).scalar_one_or_none()
+    """更新模型特性矩阵，保留 verified_by_report
 
+    Fix #4: 批量加载现有 features 后内存比对，避免 N+1 查询
+    """
+    existing_fms = {
+        fm.feature_key: fm
+        for fm in (await db.execute(
+            select(ModelFeatureMatrix).where(
+                ModelFeatureMatrix.model_id == registry_id
+            )
+        )).scalars()
+    }
+
+    for feature_key, feature_status in features.items():
+        fm = existing_fms.get(feature_key)
         if fm:
             fm.feature_status = feature_status
         else:
@@ -200,17 +222,19 @@ async def _update_feature_matrix(
 async def _sync_feature_compatibility(
     db: AsyncSession, compat_data: list[dict]
 ) -> None:
-    """同步特性互操作矩阵"""
+    """同步特性互操作矩阵
+
+    Fix #5: 批量加载现有 compat entries 后内存比对，避免 N+1 查询
+    """
     now = datetime.now(UTC)
+
+    existing_map: dict[tuple[str, str], FeatureCompatibility] = {}
+    for fc in (await db.execute(select(FeatureCompatibility))).scalars():
+        existing_map[(fc.feature_a, fc.feature_b)] = fc
+
     for item in compat_data:
-        existing = (
-            await db.execute(
-                select(FeatureCompatibility).where(
-                    FeatureCompatibility.feature_a == item["feature_a"],
-                    FeatureCompatibility.feature_b == item["feature_b"],
-                )
-            )
-        ).scalar_one_or_none()
+        key = (item["feature_a"], item["feature_b"])
+        existing = existing_map.get(key)
 
         if existing:
             existing.compatibility = item["compatibility"]

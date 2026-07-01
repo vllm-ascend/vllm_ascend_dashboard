@@ -52,7 +52,7 @@ async def upgrade():
             continue
         async with engine.begin() as conn:
             await conn.run_sync(
-                lambda sync_conn: Base.metadata.tables[table_name].create(sync_conn, checkfirst=True)
+                lambda sync_conn, tn=table_name: Base.metadata.tables[tn].create(sync_conn, checkfirst=True)
             )
         print(f"  [DONE] Created table '{table_name}'")
 
@@ -169,6 +169,35 @@ async def upgrade():
 
             await db.commit()
             print(f"  [DONE] Migrated {fm_count} feature matrix entries from model_support_matrix config")
+
+    # 4. Fix #A: 给 model_reports 添加 model_registry_id 列并回填关联
+    async with SessionLocal() as db:
+        # 检查列是否已存在
+        def _check_col(conn):
+            from sqlalchemy import inspect as sa_inspect
+            return [c['name'] for c in sa_inspect(conn).get_columns('model_reports')]
+        existing_cols = await db.run_sync(_check_col)
+
+        if 'model_registry_id' not in existing_cols:
+            is_mysql = "mysql" in str(engine.url)
+            col_type = "INTEGER NULL" if is_mysql else "INTEGER"
+            await db.execute(text(f"ALTER TABLE model_reports ADD COLUMN model_registry_id {col_type}"))
+            await db.commit()
+            print("  [DONE] Added model_registry_id column to model_reports")
+        else:
+            print("  [OK] model_registry_id column already exists on model_reports")
+
+        # 回填：model_reports.model_config_id → model_configs.model_name → model_registry.id
+        result = await db.execute(text(
+            "UPDATE model_reports SET model_registry_id = ("
+            "  SELECT mr.id FROM model_registry mr "
+            "  INNER JOIN model_configs mc ON mc.model_name = mr.model_name "
+            "  WHERE mc.id = model_reports.model_config_id "
+            "  AND mr.role = 'generative'"
+            ") WHERE model_registry_id IS NULL"
+        ))
+        await db.commit()
+        print(f"  [DONE] Backfilled model_registry_id for {result.rowcount} model_reports")
 
     print("\n" + "=" * 60)
     print("  Upgrade v0.0.24 complete!")

@@ -97,6 +97,29 @@ def _build_absolute_url(relative_path: str | None) -> str | None:
     return f"{DOC_BASE_URL}/{clean}"
 
 
+def _infer_series(model_name: str) -> str:
+    """Fix #C: 按模型名推断 series"""
+    name_lower = model_name.lower()
+    series_map = {
+        "deepseek": "DeepSeek",
+        "qwen": "Qwen",
+        "llama": "Llama",
+        "glm": "GLM",
+        "kimi": "Kimi",
+        "minimax": "MiniMax",
+        "mistral": "Mistral",
+        "gemma": "Gemma",
+        "phi": "Phi",
+        "internlm": "Internlm",
+        "baichuan": "Baichuan",
+        "minicpm": "MiniCPM",
+    }
+    for prefix, series in series_map.items():
+        if prefix in name_lower:
+            return series
+    return "Other"
+
+
 def parse_supported_models(md_content: str) -> list[dict[str, Any]]:
     """解析 supported_models.md，返回模型注册数据 + 逐模型特性
 
@@ -123,6 +146,7 @@ def parse_supported_models(md_content: str) -> list[dict[str, Any]]:
             title = stripped[4:].lower()
             if "pooling" in title:
                 current_model_type = "pooling"
+                current_tier = "unspecified"  # Fix #7: Pooling 节无 Core/Extended 区分
             columns = None
         elif stripped.startswith("#### "):
             title = stripped[5:].lower()
@@ -179,6 +203,7 @@ def parse_supported_models(md_content: str) -> list[dict[str, Any]]:
                 "display_name": model_name,
                 "model_name": model_name,
                 "role": role,
+                "series": _infer_series(model_name),  # Fix #C: 推断 series
                 "model_type": current_model_type,
                 "tier": current_tier,
                 "support_status": support_status,
