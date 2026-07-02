@@ -281,25 +281,25 @@ async def get_models_latest_results(db: DbSession):
                     if key in metrics:
                         try:
                             accuracy = float(metrics[key])
+                            break
                         except (ValueError, TypeError):
-                            pass
-                        break
+                            continue
                 
                 for key in ['throughput', 'avg_throughput', 'overall_throughput']:
                     if key in metrics:
                         try:
                             throughput = float(metrics[key])
+                            break
                         except (ValueError, TypeError):
-                            pass
-                        break
+                            continue
                 
                 for key in ['first_token_latency', 'avg_first_token_latency', 'ttft']:
                     if key in metrics:
                         try:
                             first_token_latency = float(metrics[key])
+                            break
                         except (ValueError, TypeError):
-                            pass
-                        break
+                            continue
             
             # 构建 GitHub URL
             github_url = None
