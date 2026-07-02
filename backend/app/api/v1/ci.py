@@ -336,7 +336,7 @@ async def get_ci_trends(
 
     # 构建基础查询
     stmt = select(
-        cast(CIResult.created_at, Date).label('date'),
+        cast(CIResult.started_at, Date).label('date'),
         func.count().label('total_runs'),
         func.sum(
             case(
@@ -357,8 +357,8 @@ async def get_ci_trends(
             )
         ).label('max_duration'),
     ).where(
-        CIResult.created_at >= start_date,
-        CIResult.created_at <= end_date,
+        CIResult.started_at >= start_date,
+        CIResult.started_at <= end_date,
         wf_filter,
     )
 
@@ -368,9 +368,9 @@ async def get_ci_trends(
         stmt = stmt.where(CIResult.hardware == hardware)
 
     stmt = stmt.group_by(
-        cast(CIResult.created_at, Date)
+        cast(CIResult.started_at, Date)
     ).order_by(
-        cast(CIResult.created_at, Date)
+        cast(CIResult.started_at, Date)
     )
 
     result = await db.execute(stmt)
