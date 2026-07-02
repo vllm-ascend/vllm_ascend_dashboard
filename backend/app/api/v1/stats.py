@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select, func, distinct, and_
+from sqlalchemy import select, func, distinct, and_, text
 
 from app.api.deps import CurrentAdminUser, DbSession
 from app.models import User, UserLoginLog, FeatureUsageLog
@@ -20,6 +20,18 @@ async def get_login_stats(
 ):
     # total_users queries the User table which always exists — compute outside try/except
     total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
+
+    # Check if user_login_logs table exists (may be missing if DB was created before the model was added)
+    try:
+        table_check = await db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='user_login_logs'"))
+        if not table_check.fetchone():
+            # Try MySQL syntax if SQLite query returned nothing
+            table_check = await db.execute(text("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'user_login_logs'"))
+            if not table_check.fetchone():
+                logger.critical("user_login_logs table does not exist! Login stats will be zero. Run upgrade scripts or restart app to trigger create_all.")
+                return LoginStatsResponse(total_users=total_users, active_users_today=0, active_users_7days=0, active_users_30days=0, login_trend=[], top_users_by_login_count=[])
+    except Exception:
+        pass  # If table check fails, proceed to try the queries directly
 
     try:
         now = datetime.now(UTC)
@@ -42,7 +54,7 @@ async def get_login_stats(
 
         return LoginStatsResponse(total_users=total_users, active_users_today=active_today, active_users_7days=active_7d, active_users_30days=active_30d, login_trend=login_trend, top_users_by_login_count=top_users)
     except Exception as e:
-        logger.error(f"Login stats error: {e}", exc_info=True)
+        logger.error(f"Login stats query failed: {type(e).__name__}: {e}", exc_info=True)
         return LoginStatsResponse(total_users=total_users, active_users_today=0, active_users_7days=0, active_users_30days=0, login_trend=[], top_users_by_login_count=[])
 
 
