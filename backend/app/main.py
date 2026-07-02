@@ -37,7 +37,7 @@ from app.core.logging import setup_db_logging
 from app.db.base import engine
 from app.middleware.usage_tracking import UsageTrackingMiddleware
 from app.models import Base
-from app.services.scheduler import get_scheduler, start_scheduler, stop_scheduler_async
+from app.services.scheduler import get_scheduler, start_scheduler_async, stop_scheduler_async
 
 # 配置日志
 logging.basicConfig(
@@ -302,13 +302,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("setup_db_logging failed (non-fatal): %s", e)
 
-    # 启动数据同步调度器
+    # 启动数据同步调度器（含 DB 配置覆盖）
     try:
-        start_scheduler()  # 调用 scheduler.start() 来添加任务并启动
+        await start_scheduler_async()
         scheduler = get_scheduler()
         logger.info("Scheduler started successfully")
         logger.info(f"Scheduler running: {scheduler.scheduler.running}")
-        # 记录已调度的任务
         for job in scheduler.scheduler.get_jobs():
             logger.info(f"Scheduled job: {job.id} - {job.name}, next run: {job.next_run_time}")
     except Exception as e:
