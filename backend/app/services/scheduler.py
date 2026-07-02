@@ -682,6 +682,7 @@ class DataSyncScheduler:
             async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
             async with async_session() as db:
+                # 读报告配置
                 stmt = select(ProjectDashboardConfig).where(
                     ProjectDashboardConfig.config_key == REPORT_CONFIG_KEY
                 )
@@ -689,11 +690,19 @@ class DataSyncScheduler:
                 config = config_result.scalar_one_or_none()
                 db_config = config.config_value if config else {}
 
+                # SMTP 配置在单独的 config_key 里
+                smtp_stmt = select(ProjectDashboardConfig).where(
+                    ProjectDashboardConfig.config_key == "smtp_config"
+                )
+                smtp_result = await db.execute(smtp_stmt)
+                smtp_config = smtp_result.scalar_one_or_none()
+                smtp_values = smtp_config.config_value if smtp_config else {}
+
                 if not db_config.get("report_recipients"):
                     logger.info("No recipients configured in DB, skipping")
                     return
 
-                if not db_config.get("smtp_host"):
+                if not smtp_values.get("smtp_host"):
                     logger.info("SMTP_HOST not configured in DB, skipping")
                     return
 
