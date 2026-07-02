@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models import (
@@ -343,7 +344,7 @@ async def get_support_matrix(
     tier: str | None = None,
 ) -> dict[str, Any]:
     """获取完整支持矩阵（模型×特性交叉表）"""
-    query = select(ModelRegistry).where(ModelRegistry.status == "active")
+    query = select(ModelRegistry).options(selectinload(ModelRegistry.feature_matrix)).where(ModelRegistry.status == "active")
     if model_type:
         query = query.where(ModelRegistry.model_type == model_type)
     if role:
