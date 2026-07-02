@@ -414,6 +414,17 @@ class CICollector:
                 # 不立即 commit，由上层统一 commit
                 logger.debug(f"Updated CI result for run {run['id']}")
 
+            # 检查是否为过期 in_progress（超过12小时仍为 in_progress）
+            if existing.status == "in_progress" and existing.started_at:
+                age = datetime.now(UTC) - existing.started_at
+                if age.total_seconds() > 12 * 3600:
+                    existing.status = "completed"
+                    if existing.conclusion is None:
+                        existing.conclusion = "stale"
+                    existing.completed_at = existing.completed_at or datetime.now(UTC)
+                    needs_update = True
+                    logger.info(f"Marked stale run {run['id']} as completed (age={age})")
+
             return needs_update
 
         except Exception as e:
