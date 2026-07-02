@@ -45,6 +45,9 @@ function DailyReportConfigPage() {
       if (values.report_recipients !== config?.report_recipients) update.report_recipients = values.report_recipients
       if (values.report_cc_recipients !== config?.report_cc_recipients) update.report_cc_recipients = values.report_cc_recipients
       if (values.report_subject_template !== config?.report_subject_template) update.report_subject_template = values.report_subject_template
+      if (values.report_schedule_hour !== config?.report_schedule_hour) update.report_schedule_hour = values.report_schedule_hour
+      if (values.report_schedule_minute !== config?.report_schedule_minute) update.report_schedule_minute = values.report_schedule_minute
+      if (values.report_enabled !== config?.report_enabled) update.report_enabled = values.report_enabled
 
       if (Object.keys(update).length === 0) {
         Modal.info({ title: '无变更', content: '配置没有变化，无需保存' })
