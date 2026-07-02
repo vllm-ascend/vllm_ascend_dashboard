@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 def _read_config_from_db(config_key: str) -> dict | None:
+    """从数据库读取配置。自动适应同步/异步上下文。"""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
     async def _read():
         from sqlalchemy import select as sa_select
         from app.models import ProjectDashboardConfig
@@ -31,11 +37,19 @@ def _read_config_from_db(config_key: str) -> dict | None:
             if row and row.config_value:
                 return dict(row.config_value)
             return None
-    try:
-        return asyncio.run(_read())
-    except Exception as e:
-        logger.warning(f"Failed to read config '{config_key}' from database: {e}")
-        return None
+
+    if loop and loop.is_running():
+        # 在运行中的事件循环内，用线程池执行
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, _read())
+            return future.result(timeout=10)
+    else:
+        try:
+            return asyncio.run(_read())
+        except Exception as e:
+            logger.warning(f"Failed to read config '{config_key}' from database: {e}")
+            return None
 
 
 class DataSyncScheduler:
