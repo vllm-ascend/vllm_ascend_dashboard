@@ -757,7 +757,23 @@ class FailureAnalysisService:
     async def _generate_pdf_async(self, analysis_id: int, md_content: str, workflow: str, job_name: str, job_id: int):
         """后台异步生成 PDF，完成后更新 DB"""
         try:
-            pdf_path = await self._generate_pdf(md_content, workflow, job_name, job_id)
+            from app.db.base import SessionLocal as SL
+            meta = {}
+            async with SL() as db:
+                from sqlalchemy import select as sa_sel
+                r = await db.execute(sa_sel(JobFailureAnalysis).where(JobFailureAnalysis.id == analysis_id))
+                a = r.scalar_one_or_none()
+                if a:
+                    meta = {
+                        "category": a.problem_category or "-",
+                        "status": "已完成" if a.analysis_status == "completed" else a.analysis_status,
+                        "summary": a.root_cause_summary or "-",
+                        "measures": a.improvement_measures_summary or "-",
+                        "provider": a.llm_provider or "",
+                        "model": a.llm_model or "",
+                        "duration": a.generation_time_seconds,
+                    }
+            pdf_path = await self._generate_pdf(md_content, workflow, job_name, job_id, metadata=meta)
             from app.db.base import SessionLocal
             async with SessionLocal() as db:
                 from sqlalchemy import update
@@ -770,11 +786,35 @@ class FailureAnalysisService:
         except Exception as e:
             logger.warning("Async PDF generation failed: %s", e)
 
-    async def _generate_pdf(self, md_content: str, workflow: str, job_name: str, job_id: int) -> str | None:
+    async def _generate_pdf(self, md_content: str, workflow: str, job_name: str, job_id: int,
+                            metadata: dict | None = None) -> str | None:
         """将 markdown 报告生成为 PDF 文件，返回文件路径"""
         import markdown
         from pathlib import Path
         from weasyprint import HTML
+
+        # 构建 metadata 表
+        meta_html = ""
+        if metadata:
+            meta = metadata
+            cat = meta.get("category", "-")
+            status = meta.get("status", "-")
+            summary = meta.get("summary", "-")
+            measures = meta.get("measures", "-")
+            provider = meta.get("provider", "")
+            model = meta.get("model", "")
+            duration = meta.get("duration")
+            meta_html = f"""
+<div style="margin-bottom: 20px; border: 1px solid #d9d9d9; border-radius: 4px; padding: 12px;">
+<h2 style="margin-top:0; font-size: 16px;">分析报告摘要</h2>
+<table>
+<tr><td style="width:80px; font-weight:bold;">分类</td><td>{cat}</td><td style="width:80px; font-weight:bold;">状态</td><td>{status}</td></tr>
+<tr><td style="font-weight:bold;">根因摘要</td><td colspan="3">{summary}</td></tr>
+<tr><td style="font-weight:bold;">改进建议</td><td colspan="3">{measures}</td></tr>
+{f'<tr><td style="font-weight:bold;">LLM</td><td>{provider}/{model}</td><td style="font-weight:bold;">耗时</td><td>{duration:.1f}s</td></tr>' if provider else ''}
+</table>
+</div>
+"""
 
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
@@ -790,6 +830,7 @@ pre {{ background: #f5f5f5; padding: 12px; border-radius: 4px; overflow-x: auto;
 code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 10px; }}
 img {{ max-width: 100%; }}
 </style></head><body>
+{meta_html}
 {markdown.markdown(md_content, extensions=['tables', 'fenced_code'])}
 </body></html>"""
 

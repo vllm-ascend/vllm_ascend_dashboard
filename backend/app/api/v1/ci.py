@@ -1295,7 +1295,16 @@ async def download_public_analysis_pdf(
 
     from app.services.failure_analysis import FailureAnalysisService
     svc = FailureAnalysisService()
-    pdf_path = await svc._generate_pdf(md_content, analysis.workflow_name, "", analysis.job_id)
+    meta = {
+        "category": analysis.problem_category or "-",
+        "status": "已完成" if analysis.analysis_status == "completed" else analysis.analysis_status,
+        "summary": analysis.root_cause_summary or "-",
+        "measures": analysis.improvement_measures_summary or "-",
+        "provider": analysis.llm_provider or "",
+        "model": analysis.llm_model or "",
+        "duration": analysis.generation_time_seconds,
+    }
+    pdf_path = await svc._generate_pdf(md_content, analysis.workflow_name, "", analysis.job_id, metadata=meta)
     if pdf_path:
         analysis.pdf_file_path = pdf_path
         await db.commit()

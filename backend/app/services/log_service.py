@@ -67,11 +67,65 @@ def _to_utc_datetime(value) -> datetime:
 
 
 def _parse_cli_log_file(filepath: Path) -> Optional[LogEntryResponse]:
-    """Parse a single Claude Code CLI log file into a LogEntryResponse."""
+    """Parse a Claude Code CLI log file (.log or _conversation.json) into a LogEntryResponse."""
+    is_conversation = filepath.name.endswith("_conversation.json")
+
     try:
         content = filepath.read_text(encoding="utf-8")
     except Exception:
         return None
+
+    # conversation.json：从 JSON 提取轮次摘要
+    conversation_content = ""
+    if is_conversation:
+        try:
+            import json
+            conv_data = json.loads(content)
+            provider = "openai"  # conversation.json 不存储 provider
+            model = conv_data.get("model", "")
+            turns = conv_data.get("conversation", [])
+            if turns:
+                lines = [f"总轮数: {len(turns)} | 模型: {model}"]
+                for t in turns:
+                    tn = t.get("turn", "?")
+                    resp = t.get("response", {})
+                    choices = resp.get("choices", [])
+                    elapsed = t.get("elapsed_ms", 0)
+                    usage = resp.get("usage", {})
+                    tok_info = f"in={usage.get('prompt_tokens','?')} out={usage.get('completion_tokens','?')}" if usage else ""
+                    is_tool = all(c.get("content", "") == "" for c in choices)
+                    lines.append(f"\n{'='*60}")
+                    lines.append(f"[轮次 {tn}] {elapsed}ms {tok_info}")
+                    if is_tool:
+                        lines.append("  (工具调用)")
+                        for m in t.get("request", {}).get("messages", []):
+                            for tc in m.get("tool_calls", []):
+                                args = tc.get("args", "")
+                                lines.append(f"  → {tc.get('name', '?')}: {args[:500]}")
+                    else:
+                        for c in choices:
+                            if c.get("content"):
+                                lines.append(f"  {c['content'][:2000]}")
+                                break
+                conversation_content = "\n".join(lines)
+            duration = 0
+            exit_code = 0
+            summary = f"Conversation: {len(turns)} turns"
+            stat = filepath.stat()
+            timestamp = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            date_str = filepath.parent.name
+            file_id = filepath.stem.replace("_conversation", "")
+            return LogEntryResponse(
+                id=f"claude_cli:{date_str}:{file_id}",
+                source="claude_cli",
+                level="info",
+                timestamp=timestamp,
+                summary=summary,
+                content=conversation_content,
+                metadata=LogEntryMetadata(provider=provider, model=model, duration_seconds=duration, exit_code=exit_code),
+            )
+        except Exception:
+            return None
 
     provider = ""
     model = ""
@@ -386,9 +440,13 @@ class LogService:
         if source == "claude_cli":
             try:
                 date, filename = parts[1].split(":", 1)
-                filepath = _CLI_LOG_DIR / date / f"{filename}.log"
-                if filepath.exists():
-                    return _parse_cli_log_file(filepath)
+                # 先查 .log，再查 _conversation.json
+                log_path = _CLI_LOG_DIR / date / f"{filename}.log"
+                conv_path = _CLI_LOG_DIR / date / f"{filename}_conversation.json"
+                if log_path.exists():
+                    return _parse_cli_log_file(log_path)
+                if conv_path.exists():
+                    return _parse_cli_log_file(conv_path)
             except ValueError:
                 return None
 
@@ -461,15 +519,28 @@ class LogService:
         if not _CLI_LOG_DIR.exists():
             return entries
 
-        for date_dir in sorted(
-            _CLI_LOG_DIR.iterdir(), reverse=True
-        ):
+        processed: set[str] = set()  # 已处理的文件 stem，避免重复
+        for date_dir in sorted(_CLI_LOG_DIR.iterdir(), reverse=True):
             if not date_dir.is_dir():
                 continue
-            for log_file in sorted(
-                date_dir.iterdir(), reverse=True
-            ):
-                if not log_file.suffix == ".log":
+            # 先收集所有文件 stem
+            stems: dict[str, dict[str, Path]] = {}
+            for f in date_dir.iterdir():
+                stem = f.name.replace(".log", "").replace("_conversation.json", "")
+                if stem not in stems:
+                    stems[stem] = {}
+                if f.suffix == ".log":
+                    stems[stem]["log"] = f
+                elif f.name.endswith("_conversation.json"):
+                    stems[stem]["conv"] = f
+
+            for stem, files in sorted(stems.items(), key=lambda x: x[0], reverse=True):
+                if stem in processed:
+                    continue
+                processed.add(stem)
+                # 优先用 .log 文件（含 metadata），其次用 conversation.json
+                log_file = files.get("log") or files.get("conv")
+                if log_file is None:
                     continue
                 entry = _parse_cli_log_file(log_file)
                 if entry is None:
