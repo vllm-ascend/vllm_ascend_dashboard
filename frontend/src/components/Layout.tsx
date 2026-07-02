@@ -72,11 +72,9 @@ const menuItems: MenuProps['items'] = [
     icon: <DashboardOutlined />,
     label: '测试看板',
   },
-  {
-    key: '/logs',
-    icon: <ReadOutlined />,
-    label: '日志中心',
-  },
+  ...(import.meta.env.DEV
+    ? [{ key: '/logs', icon: <ReadOutlined />, label: '日志中心' }]
+    : []),
 ]
 
 // 仅管理员可见的菜单项
