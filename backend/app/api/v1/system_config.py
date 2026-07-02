@@ -61,8 +61,7 @@ async def get_system_config(
         "github_config": {
             "owner": settings.GITHUB_OWNER,
             "repo": settings.GITHUB_REPO,
-            "token_configured": bool(settings.GITHUB_TOKEN),  # 只返回是否配置
-            "token_preview": settings.GITHUB_TOKEN[:8] + "..." if settings.GITHUB_TOKEN and len(settings.GITHUB_TOKEN) > 8 else None,
+            "token_configured": bool(settings.GITHUB_TOKEN),
         },
         "sync_config": {
             "ci_sync_config": {
