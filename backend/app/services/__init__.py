@@ -10,6 +10,7 @@ from app.services.scheduler import (
     DataSyncScheduler,
     get_scheduler,
     start_scheduler,
+    start_scheduler_async,
     stop_scheduler,
 )
 from app.services.startup_command_generator import StartupCommandGenerator

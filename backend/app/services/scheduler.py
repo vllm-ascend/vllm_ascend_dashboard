@@ -18,14 +18,9 @@ from app.services.github_client import GitHubClient
 logger = logging.getLogger(__name__)
 
 
-def _read_config_from_db(config_key: str) -> dict | None:
-    """从数据库读取配置。自动适应同步/异步上下文。"""
+async def _read_config_async(config_key: str) -> dict | None:
+    """从数据库读取配置（仅限异步上下文调用）。"""
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    async def _read():
         from sqlalchemy import select as sa_select
         from app.models import ProjectDashboardConfig
         async with SessionLocal() as db:
@@ -37,19 +32,9 @@ def _read_config_from_db(config_key: str) -> dict | None:
             if row and row.config_value:
                 return dict(row.config_value)
             return None
-
-    if loop and loop.is_running():
-        # 在运行中的事件循环内，用线程池执行
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, _read())
-            return future.result(timeout=10)
-    else:
-        try:
-            return asyncio.run(_read())
-        except Exception as e:
-            logger.warning(f"Failed to read config '{config_key}' from database: {e}")
-            return None
+    except Exception as e:
+        logger.warning(f"Failed to read config '{config_key}' from database: {e}")
+        return None
 
 
 class DataSyncScheduler:
@@ -63,18 +48,9 @@ class DataSyncScheduler:
     """
 
     def __init__(self):
-        """初始化调度器"""
-        # 时区从数据库读取，默认 Asia/Shanghai
-        from sqlalchemy import select
-        from app.models import ProjectDashboardConfig
-        from app.db.base import SessionLocal
-        
+        """初始化调度器（不读 DB，DB 配置由 apply_db_config_overrides 异步加载）"""
         timezone_str = 'Asia/Shanghai'
-        config_data = _read_config_from_db('daily_summary_schedule')
-        if config_data and 'timezone' in config_data:
-            timezone_str = config_data['timezone']
-            logger.info(f"Loaded timezone from database: {timezone_str}")
-        
+
         self.scheduler = AsyncIOScheduler(
             timezone=timezone_str,
             job_defaults={
@@ -155,16 +131,8 @@ class DataSyncScheduler:
             logger.error(f"Failed to add model report sync job: {e}", exc_info=True)
 
         # 每日总结生成任务 - 每天早上 8 点执行（可配置）
-        # 时区从数据库读取，默认 Asia/Shanghai
         try:
             from apscheduler.triggers.cron import CronTrigger
-
-            # 从数据库读取时区配置，如果数据库未初始化则使用默认值
-            timezone_str = 'Asia/Shanghai'
-            config_data = _read_config_from_db('daily_summary_schedule')
-            if config_data and 'timezone' in config_data:
-                timezone_str = config_data['timezone']
-                logger.info(f"Loaded timezone from database: {timezone_str}")
 
             cron_hour = getattr(settings, 'DAILY_SUMMARY_CRON_HOUR', 8)
             cron_minute = getattr(settings, 'DAILY_SUMMARY_CRON_MINUTE', 0)
@@ -202,11 +170,7 @@ class DataSyncScheduler:
 
         # NPU 指标采集任务 - 默认每 1 分钟执行
         try:
-            from app.schemas.resource_metrics import RESOURCE_METRICS_CONFIG_KEY
-            metrics_interval = 1
-            config_data = _read_config_from_db(RESOURCE_METRICS_CONFIG_KEY)
-            if config_data and "interval_minutes" in config_data:
-                metrics_interval = config_data["interval_minutes"]
+            metrics_interval = getattr(settings, 'RESOURCE_METRICS_INTERVAL_MINUTES', 1)
 
             self.scheduler.add_job(
                 self._collect_resource_metrics_job,
@@ -235,36 +199,24 @@ class DataSyncScheduler:
 
         # 失败分析兜底已移除 — 仅由 CI sync 后触发 _analyze_failed_jobs
 
-        # 每日运行报告邮件推送任务 - 每天早上 8:30 执行（可配置）
-        # 与每日总结任务（8:00 AM）错开 30 分钟，确保数据采集先完成
+        # 每日运行报告邮件推送任务 - 默认 8:30 执行（DB 中的时间由 apply_db_config_overrides 覆盖）
         try:
             from apscheduler.triggers.cron import CronTrigger
 
             report_enabled = getattr(settings, 'REPORT_ENABLED', True)
-            # 优先从 DB 读取时间，env 当默认值
             report_hour = getattr(settings, 'REPORT_SCHEDULE_HOUR', 8)
             report_minute = getattr(settings, 'REPORT_SCHEDULE_MINUTE', 30)
-            timezone_str = 'Asia/Shanghai'
-
-            db_report_config = _read_config_from_db('daily_report_config') or {}
-            if db_report_config.get('report_schedule_hour') is not None:
-                report_hour = db_report_config['report_schedule_hour']
-            if db_report_config.get('report_schedule_minute') is not None:
-                report_minute = db_report_config['report_schedule_minute']
-
-            schedule_config = _read_config_from_db('daily_summary_schedule')
-            if schedule_config and 'timezone' in schedule_config:
-                timezone_str = schedule_config['timezone']
+            local_tz = timezone_str
 
             if report_enabled:
                 self.scheduler.add_job(
                     self._send_daily_report_job,
-                    trigger=CronTrigger(hour=report_hour, minute=report_minute, timezone=timezone_str),
+                    trigger=CronTrigger(hour=report_hour, minute=report_minute, timezone=local_tz),
                     id="daily_report_task",
                     name="Daily Report Email",
                     replace_existing=True,
                 )
-                logger.info(f"Daily report email scheduled at {report_hour}:{report_minute:02d} {timezone_str} (enabled={report_enabled})")
+                logger.info(f"Daily report email scheduled at {report_hour}:{report_minute:02d} {local_tz} (enabled={report_enabled})")
             else:
                 logger.info(f"Daily report email DISABLED (enabled={report_enabled})")
         except Exception as e:
@@ -363,6 +315,70 @@ class DataSyncScheduler:
                 logger.info(f"Support matrix sync scheduled at {sync_hour}:{sync_minute:02d} {timezone_str}")
             except Exception as e:
                 logger.error(f"Failed to add support matrix sync job: {e}", exc_info=True)
+
+    async def apply_db_config_overrides(self) -> None:
+        """从数据库读取调度配置，覆盖默认值（异步，仅在事件循环内调用）。
+
+        应在 start() 之后、事件循环运行期间调用。
+        对 aiomysql 安全 —— 使用当前事件循环，不会创建新循环。
+        """
+        try:
+            schedule_config = await _read_config_async('daily_summary_schedule')
+            if schedule_config:
+                timezone_str = schedule_config.get('timezone', 'Asia/Shanghai')
+                # 更新时区（需要重建 cron 任务）
+                if timezone_str != 'Asia/Shanghai':
+                    self.scheduler.configure(timezone=timezone_str)
+                    logger.info(f"Applied timezone from DB: {timezone_str}")
+        except Exception as e:
+            logger.warning(f"Failed to apply DB timezone: {e}")
+
+        try:
+            report_config = await _read_config_async('daily_report_config')
+            if report_config:
+                hour = report_config.get('report_schedule_hour')
+                minute = report_config.get('report_schedule_minute')
+                if hour is not None and minute is not None:
+                    self.update_report_schedule(
+                        enabled=report_config.get('report_enabled', True),
+                        cron_hour=int(hour),
+                        cron_minute=int(minute),
+                    )
+                    logger.info(f"Applied report schedule from DB: {hour}:{minute:02d}")
+        except Exception as e:
+            logger.warning(f"Failed to apply DB report schedule: {e}")
+
+        try:
+            metrics_config = await _read_config_async('resource_metrics_config')
+            if metrics_config and 'interval_minutes' in metrics_config:
+                self.update_resource_metrics_schedule(int(metrics_config['interval_minutes']))
+        except Exception as e:
+            logger.warning(f"Failed to apply DB metrics interval: {e}")
+
+    def update_report_schedule(
+        self, enabled: bool = True, cron_hour: int = 8, cron_minute: int = 30
+    ):
+        """动态更新每日报告邮件定时任务"""
+        from apscheduler.triggers.cron import CronTrigger
+
+        try:
+            if enabled:
+                self.scheduler.add_job(
+                    self._send_daily_report_job,
+                    trigger=CronTrigger(hour=cron_hour, minute=cron_minute, timezone=self.scheduler.timezone),
+                    id="daily_report_task",
+                    name="Daily Report Email",
+                    replace_existing=True,
+                )
+                logger.info(f"Daily report schedule updated: {cron_hour}:{cron_minute:02d}")
+            else:
+                try:
+                    self.scheduler.remove_job('daily_report_task')
+                except Exception:
+                    pass
+                logger.info("Daily report task disabled")
+        except Exception as e:
+            logger.error(f"Failed to update daily report schedule: {e}", exc_info=True)
 
     def stop(self) -> None:
         """停止调度器"""
@@ -1067,9 +1083,16 @@ def get_scheduler() -> DataSyncScheduler:
 
 
 def start_scheduler() -> None:
-    """启动全局调度器"""
+    """启动全局调度器（同步部分：注册默认时间的所有任务）"""
     scheduler = get_scheduler()
     scheduler.start()
+
+
+async def start_scheduler_async() -> None:
+    """启动全局调度器并加载 DB 配置覆盖"""
+    scheduler = get_scheduler()
+    scheduler.start()
+    await scheduler.apply_db_config_overrides()
 
 
 async def stop_scheduler_async() -> None:

@@ -108,8 +108,14 @@ async def update_report_config(
 
         # 调度器重载新的时间配置
         try:
-            from app.services.scheduler import get_scheduler, start_scheduler
-            start_scheduler()
+            from app.services.scheduler import get_scheduler
+            sched = get_scheduler()
+            if sched and sched.scheduler.running:
+                sched.update_report_schedule(
+                    enabled=report_config.get("report_enabled", settings.REPORT_ENABLED),
+                    cron_hour=report_config.get("report_schedule_hour", settings.REPORT_SCHEDULE_HOUR),
+                    cron_minute=report_config.get("report_schedule_minute", settings.REPORT_SCHEDULE_MINUTE),
+                )
         except Exception as e:
             logger.warning("Failed to reschedule report job: %s", e)
 
