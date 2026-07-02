@@ -241,13 +241,20 @@ class DataSyncScheduler:
             from apscheduler.triggers.cron import CronTrigger
 
             report_enabled = getattr(settings, 'REPORT_ENABLED', True)
+            # 优先从 DB 读取时间，env 当默认值
             report_hour = getattr(settings, 'REPORT_SCHEDULE_HOUR', 8)
             report_minute = getattr(settings, 'REPORT_SCHEDULE_MINUTE', 30)
-
             timezone_str = 'Asia/Shanghai'
-            report_config = _read_config_from_db('daily_summary_schedule')
-            if report_config and 'timezone' in report_config:
-                timezone_str = report_config['timezone']
+
+            db_report_config = _read_config_from_db('daily_report_config') or {}
+            if db_report_config.get('report_schedule_hour') is not None:
+                report_hour = db_report_config['report_schedule_hour']
+            if db_report_config.get('report_schedule_minute') is not None:
+                report_minute = db_report_config['report_schedule_minute']
+
+            schedule_config = _read_config_from_db('daily_summary_schedule')
+            if schedule_config and 'timezone' in schedule_config:
+                timezone_str = schedule_config['timezone']
 
             if report_enabled:
                 self.scheduler.add_job(

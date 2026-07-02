@@ -69,9 +69,9 @@ async def get_report_config(
         report_recipients=report_config.get("report_recipients", ""),
         report_cc_recipients=report_config.get("report_cc_recipients", ""),
         report_subject_template=report_config.get("report_subject_template", settings.REPORT_SUBJECT_TEMPLATE),
-        report_enabled=settings.REPORT_ENABLED,
-        report_schedule_hour=settings.REPORT_SCHEDULE_HOUR,
-        report_schedule_minute=settings.REPORT_SCHEDULE_MINUTE,
+        report_enabled=report_config.get("report_enabled", settings.REPORT_ENABLED),
+        report_schedule_hour=report_config.get("report_schedule_hour", settings.REPORT_SCHEDULE_HOUR),
+        report_schedule_minute=report_config.get("report_schedule_minute", settings.REPORT_SCHEDULE_MINUTE),
     )
 
 
@@ -98,12 +98,20 @@ async def update_report_config(
                 smtp_config["smtp_password"] = value
             elif key in SMTP_FIELDS:
                 smtp_config[key] = value
-            elif key in ("report_recipients", "report_cc_recipients", "report_subject_template"):
+            elif key in ("report_recipients", "report_cc_recipients", "report_subject_template",
+                         "report_schedule_hour", "report_schedule_minute", "report_enabled"):
                 report_config[key] = value
 
         await _write_config(db, SMTP_CONFIG_KEY, smtp_config, "SMTP 邮件服务器配置")
         await _write_config(db, REPORT_CONFIG_KEY, report_config, "每日运行报告配置")
         await db.commit()
+
+        # 调度器重载新的时间配置
+        try:
+            from app.services.scheduler import get_scheduler, start_scheduler
+            start_scheduler()
+        except Exception as e:
+            logger.warning("Failed to reschedule report job: %s", e)
 
         logger.info(f"Report/SMTP config updated by {current_user.username}: {list(updates.keys())}")
 
@@ -117,9 +125,9 @@ async def update_report_config(
             report_recipients=report_config.get("report_recipients", ""),
             report_cc_recipients=report_config.get("report_cc_recipients", ""),
             report_subject_template=report_config.get("report_subject_template", settings.REPORT_SUBJECT_TEMPLATE),
-            report_enabled=settings.REPORT_ENABLED,
-            report_schedule_hour=settings.REPORT_SCHEDULE_HOUR,
-            report_schedule_minute=settings.REPORT_SCHEDULE_MINUTE,
+            report_enabled=report_config.get("report_enabled", settings.REPORT_ENABLED),
+            report_schedule_hour=report_config.get("report_schedule_hour", settings.REPORT_SCHEDULE_HOUR),
+            report_schedule_minute=report_config.get("report_schedule_minute", settings.REPORT_SCHEDULE_MINUTE),
         )
     except HTTPException:
         raise

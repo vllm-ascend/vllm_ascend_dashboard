@@ -2,7 +2,7 @@ import { useState } from 'react'
 import {
   Card, Form, Input, InputNumber, Switch, Button, Space, Tag, Table,
   Alert, Descriptions, Modal, Typography, Divider, Spin, Empty, Row, Col,
-  Tooltip, Badge,
+  Tooltip, Badge, Select,
 } from 'antd'
 import {
   MailOutlined, SendOutlined, SettingOutlined, HistoryOutlined,
@@ -45,6 +45,9 @@ function DailyReportConfigPage() {
       if (values.report_recipients !== config?.report_recipients) update.report_recipients = values.report_recipients
       if (values.report_cc_recipients !== config?.report_cc_recipients) update.report_cc_recipients = values.report_cc_recipients
       if (values.report_subject_template !== config?.report_subject_template) update.report_subject_template = values.report_subject_template
+      if (values.report_schedule_hour !== config?.report_schedule_hour) update.report_schedule_hour = values.report_schedule_hour
+      if (values.report_schedule_minute !== config?.report_schedule_minute) update.report_schedule_minute = values.report_schedule_minute
+      if (values.report_enabled !== config?.report_enabled) update.report_enabled = values.report_enabled
 
       if (Object.keys(update).length === 0) {
         Modal.info({ title: '无变更', content: '配置没有变化，无需保存' })
@@ -260,6 +263,26 @@ function DailyReportConfigPage() {
               }
               style={{ marginBottom: 16 }}
             />
+
+            <Divider orientation="left" plain>发送时间</Divider>
+            <Form.Item label="定时发送" help="每天定时发送日报的时间">
+              <Space>
+                <Form.Item name="report_schedule_hour" noStyle>
+                  <Select style={{ width: 80 }}>
+                    {Array.from({length:24},(_,i)=><Option key={i} value={i}>{String(i).padStart(2,'0')}</Option>)}
+                  </Select>
+                </Form.Item>
+                <span>:</span>
+                <Form.Item name="report_schedule_minute" noStyle>
+                  <Select style={{ width: 80 }}>
+                    {Array.from({length:12},(_,i)=><Option key={i*5} value={i*5}>{String(i*5).padStart(2,'0')}</Option>)}
+                  </Select>
+                </Form.Item>
+              </Space>
+            </Form.Item>
+            <Form.Item label="启用状态" name="report_enabled" valuePropName="checked">
+              <Switch checkedChildren="开" unCheckedChildren="关" />
+            </Form.Item>
 
             <Divider orientation="left" plain>邮件内容</Divider>
 <Form.Item label="收件人" name="report_recipients" rules={[{ required: true, message: '请输入收件人' }]}>
