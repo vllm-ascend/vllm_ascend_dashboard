@@ -277,21 +277,29 @@ async def get_models_latest_results(db: DbSession):
             
             # 从 metrics 中提取指标
             if metrics and isinstance(metrics, dict):
-                # 尝试从 different formats 中提取
                 for key in ['accuracy', 'avg_accuracy', 'overall_accuracy']:
                     if key in metrics:
-                        accuracy = float(metrics[key])
-                        break
+                        try:
+                            accuracy = float(metrics[key])
+                            break
+                        except (ValueError, TypeError):
+                            continue
                 
                 for key in ['throughput', 'avg_throughput', 'overall_throughput']:
                     if key in metrics:
-                        throughput = float(metrics[key])
-                        break
+                        try:
+                            throughput = float(metrics[key])
+                            break
+                        except (ValueError, TypeError):
+                            continue
                 
                 for key in ['first_token_latency', 'avg_first_token_latency', 'ttft']:
                     if key in metrics:
-                        first_token_latency = float(metrics[key])
-                        break
+                        try:
+                            first_token_latency = float(metrics[key])
+                            break
+                        except (ValueError, TypeError):
+                            continue
             
             # 构建 GitHub URL
             github_url = None
