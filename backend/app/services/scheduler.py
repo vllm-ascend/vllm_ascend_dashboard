@@ -247,10 +247,10 @@ class DataSyncScheduler:
             timezone_str = 'Asia/Shanghai'
 
             db_report_config = _read_config_from_db('daily_report_config') or {}
-            if db_report_config.get('report_hour') is not None:
-                report_hour = db_report_config['report_hour']
-            if db_report_config.get('report_minute') is not None:
-                report_minute = db_report_config['report_minute']
+            if db_report_config.get('report_schedule_hour') is not None:
+                report_hour = db_report_config['report_schedule_hour']
+            if db_report_config.get('report_schedule_minute') is not None:
+                report_minute = db_report_config['report_schedule_minute']
 
             schedule_config = _read_config_from_db('daily_summary_schedule')
             if schedule_config and 'timezone' in schedule_config:
