@@ -61,6 +61,8 @@ interface Workflow {
   description?: string
   enabled: boolean
   display_order: number
+  stats_start_hour?: number | null
+  stats_end_hour?: number | null
   last_sync_at?: string | null
 }
 
@@ -877,6 +879,39 @@ function CIBoardConfig() {
 
           <Form.Item name="description" label="描述">
             <TextArea rows={3} placeholder="Workflow 描述信息" />
+          </Form.Item>
+
+          <Form.Item label="统计时间窗口">
+            <Space>
+              <Form.Item
+                name="stats_start_hour"
+                noStyle
+                initialValue={21}
+              >
+                <Select
+                  style={{ width: 90 }}
+                  placeholder="开始"
+                  options={Array.from({ length: 24 }, (_, i) => ({ label: `${String(i).padStart(2, '0')}:00`, value: i }))}
+                  allowClear
+                />
+              </Form.Item>
+              <span>至</span>
+              <Form.Item
+                name="stats_end_hour"
+                noStyle
+                initialValue={3}
+              >
+                <Select
+                  style={{ width: 90 }}
+                  placeholder="结束"
+                  options={Array.from({ length: 24 }, (_, i) => ({ label: `${String(i).padStart(2, '0')}:00`, value: i }))}
+                  allowClear
+                />
+              </Form.Item>
+            </Space>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+              仅统计此时间段内启动的流水线，留空则统计全部
+            </div>
           </Form.Item>
 
           <Form.Item

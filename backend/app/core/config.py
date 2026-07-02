@@ -74,6 +74,14 @@ class Settings(BaseSettings):
     REPORT_SUBJECT_TEMPLATE: str = "vLLM Ascend 运行报告 - {date}"
     # SMTP 配置存储在数据库（ProjectDashboardConfig 表），不放在 .env 文件中
 
+    # 上游支持矩阵同步配置
+    SUPPORT_MATRIX_SYNC_ENABLED: bool = True
+    SUPPORT_MATRIX_SYNC_CRON_HOUR: int = 6
+    SUPPORT_MATRIX_SYNC_CRON_MINUTE: int = 0
+    SUPPORT_MATRIX_MODELS_PATH: str = "docs/source/user_guide/support_matrix/supported_models.md"
+    SUPPORT_MATRIX_FEATURES_PATH: str = "docs/source/user_guide/support_matrix/supported_features.md"
+    SUPPORT_MATRIX_COMPAT_PATH: str = "docs/source/user_guide/support_matrix/feature_matrix.md"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

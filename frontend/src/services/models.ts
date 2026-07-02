@@ -294,3 +294,46 @@ export const syncAllConfigs = async (): Promise<{ message: string }> => {
   const response = await api.post<{ message: string }>('/model-sync-configs/sync-all')
   return response.data
 }
+
+// ============ 支持矩阵 API ============
+
+import type {
+  SupportMatrixResponse,
+  FeatureCompatResponse,
+  GlobalFeaturesResponse,
+  SyncStatus,
+  SyncResult,
+} from '../types/models'
+
+export const getSupportMatrix = async (params?: {
+  model_type?: string
+  role?: string
+  series?: string
+  support_status?: string
+  tier?: string
+}): Promise<SupportMatrixResponse> => {
+  const response = await api.get<SupportMatrixResponse>('/models/support-matrix', { params })
+  return response.data
+}
+
+export const getFeatureCompatibility = async (): Promise<FeatureCompatResponse> => {
+  const response = await api.get<FeatureCompatResponse>('/models/feature-compatibility')
+  return response.data
+}
+
+export const getGlobalFeatures = async (): Promise<GlobalFeaturesResponse> => {
+  const response = await api.get<GlobalFeaturesResponse>('/models/global-features')
+  return response.data
+}
+
+export const getSyncStatus = async (): Promise<SyncStatus> => {
+  const response = await api.get<SyncStatus>('/models/sync-status')
+  return response.data
+}
+
+export const triggerUpstreamSync = async (dryRun: boolean = false): Promise<SyncResult> => {
+  const response = await api.post<SyncResult>('/models/sync-upstream', null, {
+    params: { dry_run: dryRun },
+  })
+  return response.data
+}

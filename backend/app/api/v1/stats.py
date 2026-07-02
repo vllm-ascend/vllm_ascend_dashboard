@@ -2,10 +2,11 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select, func, distinct, and_
+from sqlalchemy import select, func, distinct, and_, text, inspect
 
 from app.api.deps import CurrentAdminUser, DbSession
-from app.models import User, UserLoginLog, FeatureUsageLog
+from app.db.base import _is_sqlite, engine
+from app.models import User, UserLoginLog, FeatureUsageLog, Base
 from app.schemas import LoginStatsResponse, FeatureUsageStatsResponse, FeatureUsageTrendPoint
 
 router = APIRouter()
@@ -18,9 +19,30 @@ async def get_login_stats(
     db: DbSession,
     days: int = Query(30, ge=1, le=90, description="统计天数"),
 ):
+    # total_users queries the User table which always exists — compute outside try/except
+    total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
+
+    # Check if user_login_logs table exists; if missing, try to create it
+    try:
+        if _is_sqlite:
+            check_sql = text("SELECT name FROM sqlite_master WHERE type='table' AND name='user_login_logs'")
+        else:
+            check_sql = text("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'user_login_logs'")
+        result = await db.execute(check_sql)
+        table_exists = result.fetchone() is not None
+
+        if not table_exists:
+            logger.warning("user_login_logs table missing, attempting to create...")
+            async with engine.begin() as conn:
+                await conn.run_sync(
+                    lambda sync_conn: Base.metadata.tables['user_login_logs'].create(sync_conn, checkfirst=True)
+                )
+            logger.info("user_login_logs table created successfully")
+    except Exception as e:
+        logger.error(f"Failed to check/create user_login_logs table: {type(e).__name__}: {e}", exc_info=True)
+
     try:
         now = datetime.now(UTC)
-        total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         active_today = (await db.execute(select(func.count(distinct(UserLoginLog.user_id)).where(UserLoginLog.login_time >= day_start)))).scalar() or 0
@@ -40,8 +62,8 @@ async def get_login_stats(
 
         return LoginStatsResponse(total_users=total_users, active_users_today=active_today, active_users_7days=active_7d, active_users_30days=active_30d, login_trend=login_trend, top_users_by_login_count=top_users)
     except Exception as e:
-        logger.error(f"Login stats error: {e}", exc_info=True)
-        return LoginStatsResponse(total_users=0, active_users_today=0, active_users_7days=0, active_users_30days=0, login_trend=[], top_users_by_login_count=[])
+        logger.error(f"Login stats query failed: {type(e).__name__}: {e}", exc_info=True)
+        return LoginStatsResponse(total_users=total_users, active_users_today=0, active_users_7days=0, active_users_30days=0, login_trend=[], top_users_by_login_count=[])
 
 
 @router.get("/feature-usage", response_model=FeatureUsageStatsResponse, summary="功能使用统计")

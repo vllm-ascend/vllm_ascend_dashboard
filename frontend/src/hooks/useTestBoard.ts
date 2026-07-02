@@ -43,6 +43,13 @@ export const useCaseDetail = (caseId: number | null) => {
   })
 }
 
+export const useFilterOptions = () => {
+  return useQuery({
+    queryKey: ['test-board-filter-options'],
+    queryFn: () => testBoardApi.getFilterOptions(),
+  })
+}
+
 export const useTestRuns = (params?: {
   test_case_id?: number
   result?: string

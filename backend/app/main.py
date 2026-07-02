@@ -63,6 +63,7 @@ async def init_db():
         logger.info("Database tables created successfully")
 
         await _migrate_email_column()
+        await _migrate_login_log_columns()
 
         # 初始化 LLM 提供商默认配置
         await _init_llm_provider_configs()
@@ -101,6 +102,38 @@ async def _migrate_email_column():
                     await db.commit()
     except Exception as e:
         logger.warning(f"Email migration skipped (non-fatal): {e}")
+
+
+async def _migrate_login_log_columns():
+    """Ensure user_login_logs table has all required columns (create_all won't ALTER existing tables)"""
+    try:
+        from sqlalchemy import text, inspect
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+        from app.db.base import _is_sqlite
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            def _get_columns(conn):
+                return [c['name'] for c in inspect(conn).get_columns('user_login_logs')]
+            existing_cols = await db.run_sync(_get_columns)
+
+            migrations = [
+                ("ip_address_hashed", "VARCHAR(64)", "VARCHAR(64)"),
+                ("login_method", "VARCHAR(20) DEFAULT 'password'", "VARCHAR(20)"),
+                ("user_agent", "VARCHAR(500)", "VARCHAR(500)"),
+                ("created_at", "TIMESTAMP", "TIMESTAMP"),
+            ]
+
+            for col_name, sqlite_def, mysql_def in migrations:
+                if col_name not in existing_cols:
+                    logger.info(f"Adding missing column '{col_name}' to user_login_logs")
+                    col_type = sqlite_def if _is_sqlite else mysql_def
+                    await db.execute(text(f"ALTER TABLE user_login_logs ADD COLUMN {col_name} {col_type}"))
+                    await db.commit()
+                    logger.info(f"Column '{col_name}' added successfully")
+
+    except Exception as e:
+        logger.warning(f"Login log column migration skipped (non-fatal): {e}")
 
 
 async def _warmup_claude_code_cli():

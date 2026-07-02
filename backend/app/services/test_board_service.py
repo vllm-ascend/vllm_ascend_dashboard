@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -91,11 +90,11 @@ class TestBoardService:
         }
 
     async def get_suites(self) -> list[dict[str, Any]]:
-        stmt = select(TestCase.test_suite, TestCase.test_type, TestCase.hardware, TestCase.card_count,
+        stmt = select(TestCase.test_suite, TestCase.test_type, TestCase.hardware,
                        func.count(TestCase.id), func.avg(TestCase.health_score), func.avg(TestCase.pass_rate_7d),
                        func.sum(case((TestCase.is_flaky == True, 1), else_=0)),
                        func.avg(TestCase.avg_duration_seconds)).group_by(
-            TestCase.test_suite, TestCase.test_type, TestCase.hardware, TestCase.card_count)
+            TestCase.test_suite, TestCase.test_type, TestCase.hardware)
         rows = (await self.db.execute(stmt)).all()
         max_run_stmt = select(TestCase.test_suite, TestCase.hardware, func.max(TestCase.last_run_at)).group_by(TestCase.test_suite, TestCase.hardware)
         max_run_rows = (await self.db.execute(max_run_stmt)).all()
@@ -104,11 +103,11 @@ class TestBoardService:
         for r in rows:
             key = f"{r[0]}-{r[2]}"
             results.append({
-                "suite_name": r[0], "test_type": r[1], "hardware": r[2], "card_count": r[3],
-                "total_cases": r[4], "health_score": round(r[5] or 0, 1),
-                "health_level": TestHealthCalculator._score_to_level(r[5] or 0),
-                "pass_rate": round(r[6] or 0, 3), "flaky_cases": r[7] or 0,
-                "avg_duration_seconds": round(r[8] or 0, 1),
+                "suite_name": r[0], "test_type": r[1], "hardware": r[2], "card_count": None,
+                "total_cases": r[3], "health_score": round(r[4] or 0, 1),
+                "health_level": TestHealthCalculator._score_to_level(r[4] or 0),
+                "pass_rate": round(r[5] or 0, 3), "flaky_cases": r[6] or 0,
+                "avg_duration_seconds": round(r[7] or 0, 1),
                 "last_run_at": last_run_map.get(key),
             })
         return results
@@ -305,15 +304,15 @@ class TestBoardService:
                 logger.warning(f"Failed to download timing artifact: {e}")
 
         if not parsed_results:
-            steps = json.loads(ci_job.steps_data) if ci_job.steps_data else []
-            test_steps = [s for s in steps if "test" in s.get("name", "").lower()]
-            if test_steps:
-                for step in test_steps:
-                    parsed_results.append({
-                        "test_name": step.get("name", ""), "test_file": step.get("name", ""),
-                        "result": "passed" if step.get("conclusion") == "success" else "failed" if step.get("conclusion") == "failure" else "skipped",
-                        "duration_seconds": None, "data_granularity": "step_level",
-                    })
+            if ci_job.job_name and TestBoardService._is_test_job(ci_job.job_name):
+                name = ci_job.job_name.split(" / ")[0].strip()
+                parsed_results.append({
+                    "test_name": name,
+                    "test_file": ci_job.job_name,
+                    "result": "passed" if ci_job.conclusion == "success" else "failed" if ci_job.conclusion else "unknown",
+                    "duration_seconds": ci_job.duration_seconds,
+                    "data_granularity": "job_level",
+                })
 
         run_stmt = select(CIResult).where(CIResult.run_id == ci_job.run_id).limit(1)
         ci_result = (await self.db.execute(run_stmt)).scalar_one_or_none()
@@ -364,6 +363,10 @@ class TestBoardService:
             existing.last_seen_at = datetime.now(UTC)
             existing.last_result = parsed_result.get("result")
             existing.inference_confidence = metadata.get("inference_confidence", existing.inference_confidence)
+            if not existing.category:
+                existing.category = metadata.get("category", "other")
+            if parsed_result.get("result") == "passed" and parsed_result.get("duration_seconds") is not None:
+                existing.last_pass_duration_seconds = parsed_result["duration_seconds"]
             return existing
 
         owner_stmt = select(JobOwner.owner, JobOwner.email).where(
@@ -373,6 +376,7 @@ class TestBoardService:
 
         tc = TestCase(
             test_name=test_name, test_suite=suite, test_type=metadata.get("test_type", "unknown"),
+            category=metadata.get("category", "other"),
             hardware=hardware, card_count=metadata.get("card_count"),
             module_name=metadata.get("module_name"), file_path=parsed_result.get("test_file"),
             class_name=parsed_result.get("class_name"),
@@ -387,10 +391,27 @@ class TestBoardService:
         await self.db.flush()
         return tc
 
+    @staticmethod
+    def _is_test_job(job_name: str) -> bool:
+        """Check if a CI job is a test execution job (not build/setup/cleanup)."""
+        test_prefixes = (
+            "single-node", "double-node", "multi-node",
+            "doc-test", "e2e-upstream",
+        )
+        return any(job_name.startswith(prefix) for prefix in test_prefixes)
+
     def _infer_metadata(self, job_name: str, workflow_name: str, hardware: str | None) -> dict:
         jn = job_name.lower()
         wf = workflow_name.lower()
         test_type = "e2e" if "e2e" in jn or "nightly" in wf else "ut" if "ut" in jn else "unknown"
+        if "nightly" in wf:
+            category = "nightly"
+        elif "weekly" in wf:
+            category = "weekly"
+        elif "e2e-full" in wf or "e2e_full" in wf:
+            category = "e2e-full"
+        else:
+            category = "other"
         hw = hardware or ("A3" if "a3" in wf else "A2" if "a2" in wf else "unknown")
         card = 4 if "4card" in jn or "four_card" in jn else 2 if "2card" in jn or "two_card" in jn else 1 if "1card" in jn or "one_card" in jn or "single" in jn else None
         module = None
@@ -403,7 +424,7 @@ class TestBoardService:
         if hw != "unknown": confidence += 0.25
         if card is not None: confidence += 0.25
         if module is not None: confidence += 0.25
-        return {"test_type": test_type, "test_suite": workflow_name, "hardware": hw, "card_count": card, "module_name": module, "inference_confidence": confidence}
+        return {"test_type": test_type, "category": category, "test_suite": workflow_name, "hardware": hw, "card_count": card, "module_name": module, "inference_confidence": confidence}
 
     async def _get_recent_results(self, test_case_id: int, days: int) -> list[str]:
         cutoff = datetime.now(UTC) - timedelta(days=days)

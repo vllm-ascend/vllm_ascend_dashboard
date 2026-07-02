@@ -26,6 +26,7 @@ class TestCase(Base):
     test_suite = Column(String(100), nullable=False, index=True)
     module_name = Column(String(100), index=True)
     test_type = Column(String(20), nullable=False, index=True)
+    category = Column(String(20), index=True)  # nightly, weekly, e2e-full, other
     hardware = Column(String(20), index=True)
     card_count = Column(Integer)
     file_path = Column(String(500))
@@ -43,6 +44,7 @@ class TestCase(Base):
     pass_rate_30d = Column(Float)
     avg_duration_seconds = Column(Float)
     duration_p90_seconds = Column(Float)
+    last_pass_duration_seconds = Column(Float)  # 最近一次成功执行的耗时（秒）
     health_score = Column(Float)
     health_level = Column(String(1), index=True)
     first_seen_at = Column(TIMESTAMP)

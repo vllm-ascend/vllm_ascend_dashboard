@@ -16,6 +16,7 @@ export interface TestCaseItem {
   test_suite: string
   module_name: string | null
   test_type: string
+  category: string | null
   hardware: string | null
   card_count: number | null
   owner: string | null
@@ -29,6 +30,7 @@ export interface TestCaseItem {
   pass_rate_30d: number | null
   avg_duration_seconds: number | null
   duration_p90_seconds: number | null
+  last_pass_duration_seconds: number | null
   health_score: number | null
   health_level: string | null
   last_result: string | null
@@ -140,6 +142,15 @@ export const getOverview = async (days: number = 7): Promise<TestOverview> => {
 
 export const getSuites = async (): Promise<TestSuiteItem[]> => {
   const response = await api.get<TestSuiteItem[]>('/test-board/suites')
+  return response.data
+}
+
+export const getFilterOptions = async (): Promise<{
+  test_types: string[]
+  suites: string[]
+  hardwares: string[]
+}> => {
+  const response = await api.get('/test-board/filter-options')
   return response.data
 }
 

@@ -899,7 +899,7 @@ function SystemConfig() {
           <Descriptions.Item label="Token 状态" span={2}>
             {config?.github_config?.token_configured ? (
               <Tag color="green" icon={<CheckCircleOutlined />}>
-                已配置 ({config?.github_config?.token_preview || '***'})
+                已配置
               </Tag>
             ) : (
               <Tag color="red" icon={<CloseCircleOutlined />}>未配置</Tag>
@@ -977,7 +977,7 @@ function SystemConfig() {
             <Descriptions.Item label="Token 状态">
               {config?.github_config?.token_configured ? (
                 <Tag color="green" icon={<CheckCircleOutlined />}>
-                  已配置 ({config?.github_config?.token_preview || '***'})
+                  已配置
                 </Tag>
               ) : (
                 <Tag color="red" icon={<CloseCircleOutlined />}>未配置</Tag>

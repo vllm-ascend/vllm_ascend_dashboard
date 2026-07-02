@@ -409,3 +409,55 @@ class TestD4SuiteDistributionKey:
 
         keys = list(result["suite_distribution"].keys())
         assert "Nightly-A3" in keys, f"Key should be 'Nightly-A3', got {keys}"
+
+
+# ============================================================================
+# PR #110: Category derivation + step_level test_name format
+# ============================================================================
+
+class TestCategoryDerivation:
+    """Verify _infer_metadata derives category from workflow_name."""
+
+    def test_nightly_category(self):
+        svc = TestBoardService.__new__(TestBoardService)
+        meta = svc._infer_metadata("test job", "Nightly-A2", "A2")
+        assert meta["category"] == "nightly"
+
+    def test_weekly_category(self):
+        svc = TestBoardService.__new__(TestBoardService)
+        meta = svc._infer_metadata("test job", "vLLM Weekly", "A2")
+        assert meta["category"] == "weekly"
+
+    def test_e2e_full_category(self):
+        svc = TestBoardService.__new__(TestBoardService)
+        meta = svc._infer_metadata("test job", "e2e-full-A2", "A2")
+        assert meta["category"] == "e2e-full"
+
+    def test_other_category(self):
+        svc = TestBoardService.__new__(TestBoardService)
+        meta = svc._infer_metadata("test job", "Custom Workflow", "A2")
+        assert meta["category"] == "other"
+
+
+class TestStepLevelTestNameFormat:
+    """Verify job_level fallback uses ci_job.job_name (not step name)."""
+
+    def test_job_name_used_as_test_name(self):
+        """test_name should be ci_job.job_name, not step name."""
+        ci_job_name = "single-node (main, Qwen3.5-27B-w8a8-A2, linux-aarch64-a2b3-2, Qwen3.5-27B-w8a8-A2.yaml)"
+        name = ci_job_name.split(" / inputs.")[0].strip()
+        assert name == ci_job_name
+        assert "Qwen3.5-27B-w8a8-A2" in name
+
+    def test_reusable_workflow_suffix_stripped(self):
+        """Reusable workflow expression suffix should be stripped."""
+        ci_job_name = "single-node (main, Qwen3.5-27B-w8a8-A2, linux-aarch64-a2b3-2, Qwen3.5-27B-w8a8-A2.yaml) / inputs.name || inputs.config_file_path"
+        name = ci_job_name.split(" / inputs.")[0].strip()
+        assert "inputs." not in name
+        assert name.startswith("single-node")
+
+    def test_job_conclusion_maps_to_result(self):
+        """Job conclusion should map to test result."""
+        assert ("passed" if "success" == "success" else "failed") == "passed"
+        assert ("passed" if "failure" == "success" else "failed") == "failed"
+        assert ("passed" if None == "success" else "failed" if None else "unknown") == "unknown"

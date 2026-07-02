@@ -27,16 +27,37 @@ class TestTimingParser:
 
         results = []
         if isinstance(data, dict):
-            for test_file, info in data.items():
-                result = TestTimingParser._map_result(info)
-                duration = TestTimingParser._extract_duration(info)
-                results.append({
-                    "test_name": test_file,
-                    "test_file": test_file,
-                    "result": result,
-                    "duration_seconds": duration,
-                    "data_granularity": "file_level",
-                })
+            if "tests" in data and isinstance(data["tests"], list):
+                for entry in data["tests"]:
+                    if not isinstance(entry, dict):
+                        continue
+                    name = entry.get("name", entry.get("test_name", "unknown"))
+                    passed = entry.get("passed")
+                    if passed is True:
+                        result = "passed"
+                    elif passed is False:
+                        result = "failed"
+                    else:
+                        result = TestTimingParser._map_result(entry)
+                    duration = TestTimingParser._extract_duration(entry)
+                    results.append({
+                        "test_name": name,
+                        "test_file": name,
+                        "result": result,
+                        "duration_seconds": duration,
+                        "data_granularity": "file_level",
+                    })
+            else:
+                for test_file, info in data.items():
+                    result = TestTimingParser._map_result(info)
+                    duration = TestTimingParser._extract_duration(info)
+                    results.append({
+                        "test_name": test_file,
+                        "test_file": test_file,
+                        "result": result,
+                        "duration_seconds": duration,
+                        "data_granularity": "file_level",
+                    })
         elif isinstance(data, list):
             for entry in data:
                 if isinstance(entry, dict):
@@ -56,6 +77,8 @@ class TestTimingParser:
     def _map_result(info: dict | Any) -> str:
         if not isinstance(info, dict):
             return "unknown"
+        if "passed" in info:
+            return "passed" if info["passed"] is True else "failed" if info["passed"] is False else "unknown"
         status = info.get("status", info.get("result", ""))
         if isinstance(status, bool):
             return "passed" if status else "failed"

@@ -171,3 +171,89 @@ export const MODEL_SERIES_OPTIONS = [
 ] as const
 
 export type ModelSeries = typeof MODEL_SERIES_OPTIONS[number]['value']
+
+// ============ 支持矩阵类型 ============
+
+export interface SupportMatrixModel {
+  id: number
+  model_name: string
+  display_name?: string | null
+  series?: string | null
+  model_type: string
+  role: string
+  tier?: string | null
+  support_status: string
+  weight_formats?: string[] | null
+  supported_hardware?: string[] | null
+  max_model_len?: string | null
+  official_doc_url?: string | null
+  note?: string | null
+  features: Record<string, string>
+  verified_features: Record<string, boolean>
+  source?: string | null
+  upstream_synced_at?: string | null
+}
+
+export interface FeatureColumn {
+  key: string
+  title: string
+}
+
+export interface SupportMatrixResponse {
+  models: SupportMatrixModel[]
+  feature_columns: FeatureColumn[]
+  statistics: {
+    total_models: number
+    by_type: Record<string, number>
+    by_status: Record<string, number>
+    by_tier: Record<string, number>
+  }
+}
+
+export interface FeatureCompatEntry {
+  feature_a: string
+  feature_b: string
+  compatibility: string
+  footnote?: string | null
+}
+
+export interface FeatureCompatResponse {
+  features: string[]
+  matrix: FeatureCompatEntry[]
+  legend: Record<string, string>
+  synced_at?: string | null
+}
+
+export interface GlobalFeature {
+  feature: string
+  status: string
+  next_step: string
+}
+
+export interface GlobalFeaturesResponse {
+  features: GlobalFeature[]
+  updated_at?: string | null
+}
+
+export interface SyncStatus {
+  last_sync_at?: string | null
+  success?: boolean | null
+  dry_run?: boolean
+  models_synced?: number
+  new_models?: any[]
+  updated_models?: any[]
+  features_synced?: number
+  compat_pairs_synced?: number
+  error?: string | null
+}
+
+export interface SyncResult {
+  success: boolean
+  dry_run?: boolean
+  models_synced?: number
+  new_models?: any[]
+  updated_models?: any[]
+  features_synced?: number
+  compat_pairs_synced?: number
+  error?: string
+}
