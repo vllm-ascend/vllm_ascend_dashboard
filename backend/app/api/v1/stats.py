@@ -18,9 +18,11 @@ async def get_login_stats(
     db: DbSession,
     days: int = Query(30, ge=1, le=90, description="统计天数"),
 ):
+    # total_users queries the User table which always exists — compute outside try/except
+    total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
+
     try:
         now = datetime.now(UTC)
-        total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         active_today = (await db.execute(select(func.count(distinct(UserLoginLog.user_id)).where(UserLoginLog.login_time >= day_start)))).scalar() or 0
@@ -41,7 +43,7 @@ async def get_login_stats(
         return LoginStatsResponse(total_users=total_users, active_users_today=active_today, active_users_7days=active_7d, active_users_30days=active_30d, login_trend=login_trend, top_users_by_login_count=top_users)
     except Exception as e:
         logger.error(f"Login stats error: {e}", exc_info=True)
-        return LoginStatsResponse(total_users=0, active_users_today=0, active_users_7days=0, active_users_30days=0, login_trend=[], top_users_by_login_count=[])
+        return LoginStatsResponse(total_users=total_users, active_users_today=0, active_users_7days=0, active_users_30days=0, login_trend=[], top_users_by_login_count=[])
 
 
 @router.get("/feature-usage", response_model=FeatureUsageStatsResponse, summary="功能使用统计")

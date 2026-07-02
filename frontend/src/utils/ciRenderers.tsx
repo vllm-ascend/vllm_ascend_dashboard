@@ -61,7 +61,7 @@ export const renderConclusionTag = (conclusion: string | null) => {
  * Format duration in seconds to human-readable string - Stripe Design System
  */
 export const formatDuration = (seconds: number | null) => {
-  if (!seconds) return '-'
+  if (!seconds || seconds < 0) return '-'
   // 取整到秒
   const secs = Math.round(seconds)
   const hours = Math.floor(secs / 3600)
