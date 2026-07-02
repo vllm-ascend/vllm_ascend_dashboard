@@ -46,8 +46,12 @@ COMPAT_EMOJI_MAP = {
 
 
 def _strip_html(text: str) -> str:
-    """去除 HTML 标签（<abbr>、<a> 等），保留纯文本"""
-    return re.sub(r"<[^>]+>", "", text)
+    """去除 HTML 标签（<abbr>、<a> 等）和 Markdown 链接语法，保留纯文本"""
+    # 先去除 HTML 标签
+    text = re.sub(r"<[^>]+>", "", text)
+    # 再去除 Markdown 链接语法 [text](url) → text
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    return text
 
 
 def _split_table_cells(line: str) -> list[str]:
