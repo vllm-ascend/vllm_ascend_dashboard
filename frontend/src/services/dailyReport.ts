@@ -25,6 +25,9 @@ export interface DailyReportConfigUpdate {
   report_recipients?: string
   report_cc_recipients?: string
   report_subject_template?: string
+  report_schedule_hour?: number
+  report_schedule_minute?: number
+  report_enabled?: boolean
 }
 
 export interface DailyReportHistoryItem {
