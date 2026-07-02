@@ -403,7 +403,7 @@ function RealtimeDashboardTab() {
   const [appliedFilters, setAppliedFilters] = useState({ clusterIds: [] as number[] })
   const [selectedClusterSummary, setSelectedClusterSummary] = useState<ClusterResourceSummary | null>(null)
 
-  const { data: allClusters = [], isLoading: clustersLoading } = useQuery({
+  const { data: allClusters = [], isLoading: clustersLoading, error: clustersError } = useQuery({
     queryKey: ['resource-clusters-enabled'],
     queryFn: getEnabledResourceClusters,
   })
@@ -485,6 +485,19 @@ function RealtimeDashboardTab() {
           <Col xs={24} lg={12} xl={8}><Card><Skeleton active paragraph={{ rows: 5 }} /></Card></Col>
         </Row>
       </div>
+    )
+  }
+
+  if (clustersError) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="资源看板数据加载失败"
+        description={`无法获取集群列表：${(clustersError as Error).message}。请检查后端服务是否正常运行。`}
+        action={<Button size="small" onClick={() => window.location.reload()}>重试</Button>}
+        style={{ margin: 24 }}
+      />
     )
   }
 
