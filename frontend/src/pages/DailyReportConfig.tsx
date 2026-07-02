@@ -268,15 +268,15 @@ function DailyReportConfigPage() {
             <Form.Item label="定时发送" help="每天定时发送日报的时间">
               <Space>
                 <Form.Item name="report_schedule_hour" noStyle>
-                  <Select style={{ width: 80 }}>
-                    {Array.from({length:24},(_,i)=><Option key={i} value={i}>{String(i).padStart(2,'0')}</Option>)}
-                  </Select>
+                  <Select style={{ width: 80 }}
+                    options={Array.from({length:24},(_,i)=>({value:i, label:String(i).padStart(2,'0')}))}
+                  />
                 </Form.Item>
                 <span>:</span>
                 <Form.Item name="report_schedule_minute" noStyle>
-                  <Select style={{ width: 80 }}>
-                    {Array.from({length:12},(_,i)=><Option key={i*5} value={i*5}>{String(i*5).padStart(2,'0')}</Option>)}
-                  </Select>
+                  <Select style={{ width: 80 }}
+                    options={Array.from({length:12},(_,i)=>({value:i*5, label:String(i*5).padStart(2,'0')}))}
+                  />
                 </Form.Item>
               </Space>
             </Form.Item>
