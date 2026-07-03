@@ -118,6 +118,8 @@ class OpenAIClient(BaseLLMClient):
             )
 
             async for chunk in response:
+                if not chunk.choices:
+                    continue
                 delta = chunk.choices[0].delta
                 if delta and delta.content:
                     yield delta.content
@@ -271,6 +273,8 @@ class QwenClient(BaseLLMClient):
             )
 
             async for chunk in response:
+                if not chunk.choices:
+                    continue
                 delta = chunk.choices[0].delta
                 if delta and delta.content:
                     yield delta.content

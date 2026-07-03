@@ -281,10 +281,13 @@ class FailureAnalysisService:
                 logger.error(f"Batch analysis failed for job {job.job_id}: {e}")
         return results
 
-    async def _build_job_context(self, job: CIJob, db: AsyncSession, max_turns: int = 80, timeout_seconds: int = 1800) -> str:
+    async def _build_job_context(self, job: CIJob, db: AsyncSession, max_turns: int = 80, timeout_seconds: int = 1800, inline_logs: bool = False) -> str:
         timeout_min = timeout_seconds // 60
         lines = []
-        lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败。")
+        if inline_logs:
+            lines.append("请分析以下 CI 失败，直接基于已内联的数据输出分析报告。")
+        else:
+            lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败。")
         lines.append("")
         lines.append("以下数据已预加载，请直接基于这些数据分析，无需 curl 拉取：")
         lines.append(f"- Annotations（下方）")
@@ -387,15 +390,27 @@ class FailureAnalysisService:
 
         # 预拉取所有可用日志到本地，CLI 只读本地文件不 curl
         logs = await self._download_all_logs(job)
-        lines.append(f"\n### 本地已缓存的数据（Read 直接读，禁止 curl 重复拉取）:\n")
-        if logs["job_log"]:
-            lines.append(f"- Job 日志：`{logs['job_log']}`")
-        if logs["run_log_zip"]:
-            lines.append(f"- Run 全部日志(ZIP)：`{logs['run_log_zip']}` → unzip 后 Read 各 job 日志")
-        if logs["artifacts_dir"]:
-            lines.append(f"- Artifacts：`{logs['artifacts_dir']}` → unzip 后 Read")
-        if logs["jobs_list"]:
-            lines.append(f"- Run 全部 job 列表：`{logs['jobs_list']}` → 找到多节点/worker job 后 Read 对应日志")
+        if inline_logs:
+            lines.append(f"\n### 本地已缓存的数据（已内联，无需 Read/curl）:\n")
+            if logs["job_log"]:
+                try:
+                    from pathlib import Path
+                    log_text = Path(logs["job_log"]).read_text(encoding="utf-8", errors="replace")
+                    if len(log_text) > 20000:
+                        log_text = "...(truncated)...\n" + log_text[-20000:]
+                    lines.append(f"#### Job 日志:\n```\n{log_text}\n```\n")
+                except Exception:
+                    lines.append(f"- Job 日志文件：{logs['job_log']}（读取失败）")
+        else:
+            lines.append(f"\n### 本地已缓存的数据（Read 直接读，禁止 curl 重复拉取）:\n")
+            if logs["job_log"]:
+                lines.append(f"- Job 日志：`{logs['job_log']}`")
+            if logs["run_log_zip"]:
+                lines.append(f"- Run 全部日志(ZIP)：`{logs['run_log_zip']}` → unzip 后 Read 各 job 日志")
+            if logs["artifacts_dir"]:
+                lines.append(f"- Artifacts：`{logs['artifacts_dir']}` → unzip 后 Read")
+            if logs["jobs_list"]:
+                lines.append(f"- Run 全部 job 列表：`{logs['jobs_list']}` → 找到多节点/worker job 后 Read 对应日志")
         lines.append(f"- Annotations、Steps、历史对比、Commit Diff：下方已预加载")
         lines.append(f"")
         lines.append(f"**源码分析（本地仓库 `{repo_path}`，git 命令秒级响应）：**")
