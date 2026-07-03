@@ -6,6 +6,7 @@ import {
   BugOutlined, CheckCircleOutlined, WarningOutlined, ClockCircleOutlined,
   SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined,
 } from '@ant-design/icons'
+import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
 import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions } from '../hooks/useTestBoard'
 import type { TestCaseItem, FlakyCaseDetail, FailureBreakdown, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
 import './TestObservabilityDashboard.css'
@@ -437,6 +438,25 @@ function TestObservabilityDashboard() {
                     </Card>
                   </Col>
                 </Row>
+
+                <Card title="健康度雷达图" style={{ marginBottom: 24 }}>
+                  {overview?.health_score ? (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <RadarChart data={[
+                        { metric: '通过率', value: Math.round((overview.health_score.pass_rate ?? 0) * 100) },
+                        { metric: '稳定性', value: Math.round((overview.health_score.stability ?? 0) * 100) },
+                        { metric: '可靠性', value: Math.round((overview.health_score.reliability ?? 0) * 100) },
+                        { metric: '时效性', value: Math.round((overview.health_score.timeliness ?? 0) * 100) },
+                        { metric: '覆盖率', value: Math.round((overview.health_score.coverage ?? 0) * 100) },
+                      ]}>
+                        <PolarGrid />
+                        <PolarAngleAxis dataKey="metric" />
+                        <PolarRadiusAxis angle={90} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                        <Radar name="健康度" dataKey="value" stroke="#1890ff" fill="#1890ff" fillOpacity={0.4} />
+                      </RadarChart>
+                    </ResponsiveContainer>
+                  ) : <Empty description="暂无健康度数据" />}
+                </Card>
 
                 <Card title="套件分布" style={{ marginBottom: 24 }}>
                   {suites?.length ? (
