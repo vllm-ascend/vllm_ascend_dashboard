@@ -226,42 +226,45 @@ class DailyReportService:
         }
 
     async def _collect_perf_data(self, start_dt, end_dt) -> dict:
-        """采集性能指标概况"""
-        stmt = select(PerformanceData).where(
-            PerformanceData.timestamp >= start_dt,
-            PerformanceData.timestamp <= end_dt,
+        """采集性能指标概况（从 ModelReport.metrics_json 提取，PerformanceData 表暂无采集器）"""
+        stmt = select(ModelReport).where(
+            ModelReport.created_at >= start_dt,
+            ModelReport.created_at <= end_dt,
         )
         result = await self.db.execute(stmt)
-        perf_records = result.scalars().all()
+        reports = result.scalars().all()
 
-        if not perf_records:
+        if not reports:
             return {"avg_throughput": None, "avg_p50_latency": None, "avg_p99_latency": None}
 
         throughputs = []
         p50_latencies = []
         p99_latencies = []
 
-        for p in perf_records:
+        for r in reports:
             try:
-                metrics = json.loads(p.metrics_json) if isinstance(p.metrics_json, str) else p.metrics_json
-                if metrics:
-                    if "throughput" in metrics:
-                        throughputs.append(float(metrics["throughput"]))
-                    if "p50_latency" in metrics:
-                        p50_latencies.append(float(metrics["p50_latency"]))
-                    if "p99_latency" in metrics:
-                        p99_latencies.append(float(metrics["p99_latency"]))
+                metrics = json.loads(r.metrics_json) if isinstance(r.metrics_json, str) else r.metrics_json
+                if not metrics or not isinstance(metrics, dict):
+                    continue
+                for key in ["throughput", "avg_throughput", "overall_throughput"]:
+                    if key in metrics:
+                        throughputs.append(float(metrics[key]))
+                        break
+                for key in ["p50_latency", "avg_p50_latency", "first_token_latency", "avg_first_token_latency", "ttft"]:
+                    if key in metrics:
+                        p50_latencies.append(float(metrics[key]))
+                        break
+                for key in ["p99_latency", "avg_p99_latency"]:
+                    if key in metrics:
+                        p99_latencies.append(float(metrics[key]))
+                        break
             except (json.JSONDecodeError, TypeError, ValueError):
                 continue
 
-        avg_throughput = sum(throughputs) / len(throughputs) if throughputs else None
-        avg_p50 = sum(p50_latencies) / len(p50_latencies) if p50_latencies else None
-        avg_p99 = sum(p99_latencies) / len(p99_latencies) if p99_latencies else None
-
         return {
-            "avg_throughput": avg_throughput,
-            "avg_p50_latency": avg_p50,
-            "avg_p99_latency": avg_p99,
+            "avg_throughput": sum(throughputs) / len(throughputs) if throughputs else None,
+            "avg_p50_latency": sum(p50_latencies) / len(p50_latencies) if p50_latencies else None,
+            "avg_p99_latency": sum(p99_latencies) / len(p99_latencies) if p99_latencies else None,
         }
 
     def build_email_html(self, report_data: dict) -> str:
