@@ -74,7 +74,7 @@ class IssueDiagnosisService:
 
         from app.services.failure_analysis import FailureAnalysisService
         fa_service = FailureAnalysisService()
-        context = await fa_service._build_job_context(job, db)
+        context = await fa_service._build_job_context(job, db, inline_logs=True)
         return context
 
     async def _collect_commit_context(
