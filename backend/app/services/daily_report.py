@@ -404,6 +404,12 @@ def _date_to_utc_end(d: date):
     return end.astimezone(timezone.utc)
 
 
+def _today_shanghai():
+    """获取当前上海日期（date 对象），不受服务器系统时区影响"""
+    from datetime import datetime
+    return datetime.now(SHANGHAI_TZ).date()
+
+
 def _now_shanghai():
     """获取当前上海时间"""
     from datetime import datetime
