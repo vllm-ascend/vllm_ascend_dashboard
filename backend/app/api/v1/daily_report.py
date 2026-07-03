@@ -20,7 +20,7 @@ from app.schemas.daily_report import (
     DailyReportHistoryListResponse,
     DailyReportTriggerResponse,
 )
-from app.services.daily_report import DailyReportService
+from app.services.daily_report import DailyReportService, _today_shanghai
 
 logger = logging.getLogger(__name__)
 
@@ -171,9 +171,9 @@ async def trigger_report(
         if report_date:
             target_date = DateType.fromisoformat(report_date)
         else:
-            target_date = DateType.today() - timedelta(days=1)
+            target_date = _today_shanghai() - timedelta(days=1)
 
-        if target_date > DateType.today():
+        if target_date > _today_shanghai():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="报告日期不能是未来时间",

@@ -628,6 +628,7 @@ class DataSyncScheduler:
             from app.models.daily_summary import DailySummary
             from app.models import ProjectDashboardConfig
             from app.services.daily_summary import DailySummaryService
+            from app.services.daily_report import _today_shanghai
             from sqlalchemy import select
 
             # 创建数据库会话
@@ -648,7 +649,7 @@ class DataSyncScheduler:
                 ]
 
                 # 计算昨天的日期
-                yesterday = date.today() - timedelta(days=1)
+                yesterday = _today_shanghai() - timedelta(days=1)
 
                 for project in projects:
                     if not project.get("enabled", True):
@@ -695,7 +696,7 @@ class DataSyncScheduler:
             from sqlalchemy.orm import sessionmaker
             from sqlalchemy import select
             from app.models import ProjectDashboardConfig
-            from app.services.daily_report import DailyReportService, REPORT_CONFIG_KEY
+            from app.services.daily_report import DailyReportService, REPORT_CONFIG_KEY, _today_shanghai
 
             if not settings.REPORT_ENABLED:
                 logger.info("Report disabled, skipping")
@@ -729,7 +730,7 @@ class DataSyncScheduler:
                     logger.info("SMTP_HOST not configured in DB, skipping")
                     return
 
-                yesterday = date.today() - timedelta(days=1)
+                yesterday = _today_shanghai() - timedelta(days=1)
                 service = DailyReportService(db)
                 history = await service.send_report(yesterday)
 

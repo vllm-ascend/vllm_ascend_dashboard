@@ -17,6 +17,7 @@ from app.schemas.daily_summary import (
     TrendDataResponse, TrendDataItem,
 )
 from app.services.daily_summary import DailySummaryService
+from app.services.daily_report import _today_shanghai
 from app.services.daily_data_file_store import DailyDataFileStore
 
 logger = logging.getLogger(__name__)
@@ -57,10 +58,10 @@ async def generate_daily_summary(
             summary_date = DateType.fromisoformat(request_data.date)
         else:
             # 默认为昨天
-            summary_date = DateType.today() - timedelta(days=1)
+            summary_date = _today_shanghai() - timedelta(days=1)
 
         # 验证日期不能是未来
-        if summary_date > DateType.today():
+        if summary_date > _today_shanghai():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="日期不能是未来时间"
@@ -116,7 +117,7 @@ async def fetch_daily_data(
         fetch_date = DateType.fromisoformat(request_data.date)
 
         # 验证日期不能是未来
-        if fetch_date > DateType.today():
+        if fetch_date > _today_shanghai():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="日期不能是未来时间"
@@ -170,7 +171,7 @@ async def refresh_daily_status(
         fetch_date = DateType.fromisoformat(request_data.date)
 
         # 验证日期不能是未来
-        if fetch_date > DateType.today():
+        if fetch_date > _today_shanghai():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="日期不能是未来时间"
