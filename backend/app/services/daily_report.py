@@ -277,6 +277,62 @@ class DailyReportService:
             dashboard_url=dashboard_url,
         )
 
+    async def _generate_ai_report(self, report_data: dict) -> str | None:
+        """用 LLM 生成洞察式每日报告（替换 300 字截断片段）
+
+        读取 daily-report-writer 技能作为 system prompt，
+        将全量看板数据作为 user prompt 传给 LLM。
+        """
+        try:
+            from app.models.daily_summary import LLMProviderConfig
+            from app.services.llm_client import LLMClient
+            from app.services.skill_registry import get_skill_registry
+
+            # 获取 LLM 配置
+            llm_config = (await self.db.execute(
+                select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
+            )).scalar_one_or_none()
+            if not llm_config:
+                logger.warning("No active LLM provider configured, skipping AI report generation")
+                return None
+
+            # 获取 system prompt（从 skill_registry 读取 SKILL.md）
+            registry = get_skill_registry()
+            skill = registry.get_skill_by_scope("daily_report")
+            system_prompt = skill.content if skill and skill.content else (
+                "你是一名 vLLM Ascend 社区运营分析师。请根据提供的全量看板数据，"
+                "生成结构化每日运行报告。报告应包含：一句话总结、整体健康度、"
+                "Nightly 流水线概况、PR 流水线概况、项目动态、风险与待办。"
+                "每段先结论后数据，空数据板块整段省略。"
+            )
+
+            # 构造 user prompt（全量数据 JSON）
+            user_prompt = (
+                f"请根据以下全量看板数据生成 {report_data.get('report_date', '昨日')} 的每日运行报告。\n\n"
+                f"以下是各时间窗口的聚合数据（JSON 格式）：\n\n"
+                f"```json\n{json.dumps(report_data, ensure_ascii=False, default=str)[:8000]}\n```\n\n"
+                f"请严格按照系统提示词的板块结构输出 Markdown 格式的报告。"
+            )
+
+            client = LLMClient()
+            result = await client.generate(
+                provider=llm_config.provider,
+                model=llm_config.default_model,
+                api_key=llm_config.api_key,
+                api_base=llm_config.api_base_url,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.3,
+                max_tokens=4096,
+            )
+
+            logger.info(f"AI report generated: {result.model_used}, tokens={result.total_tokens}")
+            return result.content
+
+        except Exception as e:
+            logger.error(f"AI report generation failed: {e}", exc_info=True)
+            return None
+
     async def send_report(self, report_date: date) -> DailyReportHistory:
         """
         生成报告并发送邮件，记录发送历史
@@ -318,6 +374,15 @@ class DailyReportService:
 
         try:
             report_data = await self.generate_report(report_date)
+
+            # 用 LLM 生成洞察式报告，替换 300 字截断片段
+            ai_report = await self._generate_ai_report(report_data)
+            if ai_report:
+                report_data["yesterday"]["github"]["ai_summary_snippet"] = ai_report
+                logger.info("AI report generated and injected into report data")
+            else:
+                logger.info("AI report generation skipped or failed, using original snippet")
+
             html_content = self.build_email_html(report_data)
 
             history.ci_summary = report_data["yesterday"]["ci"]
