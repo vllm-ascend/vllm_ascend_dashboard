@@ -726,8 +726,16 @@ class DataSyncScheduler:
                     logger.info("No recipients configured in DB, skipping")
                     return
 
-                if not smtp_values.get("smtp_host"):
-                    logger.info("SMTP_HOST not configured in DB, skipping")
+                # Fix #135: SMTP config is stored under 'smtp_config' key, not 'daily_report_config'
+                smtp_stmt = select(ProjectDashboardConfig).where(
+                    ProjectDashboardConfig.config_key == "smtp_config"
+                )
+                smtp_result = await db.execute(smtp_stmt)
+                smtp_config_row = smtp_result.scalar_one_or_none()
+                smtp_config = smtp_config_row.config_value if smtp_config_row else {}
+
+                if not smtp_config.get("smtp_host"):
+                    logger.info("SMTP_HOST not configured in smtp_config, skipping")
                     return
 
                 yesterday = _today_shanghai() - timedelta(days=1)
@@ -746,6 +754,7 @@ class DataSyncScheduler:
             logger.error("=" * 60)
             logger.error(f"DAILY REPORT EMAIL JOB FAILED - Error: {e}", exc_info=True)
             logger.error("=" * 60)
+            raise  # Fix #135: re-raise so APScheduler records the failure
 
     async def _collect_resource_metrics_job(self) -> None:
         """NPU 指标采集任务"""
