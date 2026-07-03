@@ -400,7 +400,7 @@ class TestBoardService:
         )
         return any(job_name.startswith(prefix) for prefix in test_prefixes)
 
-    def _infer_metadata(self, job_name: str, workflow_name: str, hardware: str | None) -> dict:
+    def _infer_metadata(self, job_name: str, workflow_name: str, hardware: str | None, file_path: str | None = None) -> dict:
         jn = job_name.lower()
         wf = workflow_name.lower()
         test_type = "e2e" if "e2e" in jn or "nightly" in wf else "ut" if "ut" in jn else "unknown"
@@ -415,10 +415,26 @@ class TestBoardService:
         hw = hardware or ("A3" if "a3" in wf else "A2" if "a2" in wf else "unknown")
         card = 4 if "4card" in jn or "four_card" in jn else 2 if "2card" in jn or "two_card" in jn else 1 if "1card" in jn or "one_card" in jn or "single" in jn else None
         module = None
-        for kw in ("attention", "quantization", "compilation", "models", "serving", "distributed", "pipeline", "lora", "speculative"):
-            if kw in jn:
+        module_keywords = ("attention", "quantization", "compilation", "models", "serving",
+                           "distributed", "pipeline", "lora", "speculative", "multimodal",
+                           "vlm", "vision", "audio", "disaggregated", "graph", "vllm")
+        for kw in module_keywords:
+            if kw in jn or kw in wf:
                 module = kw
                 break
+        if module is None and file_path:
+            parts = [p.lower() for p in file_path.replace("\\", "/").split("/") if p]
+            for p in parts:
+                if p in module_keywords:
+                    module = p
+                    break
+        if module is None:
+            for model_kw in ("qwen", "deepseek", "llama", "glm", "kimi", "minimax", "gemma", "phi", "internlm"):
+                if model_kw in jn:
+                    module = f"models/{model_kw}"
+                    break
+        if module is None and "nightly" in wf:
+            module = "e2e"
         confidence = 0.0
         if test_type != "unknown": confidence += 0.25
         if hw != "unknown": confidence += 0.25
