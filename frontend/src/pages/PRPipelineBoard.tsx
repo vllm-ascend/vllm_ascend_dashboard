@@ -214,7 +214,8 @@ const OverviewTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f:
             <Statistic
               title={<MetricTitle title="积压指数" definitionKey="backlog_index" />}
               value={data.backlog_index}
-              suffix="个PR"
+              suffix="天"
+              precision={1}
               valueStyle={{ color: backlogColor }}
             />
           </Card>
@@ -692,7 +693,8 @@ const MetricsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: 
             <Statistic
               title={<MetricTitle title="积压指数" definitionKey="backlog_index" />}
               value={data.backlog_index}
-              suffix="个PR"
+              suffix="天"
+              precision={1}
               valueStyle={{ color: backlogColor }}
             />
           </Card>
