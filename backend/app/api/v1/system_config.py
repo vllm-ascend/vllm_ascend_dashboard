@@ -1057,6 +1057,16 @@ def get_system_prompt_scope_config(scope: str) -> tuple[str, dict[str, str], str
             },
             "系统提示词用于指导 AI 生成单个 Commit 分析总结的风格和内容重点",
         )
+    if scope == "daily_report":
+        from app.services.skill_registry import get_skill_registry
+        registry = get_skill_registry()
+        skill = registry.get_skill_by_scope("daily_report")
+        default_prompt = skill.content if skill and skill.content else "你是一名 vLLM Ascend 社区运营分析师。请根据提供的全量看板数据，生成结构化每日运行报告。报告应包含：一句话总结、整体健康度、Nightly 流水线概况、PR 流水线概况、项目动态、风险与待办。每段先结论后数据，空数据板块整段省略。"
+        return (
+            "daily_report_system_prompt",
+            {"default": default_prompt},
+            "系统提示词用于指导 AI 生成每日运行报告（基于 daily-report-writer 技能）",
+        )
     if scope != "daily_summary":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid system prompt scope: {scope}")
     return (
