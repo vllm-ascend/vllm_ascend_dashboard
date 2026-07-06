@@ -780,12 +780,20 @@ const MetricsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: 
 
 const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: DrillDownFilters) => void }) => {
   const [contributorType, setContributorType] = useState<string | undefined>(undefined)
-  const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, 20)
+  const [companyFilter, setCompanyFilter] = useState<string | undefined>(undefined)
+  const pageSize = 20
+  const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, 100, companyFilter)
+  const { data: allData } = hooks.usePRPipelineContributors(period, contributorType, 100, undefined)
 
   if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
 
   const authors = (data || []).filter((c: PRPipelineContributor) => c.type === 'author' || c.pr_count > 0)
   const reviewers = (data || []).filter((c: PRPipelineContributor) => c.type === 'reviewer' || c.review_count > 0)
+
+  // Company distribution stats (from unfiltered data)
+  const huaweiCount = (allData || []).filter((c: PRPipelineContributor) => c.company === '华为').length
+  const labeledCount = (allData || []).filter((c: PRPipelineContributor) => c.company && c.company !== '华为').length
+  const unlabeledCount = (allData || []).filter((c: PRPipelineContributor) => !c.company).length
 
   const authorColumns = [
     {
@@ -874,7 +882,7 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
+      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <Select
           placeholder="贡献者类型"
           allowClear
@@ -886,28 +894,45 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
             { value: 'reviewer', label: '评审人' },
           ]}
         />
+        <Select
+          placeholder="公司筛选"
+          allowClear
+          style={{ width: 150 }}
+          value={companyFilter}
+          onChange={setCompanyFilter}
+          options={[
+            { value: '华为', label: `华为 (${huaweiCount})` },
+            { value: 'none', label: `未标注 (${unlabeledCount})` },
+          ]}
+        />
       </div>
 
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        <Col><Tag color="blue">华为: {huaweiCount}</Tag></Col>
+        {labeledCount > 0 && <Col><Tag>{labeledCount} 其他已标注</Tag></Col>}
+        <Col><Tag>{unlabeledCount} 未标注</Tag></Col>
+      </Row>
+
       {!contributorType || contributorType === 'author' ? (
-        <Card title="Top 作者" style={{ marginBottom: 24 }}>
+        <Card title={`Top ${pageSize} 作者`} style={{ marginBottom: 24 }}>
           <Table
             columns={authorColumns}
-            dataSource={authors}
+            dataSource={authors.slice(0, pageSize)}
             loading={isLoading}
             rowKey="username"
-            pagination={{ pageSize: 10 }}
+            pagination={{ pageSize: 20 }}
           />
         </Card>
       ) : null}
 
       {!contributorType || contributorType === 'reviewer' ? (
-        <Card title="Top 评审人">
+        <Card title={`Top ${pageSize} 评审人`}>
           <Table
             columns={reviewerColumns}
-            dataSource={reviewers}
+            dataSource={reviewers.slice(0, pageSize)}
             loading={isLoading}
             rowKey="username"
-            pagination={{ pageSize: 10 }}
+            pagination={{ pageSize: 20 }}
           />
         </Card>
       ) : null}

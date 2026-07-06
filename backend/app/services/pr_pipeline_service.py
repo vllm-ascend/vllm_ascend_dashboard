@@ -6,6 +6,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Unicode
 
+from app.core.config import settings
 from app.models import PullRequest
 from app.utils.company_detector import detect_company
 from app.schemas.pr_pipeline import (
@@ -271,9 +272,24 @@ class PRPipelineService:
         days: int = 30,
         type: str | None = None,
         limit: int = 20,
+        company: str | None = None,
+        sort_by: str = "pr_count",
     ) -> list[PRPipelineContributor]:
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
+
+        # Map sort_by to actual column
+        author_sort_map = {
+            "pr_count": desc("pr_count"),
+            "merged_count": desc("pr_count"),  # merged_count is a separate query, default to pr_count
+            "lines_added": desc("lines_added"),
+            "lines_removed": desc("lines_removed"),
+        }
+        reviewer_sort_map = {
+            "review_count": None,  # sorted separately
+            "avg_first_response_hours": None,
+        }
+        order_clause = author_sort_map.get(sort_by, desc("pr_count"))
 
         contributors: list[PRPipelineContributor] = []
 
@@ -289,7 +305,20 @@ class PRPipelineService:
                 PullRequest.owner == owner,
                 PullRequest.repo == repo,
                 PullRequest.created_at >= since,
-            ).group_by(PullRequest.author, PullRequest.author_avatar_url, PullRequest.author_email).order_by(desc("pr_count")).limit(limit)
+            )
+
+            # Company filter at SQL level
+            if company == "华为":
+                stmt = stmt.where(PullRequest.author_email.like("%@huawei.com"))
+            elif company == "none":
+                stmt = stmt.where(
+                    (PullRequest.author_email.is_(None)) |
+                    (PullRequest.author_email.not_like("%@huawei.com"))
+                )
+
+            stmt = stmt.group_by(
+                PullRequest.author, PullRequest.author_avatar_url, PullRequest.author_email
+            ).order_by(order_clause).limit(limit)
             result = await db.execute(stmt)
             for row in result.all():
                 merged_stmt = select(func.count(PullRequest.id)).where(
@@ -355,15 +384,45 @@ class PRPipelineService:
                     if row[0] and row[1]:
                         reviewer_emails[row[0]] = row[1]
 
+                # Fallback: for reviewers not in DB, try GitHub API
+                missing_logins = [login for login, _ in sorted_reviewers if login not in reviewer_emails]
+                if missing_logins:
+                    try:
+                        from app.services.github_client import GitHubClient
+                        github = GitHubClient(settings.GITHUB_TOKEN, owner, repo)
+                        for login in missing_logins:
+                            email = await github.get_user_email(login, owner, repo)
+                            if email:
+                                reviewer_emails[login] = email
+                        await github.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch reviewer emails from GitHub: {e}")
+
+            # Build sorted contributor list with company info
+            sorted_contribs = []
             for login, stats in sorted_reviewers:
                 avg_response = None
                 if stats["response_hours"]:
                     avg_response = round(sum(stats["response_hours"]) / len(stats["response_hours"]), 1)
+                sorted_contribs.append((login, stats, avg_response, detect_company(reviewer_emails.get(login))))
 
+            # Company filter at Python level (reviewer company comes from DB/GitHub lookup)
+            if company == "华为":
+                sorted_contribs = [(l, s, a, c) for l, s, a, c in sorted_contribs if c == "华为"]
+            elif company == "none":
+                sorted_contribs = [(l, s, a, c) for l, s, a, c in sorted_contribs if c is None]
+
+            # Sort reviewers
+            if sort_by == "avg_first_response_hours":
+                sorted_contribs.sort(key=lambda x: x[2] or float("inf"))
+            else:
+                sorted_contribs.sort(key=lambda x: x[1]["count"], reverse=True)
+
+            for login, stats, avg_response, contrib_company in sorted_contribs[:limit]:
                 contributors.append(PRPipelineContributor(
                     username=login,
                     type="reviewer",
-                    company=detect_company(reviewer_emails.get(login)),
+                    company=contrib_company,
                     review_count=stats["count"],
                     avg_first_response_hours=avg_response,
                 ))

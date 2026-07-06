@@ -186,10 +186,12 @@ export const getMetrics = async (days?: number): Promise<PRPipelineMetrics> => {
 export const getContributors = async (
   days?: number,
   type?: string,
-  limit?: number
+  limit?: number,
+  company?: string,
+  sortBy?: string,
 ): Promise<PRPipelineContributor[]> => {
   const response = await api.get<PRPipelineContributor[]>('/pr-pipeline/contributors', {
-    params: { days, type, limit },
+    params: { days, type, limit, company, sort_by: sortBy },
   })
   return response.data
 }
