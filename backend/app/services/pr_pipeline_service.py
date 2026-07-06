@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Unicode
 
@@ -299,6 +299,7 @@ class PRPipelineService:
                 PullRequest.author_avatar_url,
                 PullRequest.author_email,
                 func.count(PullRequest.id).label("pr_count"),
+                func.sum(case((PullRequest.state == "merged", 1), else_=0)).label("merged_count"),
                 func.sum(PullRequest.additions).label("lines_added"),
                 func.sum(PullRequest.deletions).label("lines_removed"),
             ).where(
@@ -321,25 +322,15 @@ class PRPipelineService:
             ).order_by(order_clause).limit(limit)
             result = await db.execute(stmt)
             for row in result.all():
-                merged_stmt = select(func.count(PullRequest.id)).where(
-                    PullRequest.owner == owner,
-                    PullRequest.repo == repo,
-                    PullRequest.author == row[0],
-                    PullRequest.state == "merged",
-                    PullRequest.created_at >= since,
-                )
-                merged_result = await db.execute(merged_stmt)
-                merged_count = merged_result.scalar() or 0
-
                 contributors.append(PRPipelineContributor(
                     username=row[0],
                     avatar_url=row[1],
                     type="author",
                     company=detect_company(row[2]),
                     pr_count=row[3],
-                    lines_added=row[4] or 0,
-                    lines_removed=row[5] or 0,
-                    merged_count=merged_count,
+                    merged_count=row[4] or 0,
+                    lines_added=row[5] or 0,
+                    lines_removed=row[6] or 0,
                 ))
 
         if type is None or type == "reviewer":
