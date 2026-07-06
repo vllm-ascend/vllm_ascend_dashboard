@@ -1,4 +1,4 @@
-"""Database upgrade v0.0.27 - add ai_report_content to daily_report_history"""
+"""Database upgrade v0.0.27 - add author_email + ai_report_content columns"""
 import asyncio
 import logging
 import sys
@@ -11,7 +11,7 @@ from sqlalchemy import text
 from app.db.base import SessionLocal, engine
 
 logger = logging.getLogger(__name__)
-DESCRIPTION = "Add ai_report_content column to daily_report_history for storing LLM-generated report"
+DESCRIPTION = "Add author_email column to pull_requests + ai_report_content to daily_report_history"
 
 
 async def check_column_exists(table_name, column_name):
@@ -31,6 +31,15 @@ async def upgrade():
     print("=" * 60 + "\n")
 
     async with SessionLocal() as db:
+        if await check_column_exists("pull_requests", "author_email"):
+            print("  [OK] Column 'author_email' already exists")
+        else:
+            await db.execute(text(
+                "ALTER TABLE pull_requests ADD COLUMN author_email VARCHAR(200)"
+            ))
+            await db.commit()
+            print("  [DONE] Added column 'author_email' to pull_requests")
+
         if await check_column_exists("daily_report_history", "ai_report_content"):
             print("  [OK] Column 'ai_report_content' already exists")
         else:
