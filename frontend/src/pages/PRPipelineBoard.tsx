@@ -795,6 +795,15 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
       render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
     },
     {
+      title: '公司',
+      key: 'company',
+      width: 80,
+      render: (_: unknown, record: PRPipelineContributor) => {
+        if (!record.company) return <Text type="secondary">—</Text>
+        return <Tag color="blue">{record.company}</Tag>
+      },
+    },
+    {
       title: <MetricTitle title="PR 数量" definitionKey="pr_count" />,
       dataIndex: 'pr_count',
       key: 'pr_count',
@@ -836,6 +845,15 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
       key: 'username',
       width: 180,
       render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
+    },
+    {
+      title: '公司',
+      key: 'company',
+      width: 80,
+      render: (_: unknown, record: PRPipelineContributor) => {
+        if (!record.company) return <Text type="secondary">—</Text>
+        return <Tag color="blue">{record.company}</Tag>
+      },
     },
     {
       title: <MetricTitle title="Review 数量" definitionKey="review_count" />,

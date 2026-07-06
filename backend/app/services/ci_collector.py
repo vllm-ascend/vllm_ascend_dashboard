@@ -205,15 +205,21 @@ class CICollector:
                 logger.error(f"Failed to fetch workflow runs for {workflow_file} (page {page}): {e}")
                 break
 
+            raw_count = len(runs)
+
             # actor 客户端过滤（GitHub API 不支持 actor 参数）
             if actor and runs:
                 runs = [r for r in runs if (r.get("actor") or {}).get("login") == actor]
 
-            logger.info(f"Fetched {len(runs)} runs for {workflow_file} (page {page}, event={event or 'all'}, actor={actor or 'all'})")
+            logger.info(f"Fetched {len(runs)}/{raw_count} runs for {workflow_file} (page {page}, event={event or 'all'}, actor={actor or 'all'})")
 
+            if not runs and raw_count < min(max_runs, 100):
+                # Only break if API returned less than a full page AND filtered result is empty
+                break  # 真正没有更多数据
             if not runs:
-                logger.info(f"No runs found for {workflow_file} (event={event or 'all'}, actor={actor or 'all'})")
-                break  # 没有更多数据
+                # Filtered to zero but API returned a full page — keep going
+                page += 1
+                continue
 
             # 处理每条记录
             for run in runs:
@@ -249,7 +255,7 @@ class CICollector:
                     logger.error(f"Failed to collect jobs for run {run_id}: {e}")
 
             # 检查是否达到最大数量
-            if len(runs) < min(max_runs, 100):
+            if raw_count < min(max_runs, 100):
                 logger.info(f"Reached last page for {workflow_file}")
                 break  # 已经是最后一页
 

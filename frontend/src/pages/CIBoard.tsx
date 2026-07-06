@@ -69,7 +69,7 @@ function CIBoard() {
   const { data: runs, isLoading: runsLoading } = useRuns({
     workflow_name: workflowFilter.length > 0 ? workflowFilter[0] : undefined,
     hardware: hardwareFilter.length > 0 ? hardwareFilter[0] : undefined,
-    limit: 50,
+    limit: 500,
   })
 
   const { data: trends } = useCITrends({

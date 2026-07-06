@@ -64,6 +64,7 @@ async def init_db():
 
         await _migrate_email_column()
         await _migrate_login_log_columns()
+        await _migrate_pr_author_email()
 
         # 初始化 LLM 提供商默认配置
         await _init_llm_provider_configs()
@@ -134,6 +135,30 @@ async def _migrate_login_log_columns():
 
     except Exception as e:
         logger.warning(f"Login log column migration skipped (non-fatal): {e}")
+
+
+async def _migrate_pr_author_email():
+    """Ensure pull_requests table has author_email column (create_all won't ALTER existing tables)"""
+    try:
+        from sqlalchemy import text, inspect
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+        from app.db.base import _is_sqlite
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            def _get_columns(conn):
+                return [c['name'] for c in inspect(conn).get_columns('pull_requests')]
+            existing_cols = await db.run_sync(_get_columns)
+
+            if 'author_email' not in existing_cols:
+                logger.info("Adding missing column 'author_email' to pull_requests")
+                col_type = "VARCHAR(200)" if _is_sqlite else "VARCHAR(200)"
+                await db.execute(text(f"ALTER TABLE pull_requests ADD COLUMN author_email {col_type}"))
+                await db.commit()
+                logger.info("Column 'author_email' added successfully")
+
+    except Exception as e:
+        logger.warning(f"PR author_email migration skipped (non-fatal): {e}")
 
 
 async def _warmup_claude_code_cli():
@@ -349,8 +374,10 @@ def create_app() -> FastAPI:
         allow_origins=[
             "http://localhost:3000",
             "http://localhost:5173",
+            "http://localhost:5000",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5173",
+            "http://127.0.0.1:5000",
         ],
         allow_credentials=True,
         allow_methods=["*"],
