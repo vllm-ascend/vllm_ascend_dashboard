@@ -282,6 +282,7 @@ class DailyReportHistory(Base):
     model_summary = Column(JSON)
     github_summary = Column(JSON)
     performance_summary = Column(JSON)
+    ai_report_content = Column(Text)
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
 
