@@ -782,9 +782,9 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
   const [contributorType, setContributorType] = useState<string | undefined>(undefined)
   const [companyFilter, setCompanyFilter] = useState<string | undefined>(undefined)
   const pageSize = 20
-  const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, 100, companyFilter)
+  const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, pageSize, companyFilter)
   // Fetch unfiltered data for dropdown counts only when a company filter is active
-  const { data: allData } = hooks.usePRPipelineContributors(period, contributorType, 100, undefined)
+  const { data: allData } = hooks.usePRPipelineContributors(period, contributorType, pageSize, undefined)
 
   if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
 
@@ -935,23 +935,10 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
   )
 }
 
-const PRPipelineBoard = () => {
-  const [activeTab, setActiveTab] = useState('overview')
-  const [overviewPeriod, setOverviewPeriod] = useState(30)
-  const [metricsPeriod, setMetricsPeriod] = useState(30)
-  const [contributorsPeriod, setContributorsPeriod] = useState(30)
-  const [listFilters, setListFilters] = useState<DrillDownFilters>({})
-  const [listPage, setListPage] = useState(1)
-  const [listPageSize, setListPageSize] = useState(20)
+const SyncButton = () => {
   const syncMutation = hooks.usePRPipelineSync()
   const { data: syncStatus } = hooks.usePRPipelineSyncStatus()
   const isSyncing = syncStatus?.running || syncMutation.isPending
-
-  const handleDrillDown = (filters: DrillDownFilters) => {
-    setListFilters(filters)
-    setListPage(1)
-    setActiveTab('list')
-  }
 
   const handleSync = () => {
     if (isSyncing) {
@@ -970,6 +957,33 @@ const PRPipelineBoard = () => {
         message.error(error?.response?.data?.detail || '同步失败')
       },
     })
+  }
+
+  return (
+    <Button
+      icon={<SyncOutlined />}
+      loading={isSyncing}
+      disabled={isSyncing}
+      onClick={handleSync}
+    >
+      {isSyncing ? '同步中...' : '同步数据'}
+    </Button>
+  )
+}
+
+const PRPipelineBoard = () => {
+  const [activeTab, setActiveTab] = useState('overview')
+  const [overviewPeriod, setOverviewPeriod] = useState(30)
+  const [metricsPeriod, setMetricsPeriod] = useState(30)
+  const [contributorsPeriod, setContributorsPeriod] = useState(30)
+  const [listFilters, setListFilters] = useState<DrillDownFilters>({})
+  const [listPage, setListPage] = useState(1)
+  const [listPageSize, setListPageSize] = useState(20)
+
+  const handleDrillDown = (filters: DrillDownFilters) => {
+    setListFilters(filters)
+    setListPage(1)
+    setActiveTab('list')
   }
 
   const tabItems = [
@@ -1076,14 +1090,7 @@ const PRPipelineBoard = () => {
           <Title level={3} style={{ margin: 0 }}>PR 流水线看板</Title>
           <Text type="secondary">跟踪 Pull Requests 的 Review 和 CI 流水线</Text>
         </div>
-        <Button
-          icon={<SyncOutlined />}
-          loading={isSyncing}
-          disabled={isSyncing}
-          onClick={handleSync}
-        >
-          {isSyncing ? '同步中...' : '同步数据'}
-        </Button>
+        <SyncButton />
       </div>
 
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
