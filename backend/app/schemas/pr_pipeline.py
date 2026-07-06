@@ -136,6 +136,7 @@ class PRPipelineMetrics(BaseModel):
 class PRPipelineContributor(BaseModel):
     username: str
     avatar_url: str | None = None
+    avatar_base64: str | None = None
     type: str
     company: str | None = None
     pr_count: int = 0
@@ -144,6 +145,11 @@ class PRPipelineContributor(BaseModel):
     lines_removed: int = 0
     avg_first_response_hours: float | None = None
     merged_count: int = 0
+
+
+class PRPipelineContributorsResponse(BaseModel):
+    total: int
+    items: list[PRPipelineContributor]
 
 
 class PRPipelineKanban(BaseModel):

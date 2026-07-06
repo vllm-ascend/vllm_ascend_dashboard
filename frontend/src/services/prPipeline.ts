@@ -99,6 +99,7 @@ export interface PRPipelineMetrics {
 export interface PRPipelineContributor {
   username: string
   avatar_url: string | null
+  avatar_base64: string | null
   type: string
   company: string | null
   pr_count: number
@@ -107,6 +108,11 @@ export interface PRPipelineContributor {
   lines_removed: number
   avg_first_response_hours: number | null
   merged_count: number
+}
+
+export interface PRPipelineContributorsResponse {
+  total: number
+  items: PRPipelineContributor[]
 }
 
 export interface PRPipelineKanban {
@@ -186,12 +192,13 @@ export const getMetrics = async (days?: number): Promise<PRPipelineMetrics> => {
 export const getContributors = async (
   days?: number,
   type?: string,
+  skip?: number,
   limit?: number,
   company?: string,
   sortBy?: string,
-): Promise<PRPipelineContributor[]> => {
-  const response = await api.get<PRPipelineContributor[]>('/pr-pipeline/contributors', {
-    params: { days, type, limit, company, sort_by: sortBy },
+): Promise<PRPipelineContributorsResponse> => {
+  const response = await api.get<PRPipelineContributorsResponse>('/pr-pipeline/contributors', {
+    params: { days, type, skip, limit, company, sort_by: sortBy },
   })
   return response.data
 }

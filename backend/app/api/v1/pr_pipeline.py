@@ -7,6 +7,7 @@ from app.api.deps import CurrentAdminUser, CurrentUser, DbSession
 from app.core.config import settings
 from app.schemas.pr_pipeline import (
     PRPipelineContributor,
+    PRPipelineContributorsResponse,
     PRPipelineHistoricalSyncRequest,
     PRPipelineKanban,
     PRPipelineListResponse,
@@ -92,17 +93,18 @@ async def get_metrics(
     return await service.get_metrics(db, OWNER, REPO, days)
 
 
-@router.get("/contributors", response_model=list[PRPipelineContributor])
+@router.get("/contributors", response_model=PRPipelineContributorsResponse)
 async def get_contributors(
     db: DbSession,
     current_user: CurrentUser,
     days: int = Query(default=30, ge=1, le=365),
     type: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     company: str | None = Query(default=None),
     sort_by: str = Query(default="pr_count"),
 ):
-    return await service.get_contributors(db, OWNER, REPO, days, type, limit, company, sort_by)
+    return await service.get_contributors(db, OWNER, REPO, days, type, skip, limit, company, sort_by)
 
 
 @router.get("/trends", response_model=PRPipelineTrendsResponse)
