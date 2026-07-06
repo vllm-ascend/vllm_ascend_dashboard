@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query
 from app.api.deps import CurrentAdminUser, CurrentSuperAdminUser, CurrentUser, DbSession
 from app.schemas import (
     NpuMetricsResponse,
+    NodeMetricsResponse,
     ResourceMetricsConfigResponse,
     ResourceMetricsConfigUpdate,
 )
@@ -36,6 +37,36 @@ async def get_npu_metrics(
                 "cluster_id": c["cluster_id"],
                 "cluster_name": c["cluster_name"],
                 "metrics": c["metrics"],
+            }
+            for c in data["clusters"]
+        ]
+    )
+
+
+@router.get("/metrics/nodes", response_model=NodeMetricsResponse)
+async def get_node_metrics(
+    db: DbSession,
+    current_user: CurrentUser,
+    cluster_ids: Annotated[list[int] | None, Query()] = None,
+    node_names: Annotated[list[str] | None, Query()] = None,
+    time_range: str = Query("24h", description="时间范围：1h/24h/7d/30d"),
+    start_time: datetime | None = Query(None, description="起始时间（ISO8601）"),
+    end_time: datetime | None = Query(None, description="结束时间（ISO8601）"),
+):
+    service = ResourceMetricsService(db)
+    data = await service.query_node_metrics(
+        cluster_ids=cluster_ids,
+        node_names=node_names,
+        time_range=time_range,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    return NodeMetricsResponse(
+        clusters=[
+            {
+                "cluster_id": c["cluster_id"],
+                "cluster_name": c["cluster_name"],
+                "nodes": c["nodes"],
             }
             for c in data["clusters"]
         ]

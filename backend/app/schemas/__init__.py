@@ -38,6 +38,7 @@ __all__ = [
     "StaleIssue", "PRActionRequest", "TagComparisonRequest", "TagComparisonResult", "CommitInfo",
     # Resource Metrics
     "NpuMetricPoint", "ClusterNpuMetrics", "NpuMetricsResponse",
+    "NodeMetricPoint", "NodeSeries", "ClusterNodeMetrics", "NodeMetricsResponse",
     "ResourceMetricsConfigResponse", "ResourceMetricsConfigUpdate", "RESOURCE_METRICS_CONFIG_KEY",
     # Alert Rules
     "AlertRuleCreate", "AlertRuleUpdate", "AlertRuleResponse",
@@ -848,6 +849,10 @@ from .resource_metrics import (
     NpuMetricPoint,
     ClusterNpuMetrics,
     NpuMetricsResponse,
+    NodeMetricPoint,
+    NodeSeries,
+    ClusterNodeMetrics,
+    NodeMetricsResponse,
     ResourceMetricsConfigResponse,
     ResourceMetricsConfigUpdate,
     RESOURCE_METRICS_CONFIG_KEY,
