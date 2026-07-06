@@ -1,8 +1,7 @@
-"""Test that _generate_ai_report returns LLM content instead of crashing on AttributeError.
+"""Tests for daily report LLM fix and scheduler SMTP query dedup.
 
-Root cause: daily_report.py:332 referenced result.model_used / result.total_tokens
-which don't exist on LLMResult (only on ClaudeCodeResult). The AttributeError was
-swallowed by the except block, causing the method to always return None.
+1. _generate_ai_report must return LLM content (not None from AttributeError)
+2. _send_daily_report_job must not issue duplicate SMTP config queries
 """
 import sys
 from pathlib import Path
@@ -121,3 +120,127 @@ class TestGenerateAiReport:
             "_generate_ai_report to use it."
         )
         assert r.prompt_tokens + r.completion_tokens == 3
+
+
+# ---------------------------------------------------------------------------
+# Scheduler _send_daily_report_job — SMTP query dedup + early return guards
+# ---------------------------------------------------------------------------
+
+def _make_config_row(config_value: dict):
+    """Create a mock ProjectDashboardConfig row."""
+    row = MagicMock()
+    row.config_value = config_value
+    return row
+
+
+def _make_mock_session(execute_results: list):
+    """Create a mock async DB session that returns results in sequence.
+
+    Each call to session.execute() pops the next result from execute_results.
+    Raises if exhausted — this catches duplicate queries (the bug we fixed).
+    """
+    session = AsyncMock()
+    call_log: list = []
+
+    async def fake_execute(stmt):
+        call_log.append(stmt)
+        if not execute_results:
+            raise AssertionError(
+                f"DB execute() called {len(call_log)} times but only "
+                f"{len(call_log) - 1} results were expected — duplicate query detected"
+            )
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = execute_results.pop(0)
+        return result
+
+    session.execute = fake_execute
+    session.call_log = call_log
+    return session
+
+
+def _patch_scheduler_job(mock_session, mock_send=None):
+    """Return a contextmanager that patches all dependencies of _send_daily_report_job."""
+    mock_engine = MagicMock()
+    mock_engine.dispose = AsyncMock()
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_session
+    mock_cm.__aexit__.return_value = None
+    mock_session_factory = MagicMock(return_value=mock_cm)
+
+    patches = [
+        patch("app.services.scheduler.settings"),
+        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=mock_engine),
+        patch("sqlalchemy.orm.sessionmaker", return_value=mock_session_factory),
+    ]
+    if mock_send is not None:
+        patches.append(
+            patch("app.services.daily_report.DailyReportService.send_report", new=mock_send)
+        )
+    return patches
+
+
+class TestSendDailyReportJobSmtpDedup:
+    """Verify _send_daily_report_job reads SMTP config exactly once."""
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_smtp_query_when_smtp_missing(self):
+        """SMTP config must be queried only once, not twice.
+
+        Before the fix, lines 729-735 issued a second identical SELECT for
+        smtp_config. This test fails if the duplicate is reintroduced.
+        """
+        from app.services.scheduler import DataSyncScheduler
+
+        scheduler = DataSyncScheduler.__new__(DataSyncScheduler)
+
+        report_config_row = _make_config_row({"report_recipients": "a@b.com"})
+        smtp_config_row = _make_config_row({"smtp_host": ""})
+        mock_session = _make_mock_session([report_config_row, smtp_config_row])
+        mock_send = AsyncMock()
+
+        patches = _patch_scheduler_job(mock_session, mock_send)
+        for p in patches:
+            p.start()
+        try:
+            import app.services.scheduler as sched_mod
+            sched_mod.settings.REPORT_ENABLED = True
+            sched_mod.settings.DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+            await scheduler._send_daily_report_job()
+        finally:
+            for p in patches:
+                p.stop()
+
+        mock_send.assert_not_called()
+        assert len(mock_session.call_log) == 2, (
+            f"Expected exactly 2 DB queries (report_config + smtp_config), "
+            f"got {len(mock_session.call_log)} — duplicate SMTP query may be back"
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_recipients(self):
+        """Job must return early when report_recipients is empty."""
+        from app.services.scheduler import DataSyncScheduler
+
+        scheduler = DataSyncScheduler.__new__(DataSyncScheduler)
+
+        report_config_row = _make_config_row({"report_recipients": ""})
+        smtp_config_row = _make_config_row({"smtp_host": "smtp.example.com"})
+        mock_session = _make_mock_session([report_config_row, smtp_config_row])
+        mock_send = AsyncMock()
+
+        patches = _patch_scheduler_job(mock_session, mock_send)
+        for p in patches:
+            p.start()
+        try:
+            import app.services.scheduler as sched_mod
+            sched_mod.settings.REPORT_ENABLED = True
+            sched_mod.settings.DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+            await scheduler._send_daily_report_job()
+        finally:
+            for p in patches:
+                p.stop()
+
+        mock_send.assert_not_called()

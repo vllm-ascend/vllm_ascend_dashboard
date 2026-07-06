@@ -2,7 +2,8 @@
 每日运行报告邮件推送服务
 聚合三个时间窗口数据，构建 HTML 邮件并发送
 
-SMTP 配置存储在数据库（ProjectDashboardConfig 表，config_key='daily_report_config'）
+SMTP 配置存储在数据库（ProjectDashboardConfig 表，config_key='smtp_config'）
+报告推送配置存储在 config_key='daily_report_config'
 与 LLMProviderConfig 设计一致：敏感凭据不放在 .env 文件中
 """
 import json
