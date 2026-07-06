@@ -307,12 +307,12 @@ function NodeTrendTooltipContent({ active, payload, label }: any) {
 
 function NodeSparkline({ metrics, timeRange }: { metrics: NodeMetricPoint[]; timeRange: string }) {
   const data = metrics.map(m => ({
-    timeLabel: dayjs(m.collected_at).format(timeRange === '1h' ? 'HH:mm' : 'MM-DD'),
+    timeLabel: dayjs(m.collected_at).format(timeRange === '1h' || timeRange === '24h' ? 'HH:mm' : 'MM-DD HH:mm'),
     npu: m.npu_utilization,
   }))
   return (
-    <ResponsiveContainer width={280} height={120}>
-      <LineChart data={data}>
+    <ResponsiveContainer width={280} height={140}>
+      <LineChart data={data} margin={{ top: 5, right: 8, bottom: 0, left: 0 }}>
         <Line
           type="monotone"
           dataKey="npu"
@@ -322,6 +322,7 @@ function NodeSparkline({ metrics, timeRange }: { metrics: NodeMetricPoint[]; tim
           connectNulls
           unit="%"
         />
+        <XAxis dataKey="timeLabel" tick={{ fontSize: 10 }} interval="preserveStartEnd" minTickGap={30} />
         <YAxis domain={[0, 100]} hide />
         <Tooltip
           formatter={(v: number) => [`${Number(v).toFixed(1)}%`, 'NPU 利用率']}
@@ -336,6 +337,32 @@ function NpuTrendTab() {
   const [timeRange, setTimeRange] = useState<string>('24h')
   const [selectedClusters, setSelectedClusters] = useState<number[]>([])
   const [selectedNodes, setSelectedNodes] = useState<string[]>([])
+  const [hiddenLines, setHiddenLines] = useState<Set<string>>(new Set())
+
+  const toggleLine = (dataKey: string) => {
+    setHiddenLines(prev => {
+      const next = new Set(prev)
+      if (next.has(dataKey)) {
+        next.delete(dataKey)
+      } else {
+        next.add(dataKey)
+      }
+      return next
+    })
+  }
+
+  const renderLegend = (value: string, entry: any) => {
+    const dataKey = String(entry?.dataKey ?? '')
+    const isHidden = dataKey ? hiddenLines.has(dataKey) : false
+    return (
+      <span
+        onClick={() => dataKey && toggleLine(dataKey)}
+        style={{ cursor: 'pointer', opacity: isHidden ? 0.35 : 1, textDecoration: isHidden ? 'line-through' : 'none' }}
+      >
+        {value}
+      </span>
+    )
+  }
 
   const { data: allClusters = [] } = useQuery({
     queryKey: ['resource-clusters-enabled'],
@@ -521,7 +548,7 @@ function NpuTrendTab() {
                 tickFormatter={(v: number) => `${v}%`}
               />
               <Tooltip content={<NpuTrendTooltipContent />} />
-              <Legend />
+              <Legend formatter={renderLegend} />
               {metricsData.clusters.map((cluster, index) => (
                 <Line
                   key={cluster.cluster_id}
@@ -534,6 +561,7 @@ function NpuTrendTab() {
                   activeDot={{ r: 4 }}
                   connectNulls
                   unit="%"
+                  hide={hiddenLines.has(`npu_utilization_${cluster.cluster_id}`)}
                 />
               ))}
             </LineChart>
@@ -561,7 +589,7 @@ function NpuTrendTab() {
                 label={{ value: '数量', angle: -90, position: 'insideLeft' }}
               />
               <Tooltip />
-              <Legend />
+              <Legend formatter={renderLegend} />
               {metricsData.clusters.map((cluster, index) => (
                 <Line
                   key={`pods-${cluster.cluster_id}`}
@@ -572,6 +600,7 @@ function NpuTrendTab() {
                   strokeWidth={2}
                   dot={{ r: 2 }}
                   connectNulls
+                  hide={hiddenLines.has(`executing_pods_count_${cluster.cluster_id}`)}
                 />
               ))}
               {metricsData.clusters.map((cluster, index) => (
@@ -585,6 +614,7 @@ function NpuTrendTab() {
                   strokeWidth={1.5}
                   dot={{ r: 2 }}
                   connectNulls
+                  hide={hiddenLines.has(`pr_count_${cluster.cluster_id}`)}
                 />
               ))}
             </LineChart>
@@ -615,7 +645,7 @@ function NpuTrendTab() {
                     <XAxis dataKey="timeLabel" tick={{ fontSize: 12 }} angle={-30} textAnchor="end" height={50} />
                     <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} />
                     <Tooltip content={<NodeTrendTooltipContent />} />
-                    <Legend />
+                    <Legend formatter={renderLegend} />
                     <ReferenceLine
                       y={clusterAvg}
                       stroke="#faad14"
@@ -633,6 +663,7 @@ function NpuTrendTab() {
                         dot={{ r: 2 }}
                         connectNulls
                         unit="%"
+                        hide={hiddenLines.has(`npu_${node.node_name}`)}
                       />
                     ))}
                   </LineChart>
