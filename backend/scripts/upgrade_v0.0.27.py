@@ -11,7 +11,7 @@ from sqlalchemy import text
 from app.db.base import SessionLocal, engine
 
 logger = logging.getLogger(__name__)
-DESCRIPTION = "Add author_email column to pull_requests + ai_report_content to daily_report_history"
+DESCRIPTION = "Add author_email + author_avatar_base64 to pull_requests, ai_report_content to daily_report_history"
 
 
 async def check_column_exists(table_name, column_name):
@@ -39,6 +39,15 @@ async def upgrade():
             ))
             await db.commit()
             print("  [DONE] Added column 'author_email' to pull_requests")
+
+        if await check_column_exists("pull_requests", "author_avatar_base64"):
+            print("  [OK] Column 'author_avatar_base64' already exists")
+        else:
+            await db.execute(text(
+                "ALTER TABLE pull_requests ADD COLUMN author_avatar_base64 TEXT NULL"
+            ))
+            await db.commit()
+            print("  [DONE] Added column 'author_avatar_base64' to pull_requests")
 
         if await check_column_exists("daily_report_history", "ai_report_content"):
             print("  [OK] Column 'ai_report_content' already exists")

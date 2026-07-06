@@ -779,19 +779,23 @@ const MetricsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: 
 }
 
 const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: DrillDownFilters) => void }) => {
-  const [contributorType, setContributorType] = useState<string | undefined>(undefined)
-  const [companyFilter, setCompanyFilter] = useState<string | undefined>(undefined)
-  const [page, setPage] = useState(1)
+  const [authorCompany, setAuthorCompany] = useState<string | undefined>(undefined)
+  const [reviewerCompany, setReviewerCompany] = useState<string | undefined>(undefined)
+  const [authorPage, setAuthorPage] = useState(1)
+  const [reviewerPage, setReviewerPage] = useState(1)
   const pageSize = 20
-  const skip = (page - 1) * pageSize
-  const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, skip, pageSize, companyFilter)
 
-  if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
+  const { data: authorData, isLoading: authorLoading } = hooks.usePRPipelineContributors(
+    period, 'author', (authorPage - 1) * pageSize, pageSize, authorCompany,
+  )
+  const { data: reviewerData, isLoading: reviewerLoading } = hooks.usePRPipelineContributors(
+    period, 'reviewer', (reviewerPage - 1) * pageSize, pageSize, reviewerCompany,
+  )
 
-  const items = data?.items || []
-  const total = data?.total || 0
-  const authors = items.filter((c: PRPipelineContributor) => c.type === 'author' || c.pr_count > 0)
-  const reviewers = items.filter((c: PRPipelineContributor) => c.type === 'reviewer' || c.review_count > 0)
+  const authors = authorData?.items || []
+  const authorTotal = authorData?.total || 0
+  const reviewers = reviewerData?.items || []
+  const reviewerTotal = reviewerData?.total || 0
 
   const authorColumns = [
     {
@@ -880,66 +884,70 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Select
-          placeholder="贡献者类型"
-          allowClear
-          style={{ width: 150 }}
-          value={contributorType}
-          onChange={setContributorType}
-          options={[
-            { value: 'author', label: '作者' },
-            { value: 'reviewer', label: '评审人' },
-          ]}
-        />
-        <Select
-          placeholder="公司筛选"
-          allowClear
-          style={{ width: 150 }}
-          value={companyFilter}
-          onChange={(val) => { setCompanyFilter(val); setPage(1); }}
-          options={[
-            { value: '华为', label: '华为' },
-            { value: 'none', label: '未标注' },
-          ]}
-        />
-      </div>
-
-      {(!contributorType || contributorType === 'author') && (
-        <Card title="作者" style={{ marginBottom: 24 }}>
-          <Table
-            columns={authorColumns}
-            dataSource={authors}
-            loading={isLoading}
-            rowKey="username"
-            pagination={contributorType === 'author' ? {
-              current: page,
-              pageSize,
-              total,
-              onChange: (p) => setPage(p),
-              showSizeChanger: false,
-            } : false}
+      <Card
+        title="作者"
+        extra={
+          <Select
+            placeholder="公司筛选"
+            allowClear
+            size="small"
+            style={{ width: 130 }}
+            value={authorCompany}
+            onChange={(val) => { setAuthorCompany(val); setAuthorPage(1); }}
+            options={[
+              { value: '华为', label: '华为' },
+              { value: 'none', label: '未标注' },
+            ]}
           />
-        </Card>
-      )}
+        }
+        style={{ marginBottom: 24 }}
+      >
+        <Table
+          columns={authorColumns}
+          dataSource={authors}
+          loading={authorLoading}
+          rowKey="username"
+          pagination={{
+            current: authorPage,
+            pageSize,
+            total: authorTotal,
+            onChange: (p) => setAuthorPage(p),
+            showSizeChanger: false,
+          }}
+        />
+      </Card>
 
-      {(!contributorType || contributorType === 'reviewer') && (
-        <Card title="评审人">
-          <Table
-            columns={reviewerColumns}
-            dataSource={reviewers}
-            loading={isLoading}
-            rowKey="username"
-            pagination={contributorType === 'reviewer' ? {
-              current: page,
-              pageSize,
-              total,
-              onChange: (p) => setPage(p),
-              showSizeChanger: false,
-            } : false}
+      <Card
+        title="评审人"
+        extra={
+          <Select
+            placeholder="公司筛选"
+            allowClear
+            size="small"
+            style={{ width: 130 }}
+            value={reviewerCompany}
+            onChange={(val) => { setReviewerCompany(val); setReviewerPage(1); }}
+            options={[
+              { value: '华为', label: '华为' },
+              { value: 'none', label: '未标注' },
+            ]}
           />
-        </Card>
-      )}
+        }
+      >
+        <Table
+          columns={reviewerColumns}
+          dataSource={reviewers}
+          loading={reviewerLoading}
+          rowKey="username"
+          pagination={{
+            current: reviewerPage,
+            pageSize,
+            total: reviewerTotal,
+            onChange: (p) => setReviewerPage(p),
+            showSizeChanger: false,
+          }}
+        />
+      </Card>
     </div>
   )
 }

@@ -395,20 +395,7 @@ class PRPipelineService:
                     if row[0] and row[1]:
                         reviewer_emails[row[0]] = row[1]
 
-                # Fallback: for reviewers not in DB, try GitHub API
-                missing_logins = [login for login, _ in sorted_reviewers if login not in reviewer_emails]
-                if missing_logins:
-                    try:
-                        from app.services.github_client import GitHubClient
-                        github = GitHubClient(settings.GITHUB_TOKEN, owner, repo)
-                        for login in missing_logins:
-                            email = await github.get_user_email(login, owner, repo)
-                            if email:
-                                reviewer_emails[login] = email
-                        await github.close()
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch reviewer emails from GitHub: {e}")
-
+    
             # Build sorted contributor list with company info
             sorted_contribs = []
             for login, stats in sorted_reviewers:
