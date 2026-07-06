@@ -783,6 +783,7 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
   const [companyFilter, setCompanyFilter] = useState<string | undefined>(undefined)
   const pageSize = 20
   const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, 100, companyFilter)
+  // Fetch unfiltered data for dropdown counts only when a company filter is active
   const { data: allData } = hooks.usePRPipelineContributors(period, contributorType, 100, undefined)
 
   if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
@@ -790,9 +791,10 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
   const authors = (data || []).filter((c: PRPipelineContributor) => c.type === 'author' || c.pr_count > 0)
   const reviewers = (data || []).filter((c: PRPipelineContributor) => c.type === 'reviewer' || c.review_count > 0)
 
-  // Company distribution stats (for dropdown labels)
-  const huaweiCount = (allData || []).filter((c: PRPipelineContributor) => c.company === '华为').length
-  const unlabeledCount = (allData || []).filter((c: PRPipelineContributor) => !c.company).length
+  // Company distribution stats (for dropdown labels): use unfiltered data when filter is active, main data otherwise
+  const statsData = companyFilter ? (allData || []) : (data || [])
+  const huaweiCount = statsData.filter((c: PRPipelineContributor) => c.company === '华为').length
+  const unlabeledCount = statsData.filter((c: PRPipelineContributor) => !c.company).length
 
   const authorColumns = [
     {
