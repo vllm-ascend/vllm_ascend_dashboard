@@ -99,8 +99,10 @@ async def get_contributors(
     days: int = Query(default=30, ge=1, le=365),
     type: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
+    company: str | None = Query(default=None),
+    sort_by: str = Query(default="pr_count"),
 ):
-    return await service.get_contributors(db, OWNER, REPO, days, type, limit)
+    return await service.get_contributors(db, OWNER, REPO, days, type, limit, company, sort_by)
 
 
 @router.get("/trends", response_model=PRPipelineTrendsResponse)
