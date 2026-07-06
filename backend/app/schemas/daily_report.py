@@ -105,6 +105,7 @@ class DailyReportHistoryResponse(BaseModel):
     model_summary: Dict[str, Any] | None = None
     github_summary: Dict[str, Any] | None = None
     performance_summary: Dict[str, Any] | None = None
+    ai_report_content: str | None = None
     created_at: datetime
 
 

@@ -18,6 +18,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip as AntdTooltip,
   Typography,
 } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
@@ -335,8 +336,8 @@ function NodeSparkline({ metrics, timeRange }: { metrics: NodeMetricPoint[]; tim
 
 function NpuTrendTab() {
   const [timeRange, setTimeRange] = useState<string>('24h')
-  const [selectedClusters, setSelectedClusters] = useState<number[]>([])
-  const [selectedNodes, setSelectedNodes] = useState<string[]>([])
+  const [selectedClusters] = useState<number[]>([])
+  const [selectedNodes] = useState<string[]>([])
   const [hiddenLines, setHiddenLines] = useState<Set<string>>(new Set())
 
   const toggleLine = (dataKey: string) => {
@@ -380,24 +381,6 @@ function NpuTrendTab() {
     cluster_ids: activeClusterIds.length > 0 ? activeClusterIds : undefined,
     time_range: timeRange,
   })
-
-  const clusterOptions = allClusters.map(c => ({ label: c.name, value: c.id }))
-
-  const nodeOptions = useMemo(() => {
-    const seen = new Map<string, { label: string; value: string }>()
-    for (const cluster of nodeMetricsData?.clusters || []) {
-      if (selectedClusters.length && !selectedClusters.includes(cluster.cluster_id)) continue
-      for (const node of cluster.nodes) {
-        if (!seen.has(node.node_name)) {
-          seen.set(node.node_name, {
-            label: `${node.node_name} (${cluster.cluster_name})`,
-            value: node.node_name,
-          })
-        }
-      }
-    }
-    return Array.from(seen.values())
-  }, [nodeMetricsData, selectedClusters])
 
   const summaryRows = useMemo<NodeSummaryRow[]>(() => {
     const rows: NodeSummaryRow[] = []
@@ -500,35 +483,79 @@ function NpuTrendTab() {
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card size="small">
-        <Space wrap size="middle">
-          <Radio.Group value={timeRange} onChange={e => setTimeRange(e.target.value)} optionType="button" buttonStyle="solid">
-            <Radio.Button value="1h">近1小时</Radio.Button>
-            <Radio.Button value="24h">近24小时</Radio.Button>
-            <Radio.Button value="7d">近7天</Radio.Button>
-            <Radio.Button value="30d">近30天</Radio.Button>
-          </Radio.Group>
-          <Select
-            mode="multiple"
-            allowClear
-            maxTagCount="responsive"
-            placeholder="默认全部集群"
-            options={clusterOptions}
-            value={selectedClusters}
-            onChange={setSelectedClusters}
-            style={{ minWidth: 240 }}
-          />
-          <Select
-            mode="multiple"
-            allowClear
-            maxTagCount="responsive"
-            placeholder="默认全部机器"
-            options={nodeOptions}
-            value={selectedNodes}
-            onChange={setSelectedNodes}
-            style={{ minWidth: 280 }}
-          />
-        </Space>
+        <Radio.Group value={timeRange} onChange={e => setTimeRange(e.target.value)} optionType="button" buttonStyle="solid">
+          <Radio.Button value="1h">近1小时</Radio.Button>
+          <Radio.Button value="24h">近24小时</Radio.Button>
+          <Radio.Button value="7d">近7天</Radio.Button>
+          <Radio.Button value="30d">近30天</Radio.Button>
+        </Radio.Group>
       </Card>
+
+      {clusterSummaries.length > 0 && (
+        <Row gutter={[16, 16]}>
+          {clusterSummaries.map(cs => {
+            const avgColor = usageColor(cs.cluster_avg)
+            return (
+              <Col key={cs.cluster_id} xs={24} sm={12} lg={8}>
+                <Card
+                  size="small"
+                  title={<span style={{ fontSize: 15, fontWeight: 600 }}>{cs.cluster_name} 汇总</span>}
+                  bodyStyle={{ padding: 20 }}
+                  style={{ borderLeft: `4px solid ${avgColor}` }}
+                >
+                  <Row gutter={[16, 16]} align="middle">
+                    <Col span={12}>
+                      <Statistic
+                        title={
+                          <AntdTooltip title="所选时间范围内，集群内所有机器 NPU 利用率均值的平均值。先计算每台机器在选定时段的平均利用率，再对所有机器取均值，反映集群整体利用率水平。">
+                            <span style={{ fontSize: 13, cursor: 'help', borderBottom: '1px dashed #999' }}>集群均值</span>
+                          </AntdTooltip>
+                        }
+                        value={cs.cluster_avg}
+                        precision={1}
+                        suffix="%"
+                        valueStyle={{ color: avgColor, fontSize: 32, fontWeight: 700 }}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Statistic
+                        title={<span style={{ fontSize: 13 }}>机器数</span>}
+                        value={cs.nodeCount}
+                        suffix="台"
+                        valueStyle={{ fontSize: 32, fontWeight: 700 }}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Statistic
+                        title={<span style={{ fontSize: 13 }}>NPU 总卡数</span>}
+                        value={formatNpu(cs.npuTotal)}
+                        valueStyle={{ fontSize: 22 }}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <div>
+                        <AntdTooltip title="集群内最高与最低机器利用率均值之差（极差）。极差越大，负载分布越不均匀。判定标准：极差 ≥ 50% 为负载失衡，30%~50% 为轻度不均，< 30% 为负载均衡。">
+                          <Text type="secondary" style={{ fontSize: 13, cursor: 'help', borderBottom: '1px dashed #999' }}>负载均衡度</Text>
+                        </AntdTooltip>
+                        <div style={{ marginTop: 8 }}>
+                          <Space size={4} wrap>
+                            <span style={{ fontSize: 16, fontWeight: 600 }}>极差 {cs.cluster_spread.toFixed(1)}%</span>
+                            {cs.cluster_spread >= 50
+                              ? <Tag color="red">负载失衡</Tag>
+                              : cs.cluster_spread >= 30
+                                ? <Tag color="orange">轻度不均</Tag>
+                                : <Tag color="green">负载均衡</Tag>}
+                          </Space>
+                        </div>
+                      </div>
+                    </Col>
+                  </Row>
+                </Card>
+              </Col>
+            )
+          })}
+        </Row>
+      )}
 
       {metricsData?.clusters && metricsData.clusters.length > 0 ? (
         <Card title="NPU 利用率趋势">

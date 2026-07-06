@@ -42,6 +42,7 @@ export interface DailyReportHistoryItem {
   model_summary: Record<string, unknown> | null
   github_summary: Record<string, unknown> | null
   performance_summary: Record<string, unknown> | null
+  ai_report_content: string | null
   created_at: string
 }
 
@@ -67,6 +68,7 @@ export interface DailyReportLatest {
   model_summary: Record<string, unknown> | null
   github_summary: Record<string, unknown> | null
   performance_summary: Record<string, unknown> | null
+  ai_report_content: string | null
 }
 
 export const getReportConfig = async (): Promise<DailyReportConfig> => {
