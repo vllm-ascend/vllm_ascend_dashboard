@@ -476,6 +476,7 @@ class PullRequest(Base):
     title = Column(String(500), nullable=False)
     author = Column(String(100), nullable=False, index=True)
     author_avatar_url = Column(String(500))
+    author_avatar_base64 = Column(Text)  # Cached avatar as data:image/png;base64,...
     author_email = Column(String(200))
     html_url = Column(String(500))
     state = Column(String(20), nullable=False, index=True)

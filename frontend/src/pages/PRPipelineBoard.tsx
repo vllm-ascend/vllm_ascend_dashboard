@@ -153,9 +153,9 @@ const renderCIStatusTag = (status: string | null) => {
   return <Tag color={CI_STATUS_COLORS[status] || 'default'}>{CI_STATUS_LABELS[status] || status}</Tag>
 }
 
-const renderAvatar = (author: string, avatarUrl: string | null) => (
+const renderAvatar = (author: string, avatarUrl: string | null, avatarBase64?: string | null) => (
   <Space size={4}>
-    <Avatar size={20} src={avatarUrl} style={{ backgroundColor: '#1677ff' }}>
+    <Avatar size={20} src={avatarBase64 || avatarUrl} style={{ backgroundColor: '#1677ff' }}>
       {author?.[0]?.toUpperCase()}
     </Avatar>
     <Text>{author}</Text>
@@ -781,27 +781,24 @@ const MetricsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: 
 const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: DrillDownFilters) => void }) => {
   const [contributorType, setContributorType] = useState<string | undefined>(undefined)
   const [companyFilter, setCompanyFilter] = useState<string | undefined>(undefined)
+  const [page, setPage] = useState(1)
   const pageSize = 20
-  const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, pageSize, companyFilter)
-  // Fetch unfiltered data for dropdown counts only when a company filter is active
-  const { data: allData } = hooks.usePRPipelineContributors(period, contributorType, pageSize, undefined)
+  const skip = (page - 1) * pageSize
+  const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, skip, pageSize, companyFilter)
 
   if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
 
-  const authors = (data || []).filter((c: PRPipelineContributor) => c.type === 'author' || c.pr_count > 0)
-  const reviewers = (data || []).filter((c: PRPipelineContributor) => c.type === 'reviewer' || c.review_count > 0)
-
-  // Company distribution stats (for dropdown labels): use unfiltered data when filter is active, main data otherwise
-  const statsData = companyFilter ? (allData || []) : (data || [])
-  const huaweiCount = statsData.filter((c: PRPipelineContributor) => c.company === '华为').length
-  const unlabeledCount = statsData.filter((c: PRPipelineContributor) => !c.company).length
+  const items = data?.items || []
+  const total = data?.total || 0
+  const authors = items.filter((c: PRPipelineContributor) => c.type === 'author' || c.pr_count > 0)
+  const reviewers = items.filter((c: PRPipelineContributor) => c.type === 'reviewer' || c.review_count > 0)
 
   const authorColumns = [
     {
       title: '作者',
       key: 'username',
       width: 180,
-      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
+      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url, record.avatar_base64),
     },
     {
       title: '公司',
@@ -853,7 +850,7 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
       title: '评审人',
       key: 'username',
       width: 180,
-      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
+      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url, record.avatar_base64),
     },
     {
       title: '公司',
@@ -900,37 +897,49 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
           allowClear
           style={{ width: 150 }}
           value={companyFilter}
-          onChange={setCompanyFilter}
+          onChange={(val) => { setCompanyFilter(val); setPage(1); }}
           options={[
-            { value: '华为', label: `华为 (${huaweiCount})` },
-            { value: 'none', label: `未标注 (${unlabeledCount})` },
+            { value: '华为', label: '华为' },
+            { value: 'none', label: '未标注' },
           ]}
         />
       </div>
 
-      {!contributorType || contributorType === 'author' ? (
-        <Card title={`Top ${pageSize} 作者`} style={{ marginBottom: 24 }}>
+      {(!contributorType || contributorType === 'author') && (
+        <Card title="作者" style={{ marginBottom: 24 }}>
           <Table
             columns={authorColumns}
-            dataSource={authors.slice(0, pageSize)}
+            dataSource={authors}
             loading={isLoading}
             rowKey="username"
-            pagination={{ pageSize: 20 }}
+            pagination={contributorType === 'author' ? {
+              current: page,
+              pageSize,
+              total,
+              onChange: (p) => setPage(p),
+              showSizeChanger: false,
+            } : false}
           />
         </Card>
-      ) : null}
+      )}
 
-      {!contributorType || contributorType === 'reviewer' ? (
-        <Card title={`Top ${pageSize} 评审人`}>
+      {(!contributorType || contributorType === 'reviewer') && (
+        <Card title="评审人">
           <Table
             columns={reviewerColumns}
-            dataSource={reviewers.slice(0, pageSize)}
+            dataSource={reviewers}
             loading={isLoading}
             rowKey="username"
-            pagination={{ pageSize: 20 }}
+            pagination={contributorType === 'reviewer' ? {
+              current: page,
+              pageSize,
+              total,
+              onChange: (p) => setPage(p),
+              showSizeChanger: false,
+            } : false}
           />
         </Card>
-      ) : null}
+      )}
     </div>
   )
 }

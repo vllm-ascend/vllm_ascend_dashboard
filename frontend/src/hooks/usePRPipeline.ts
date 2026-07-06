@@ -45,10 +45,10 @@ export const usePRPipelineMetrics = (days?: number) => {
   })
 }
 
-export const usePRPipelineContributors = (days?: number, type?: string, limit?: number, company?: string, sortBy?: string) => {
+export const usePRPipelineContributors = (days?: number, type?: string, skip?: number, limit?: number, company?: string, sortBy?: string) => {
   return useQuery({
-    queryKey: ['pr-pipeline-contributors', days, type, limit, company, sortBy],
-    queryFn: () => api.getContributors(days, type, limit, company, sortBy),
+    queryKey: ['pr-pipeline-contributors', days, type, skip, limit, company, sortBy],
+    queryFn: () => api.getContributors(days, type, skip, limit, company, sortBy),
   })
 }
 
