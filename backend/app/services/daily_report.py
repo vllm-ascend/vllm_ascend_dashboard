@@ -329,7 +329,7 @@ class DailyReportService:
                 max_tokens=4096,
             )
 
-            logger.info(f"AI report generated: {result.model_used}, tokens={result.total_tokens}")
+            logger.info(f"AI report generated: tokens={result.prompt_tokens + result.completion_tokens}")
             return result.content
 
         except Exception as e:
