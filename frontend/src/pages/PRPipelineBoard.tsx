@@ -790,9 +790,8 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
   const authors = (data || []).filter((c: PRPipelineContributor) => c.type === 'author' || c.pr_count > 0)
   const reviewers = (data || []).filter((c: PRPipelineContributor) => c.type === 'reviewer' || c.review_count > 0)
 
-  // Company distribution stats (from unfiltered data)
+  // Company distribution stats (for dropdown labels)
   const huaweiCount = (allData || []).filter((c: PRPipelineContributor) => c.company === '华为').length
-  const labeledCount = (allData || []).filter((c: PRPipelineContributor) => c.company && c.company !== '华为').length
   const unlabeledCount = (allData || []).filter((c: PRPipelineContributor) => !c.company).length
 
   const authorColumns = [
@@ -906,12 +905,6 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
           ]}
         />
       </div>
-
-      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
-        <Col><Tag color="blue">华为: {huaweiCount}</Tag></Col>
-        {labeledCount > 0 && <Col><Tag>{labeledCount} 其他已标注</Tag></Col>}
-        <Col><Tag>{unlabeledCount} 未标注</Tag></Col>
-      </Row>
 
       {!contributorType || contributorType === 'author' ? (
         <Card title={`Top ${pageSize} 作者`} style={{ marginBottom: 24 }}>
