@@ -726,15 +726,7 @@ class DataSyncScheduler:
                     logger.info("No recipients configured in DB, skipping")
                     return
 
-                # Fix #135: SMTP config is stored under 'smtp_config' key, not 'daily_report_config'
-                smtp_stmt = select(ProjectDashboardConfig).where(
-                    ProjectDashboardConfig.config_key == "smtp_config"
-                )
-                smtp_result = await db.execute(smtp_stmt)
-                smtp_config_row = smtp_result.scalar_one_or_none()
-                smtp_config = smtp_config_row.config_value if smtp_config_row else {}
-
-                if not smtp_config.get("smtp_host"):
+                if not smtp_values.get("smtp_host"):
                     logger.info("SMTP_HOST not configured in smtp_config, skipping")
                     return
 
