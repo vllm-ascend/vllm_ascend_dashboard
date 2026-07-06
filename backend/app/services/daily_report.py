@@ -110,6 +110,7 @@ class DailyReportService:
             if window_key == "yesterday":
                 report_data[window_key]["resource"] = await self._collect_resource_data()
                 report_data[window_key]["test"] = await self._collect_test_data()
+                report_data[window_key]["pr_pipeline"] = await self._collect_pr_pipeline_data()
 
         return {"report_date": report_date.isoformat(), **report_data}
 
@@ -311,6 +312,27 @@ class DailyReportService:
             }
         except Exception as e:
             logger.warning(f"Failed to collect test data: {e}")
+            return {}
+
+    async def _collect_pr_pipeline_data(self) -> dict:
+        """采集 PR 流水线概况"""
+        try:
+            from app.services.pr_pipeline_service import PRPipelineService
+            svc = PRPipelineService()
+            overview = await svc.get_overview(self.db, settings.GITHUB_OWNER, settings.GITHUB_REPO, days=1)
+            return {
+                "open_count": overview.open_count,
+                "merged_count": overview.merged_count,
+                "closed_count": overview.closed_count,
+                "backlog_index": overview.backlog_index,
+                "backlog_level": overview.backlog_level,
+                "merge_rate": overview.merge_rate,
+                "avg_time_to_merge_hours": overview.avg_time_to_merge_hours,
+                "recent_opened_count": overview.recent_opened_count,
+                "recent_merged_count": overview.recent_merged_count,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to collect PR pipeline data: {e}")
             return {}
 
     def build_email_html(self, report_data: dict) -> str:
