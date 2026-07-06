@@ -924,6 +924,8 @@ const PRPipelineBoard = () => {
   const [listPage, setListPage] = useState(1)
   const [listPageSize, setListPageSize] = useState(20)
   const syncMutation = hooks.usePRPipelineSync()
+  const { data: syncStatus } = hooks.usePRPipelineSyncStatus()
+  const isSyncing = syncStatus?.running || syncMutation.isPending
 
   const handleDrillDown = (filters: DrillDownFilters) => {
     setListFilters(filters)
@@ -932,9 +934,17 @@ const PRPipelineBoard = () => {
   }
 
   const handleSync = () => {
+    if (isSyncing) {
+      message.warning('同步正在进行中，请稍候')
+      return
+    }
     syncMutation.mutate(undefined, {
       onSuccess: (data) => {
-        message.success(data?.message || '同步完成')
+        if (data?.running) {
+          message.warning('同步正在进行中，请稍候')
+        } else {
+          message.success(data?.message || '同步已开始')
+        }
       },
       onError: (error: any) => {
         message.error(error?.response?.data?.detail || '同步失败')
@@ -1048,10 +1058,11 @@ const PRPipelineBoard = () => {
         </div>
         <Button
           icon={<SyncOutlined />}
-          loading={syncMutation.isPending}
+          loading={isSyncing}
+          disabled={isSyncing}
           onClick={handleSync}
         >
-          同步数据
+          {isSyncing ? '同步中...' : '同步数据'}
         </Button>
       </div>
 

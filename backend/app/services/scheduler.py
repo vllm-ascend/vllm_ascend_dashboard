@@ -49,10 +49,10 @@ class DataSyncScheduler:
 
     def __init__(self):
         """初始化调度器（不读 DB，DB 配置由 apply_db_config_overrides 异步加载）"""
-        timezone_str = 'Asia/Shanghai'
+        self._timezone = 'Asia/Shanghai'
 
         self.scheduler = AsyncIOScheduler(
-            timezone=timezone_str,
+            timezone=self._timezone,
             job_defaults={
                 'coalesce': True,  # 合并错过的执行
                 'max_instances': 1,  # 同一任务最多只有 1 个实例运行
@@ -141,12 +141,12 @@ class DataSyncScheduler:
             if enabled:
                 self.scheduler.add_job(
                     self._generate_daily_summary_job,
-                    trigger=CronTrigger(hour=cron_hour, minute=cron_minute, timezone=timezone_str),
+                    trigger=CronTrigger(hour=cron_hour, minute=cron_minute, timezone=self._timezone),
                     id="daily_summary_task",
                     name="Generate Daily Summary",
                     replace_existing=True,
                 )
-                logger.info(f"[4/4] Daily summary generation scheduled at {cron_hour}:{cron_minute:02d} {timezone_str} (enabled={enabled})")
+                logger.info(f"[4/4] Daily summary generation scheduled at {cron_hour}:{cron_minute:02d} {self._timezone} (enabled={enabled})")
             else:
                 logger.info(f"[4/4] Daily summary generation DISABLED (enabled={enabled})")
         except Exception as e:
@@ -188,12 +188,12 @@ class DataSyncScheduler:
             from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._cleanup_resource_metrics_job,
-                trigger=CronTrigger(hour=0, minute=0, timezone=timezone_str),
+                trigger=CronTrigger(hour=0, minute=0, timezone=self._timezone),
                 id="resource_metrics_cleanup",
                 name="Resource Metrics Cleanup",
                 replace_existing=True,
             )
-            logger.info(f"Resource metrics cleanup scheduled at 00:00 {timezone_str}")
+            logger.info(f"Resource metrics cleanup scheduled at 00:00 {self._timezone}")
         except Exception as e:
             logger.error(f"Failed to add resource metrics cleanup job: {e}", exc_info=True)
 
@@ -206,7 +206,7 @@ class DataSyncScheduler:
             report_enabled = getattr(settings, 'REPORT_ENABLED', True)
             report_hour = getattr(settings, 'REPORT_SCHEDULE_HOUR', 8)
             report_minute = getattr(settings, 'REPORT_SCHEDULE_MINUTE', 30)
-            local_tz = timezone_str
+            local_tz = self._timezone
 
             if report_enabled:
                 self.scheduler.add_job(
@@ -290,12 +290,12 @@ class DataSyncScheduler:
             from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._cleanup_test_runs_job,
-                trigger=CronTrigger(hour=2, minute=0, timezone=timezone_str),
+                trigger=CronTrigger(hour=2, minute=0, timezone=self._timezone),
                 id="cleanup_test_runs",
                 name="Test Board Run Cleanup",
                 replace_existing=True,
             )
-            logger.info(f"Test board run cleanup scheduled at 02:00 {timezone_str}")
+            logger.info(f"Test board run cleanup scheduled at 02:00 {self._timezone}")
         except Exception as e:
             logger.error(f"Failed to add test board cleanup job: {e}", exc_info=True)
 
@@ -307,12 +307,12 @@ class DataSyncScheduler:
                 sync_minute = getattr(settings, 'SUPPORT_MATRIX_SYNC_CRON_MINUTE', 0)
                 self.scheduler.add_job(
                     self._sync_support_matrix_job,
-                    trigger=CronTrigger(hour=sync_hour, minute=sync_minute, timezone=timezone_str),
+                    trigger=CronTrigger(hour=sync_hour, minute=sync_minute, timezone=self._timezone),
                     id="support_matrix_sync",
                     name="Sync Upstream Support Matrix",
                     replace_existing=True,
                 )
-                logger.info(f"Support matrix sync scheduled at {sync_hour}:{sync_minute:02d} {timezone_str}")
+                logger.info(f"Support matrix sync scheduled at {sync_hour}:{sync_minute:02d} {self._timezone}")
             except Exception as e:
                 logger.error(f"Failed to add support matrix sync job: {e}", exc_info=True)
 
@@ -325,11 +325,11 @@ class DataSyncScheduler:
         try:
             schedule_config = await _read_config_async('daily_summary_schedule')
             if schedule_config:
-                timezone_str = schedule_config.get('timezone', 'Asia/Shanghai')
+                self._timezone = schedule_config.get('timezone', 'Asia/Shanghai')
                 # 更新时区（需要重建 cron 任务）
-                if timezone_str != 'Asia/Shanghai':
-                    self.scheduler.configure(timezone=timezone_str)
-                    logger.info(f"Applied timezone from DB: {timezone_str}")
+                if self._timezone != 'Asia/Shanghai':
+                    self.scheduler.configure(timezone=self._timezone)
+                    logger.info(f"Applied timezone from DB: {self._timezone}")
         except Exception as e:
             logger.warning(f"Failed to apply DB timezone: {e}")
 

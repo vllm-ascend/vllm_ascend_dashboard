@@ -199,10 +199,15 @@ export const getTrends = async (days?: number): Promise<PRPipelineTrendsResponse
   return response.data
 }
 
-export const syncPRPipeline = async (daysBack?: number): Promise<{ message: string }> => {
-  const response = await api.post<{ message: string }>('/pr-pipeline/sync', {
+export const syncPRPipeline = async (daysBack?: number): Promise<{ message: string; running?: boolean }> => {
+  const response = await api.post<{ message: string; running?: boolean }>('/pr-pipeline/sync', {
     days_back: daysBack,
   })
+  return response.data
+}
+
+export const getSyncStatus = async (): Promise<{ running: boolean }> => {
+  const response = await api.get<{ running: boolean }>('/pr-pipeline/sync/status')
   return response.data
 }
 

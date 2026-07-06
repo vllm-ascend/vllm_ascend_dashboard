@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
@@ -111,23 +112,46 @@ async def get_trends(
     return await service.get_trends(db, OWNER, REPO, days)
 
 
+# Track whether a sync is currently running
+_sync_running = False
+
+
 @router.post("/sync")
 async def sync_pr_pipeline(
-    db: DbSession,
     current_user: CurrentAdminUser,
     request: PRPipelineSyncRequest | None = None,
 ):
-    days_back = request.days_back if request else 7
+    """Trigger PR pipeline sync in background. Returns immediately."""
+    global _sync_running
+    if _sync_running:
+        return {"message": "Sync already running, please wait", "running": True}
 
-    try:
-        github = GitHubClient(settings.GITHUB_TOKEN, OWNER, REPO)
-        collector = PRPipelineCollector(github, db)
-        count = await collector.collect_prs(OWNER, REPO, days_back=days_back)
-        await github.close()
-        return {"message": f"Synced {count} PRs", "count": count}
-    except Exception as e:
-        logger.error(f"PR pipeline sync failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    days_back = request.days_back if request else 7
+    _sync_running = True
+
+    async def _run_sync():
+        global _sync_running
+        from app.db.base import SessionLocal
+        async with SessionLocal() as db:
+            try:
+                github = GitHubClient(settings.GITHUB_TOKEN, OWNER, REPO)
+                collector = PRPipelineCollector(github, db)
+                count = await collector.collect_prs(OWNER, REPO, days_back=days_back)
+                await github.close()
+                logger.info(f"PR pipeline sync completed: {count} PRs synced")
+            except Exception as e:
+                logger.error(f"PR pipeline sync failed: {e}", exc_info=True)
+            finally:
+                _sync_running = False
+
+    asyncio.create_task(_run_sync())
+    return {"message": f"Sync started (days_back={days_back}), running in background"}
+
+
+@router.get("/sync/status")
+async def sync_status():
+    """Check if a sync is currently running."""
+    return {"running": _sync_running}
 
 
 @router.post("/historical-sync")

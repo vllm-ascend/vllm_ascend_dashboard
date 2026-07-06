@@ -78,6 +78,14 @@ export const usePRPipelineSync = () => {
   })
 }
 
+export const usePRPipelineSyncStatus = () => {
+  return useQuery({
+    queryKey: ['pr-pipeline-sync-status'],
+    queryFn: () => api.getSyncStatus(),
+    refetchInterval: 3000,
+  })
+}
+
 export const usePRPipelineHistoricalSync = () => {
   const queryClient = useQueryClient()
 
