@@ -7,6 +7,7 @@ import {
   Drawer,
   Empty,
   Input,
+  Popover,
   Progress,
   Radio,
   Row,
@@ -30,6 +31,7 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceLine,
   ResponsiveContainer,
 } from 'recharts'
 import {
@@ -40,8 +42,8 @@ import {
   getEnabledResourceClusters,
   getClusterSummary,
 } from '../services/resourceDashboard'
-import { useNpuMetrics } from '../hooks/useResourceMetrics'
-import type { NpuMetricPoint, TopPodInfo } from '../services/resourceMetrics'
+import { useNpuMetrics, useNodeMetrics } from '../hooks/useResourceMetrics'
+import type { NpuMetricPoint, TopPodInfo, NodeMetricPoint } from '../services/resourceMetrics'
 
 const { Title, Text } = Typography
 
@@ -53,6 +55,7 @@ const percent = (used: number, total: number) => (total > 0 ? Math.round(Math.mi
 const usageColor = (value: number) => (value >= 90 ? '#ff4d4f' : value >= 50 ? '#1677ff' : '#52c41a')
 
 const CLUSTER_COLORS = ['#1677ff', '#52c41a', '#faad14', '#ff4d4f', '#722ed1', '#13c2c2']
+const NODE_COLORS = ['#1677ff', '#52c41a', '#faad14', '#ff4d4f', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16', '#a0d911', '#2f54eb']
 
 function ResourceUsage({ summary }: { summary: ClusterResourceSummary }) {
   const cpuPct = percent(summary.used.cpu_cores, summary.total.cpu_cores)
@@ -229,9 +232,110 @@ function NpuTrendTooltipContent({ active, payload, label }: any) {
   )
 }
 
+interface NodeSummaryRow {
+  key: string
+  cluster_id: number
+  cluster_name: string
+  node_name: string
+  avg: number
+  max: number
+  min: number
+  npu_total: number
+  metrics: NodeMetricPoint[]
+}
+
+interface ClusterSummary {
+  cluster_id: number
+  cluster_name: string
+  nodeCount: number
+  npuTotal: number
+  cluster_avg: number
+  cluster_spread: number
+}
+
+function buildNodeChartData(nodes: { node_name: string; metrics: NodeMetricPoint[] }[], timeRange: string) {
+  const allPoints: Record<string, any>[] = []
+  for (const node of nodes) {
+    for (const point of node.metrics) {
+      allPoints.push({
+        collected_at: point.collected_at,
+        timeLabel: dayjs(point.collected_at).format(
+          timeRange === '1h' ? 'HH:mm' : timeRange === '24h' ? 'HH:mm' : timeRange === '7d' ? 'MM-DD HH:mm' : 'MM-DD'
+        ),
+        [`npu_${node.node_name}`]: point.npu_utilization,
+        [`cpu_${node.node_name}`]: point.cpu_utilization,
+        [`pods_${node.node_name}`]: point.executing_pods_count,
+      })
+    }
+  }
+  const timeMap = new Map<string, Record<string, any>>()
+  for (const point of allPoints) {
+    const key = point.collected_at
+    if (!timeMap.has(key)) {
+      timeMap.set(key, { collected_at: key, timeLabel: point.timeLabel })
+    }
+    const existing = timeMap.get(key)!
+    Object.assign(existing, point)
+  }
+  return Array.from(timeMap.values()).sort((a, b) => String(a.collected_at).localeCompare(String(b.collected_at)))
+}
+
+function NodeTrendTooltipContent({ active, payload, label }: any) {
+  if (!active || !payload || payload.length === 0) return null
+  return (
+    <div style={{ background: '#fff', border: '1px solid #eee', padding: 12, borderRadius: 4, maxWidth: 400 }}>
+      <Text strong>{dayjs(label).format('YYYY-MM-DD HH:mm')}</Text>
+      {payload.map((p: any) => {
+        const nodeName = p.dataKey?.replace(/^npu_/, '')
+        if (!nodeName) return null
+        const cpuVal = p.payload?.[`cpu_${nodeName}`]
+        const podsVal = p.payload?.[`pods_${nodeName}`]
+        return (
+          <div key={nodeName} style={{ marginTop: 4 }}>
+            <Text strong style={{ fontSize: 13 }}>{nodeName}</Text>
+            <div style={{ fontSize: 12, color: p.color }}>
+              NPU: {Number(p.value).toFixed(1)}%
+              {cpuVal != null && ` · CPU: ${Number(cpuVal).toFixed(1)}%`}
+              {podsVal != null && ` · Pod: ${podsVal}`}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function NodeSparkline({ metrics, timeRange }: { metrics: NodeMetricPoint[]; timeRange: string }) {
+  const data = metrics.map(m => ({
+    timeLabel: dayjs(m.collected_at).format(timeRange === '1h' ? 'HH:mm' : 'MM-DD'),
+    npu: m.npu_utilization,
+  }))
+  return (
+    <ResponsiveContainer width={280} height={120}>
+      <LineChart data={data}>
+        <Line
+          type="monotone"
+          dataKey="npu"
+          stroke="#1677ff"
+          strokeWidth={2}
+          dot={false}
+          connectNulls
+          unit="%"
+        />
+        <YAxis domain={[0, 100]} hide />
+        <Tooltip
+          formatter={(v: number) => [`${Number(v).toFixed(1)}%`, 'NPU 利用率']}
+          labelStyle={{ fontSize: 12 }}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
 function NpuTrendTab() {
   const [timeRange, setTimeRange] = useState<string>('24h')
   const [selectedClusters, setSelectedClusters] = useState<number[]>([])
+  const [selectedNodes, setSelectedNodes] = useState<string[]>([])
 
   const { data: allClusters = [] } = useQuery({
     queryKey: ['resource-clusters-enabled'],
@@ -245,7 +349,90 @@ function NpuTrendTab() {
     time_range: timeRange,
   })
 
+  const { data: nodeMetricsData } = useNodeMetrics({
+    cluster_ids: activeClusterIds.length > 0 ? activeClusterIds : undefined,
+    time_range: timeRange,
+  })
+
   const clusterOptions = allClusters.map(c => ({ label: c.name, value: c.id }))
+
+  const nodeOptions = useMemo(() => {
+    const seen = new Map<string, { label: string; value: string }>()
+    for (const cluster of nodeMetricsData?.clusters || []) {
+      if (selectedClusters.length && !selectedClusters.includes(cluster.cluster_id)) continue
+      for (const node of cluster.nodes) {
+        if (!seen.has(node.node_name)) {
+          seen.set(node.node_name, {
+            label: `${node.node_name} (${cluster.cluster_name})`,
+            value: node.node_name,
+          })
+        }
+      }
+    }
+    return Array.from(seen.values())
+  }, [nodeMetricsData, selectedClusters])
+
+  const summaryRows = useMemo<NodeSummaryRow[]>(() => {
+    const rows: NodeSummaryRow[] = []
+    for (const cluster of nodeMetricsData?.clusters || []) {
+      for (const node of cluster.nodes) {
+        if (selectedNodes.length && !selectedNodes.includes(node.node_name)) continue
+        const utils = node.metrics.map(m => m.npu_utilization)
+        if (utils.length === 0) continue
+        rows.push({
+          key: `${cluster.cluster_id}-${node.node_name}`,
+          cluster_id: cluster.cluster_id,
+          cluster_name: cluster.cluster_name,
+          node_name: node.node_name,
+          avg: utils.reduce((s, v) => s + v, 0) / utils.length,
+          max: Math.max(...utils),
+          min: Math.min(...utils),
+          npu_total: node.metrics[node.metrics.length - 1]?.npu_total ?? 0,
+          metrics: node.metrics,
+        })
+      }
+    }
+    return rows.sort((a, b) =>
+      a.cluster_name.localeCompare(b.cluster_name) || a.node_name.localeCompare(b.node_name))
+  }, [nodeMetricsData, selectedNodes])
+
+  const clusterSummaries = useMemo<ClusterSummary[]>(() => {
+    const map = new Map<number, ClusterSummary & { nodeAvgs: number[] }>()
+    for (const row of summaryRows) {
+      if (!map.has(row.cluster_id)) {
+        map.set(row.cluster_id, {
+          cluster_id: row.cluster_id,
+          cluster_name: row.cluster_name,
+          nodeAvgs: [],
+          nodeCount: 0,
+          npuTotal: 0,
+          cluster_avg: 0,
+          cluster_spread: 0,
+        })
+      }
+      const entry = map.get(row.cluster_id)!
+      entry.nodeAvgs.push(row.avg)
+      entry.nodeCount += 1
+      entry.npuTotal += row.npu_total
+    }
+    const result: ClusterSummary[] = []
+    for (const entry of map.values()) {
+      const avgOfAvgs = entry.nodeAvgs.reduce((s, v) => s + v, 0) / entry.nodeAvgs.length
+      const maxOfAvgs = Math.max(...entry.nodeAvgs)
+      const minOfAvgs = Math.min(...entry.nodeAvgs)
+      result.push({
+        cluster_id: entry.cluster_id,
+        cluster_name: entry.cluster_name,
+        nodeCount: entry.nodeCount,
+        npuTotal: entry.npuTotal,
+        cluster_avg: avgOfAvgs,
+        cluster_spread: maxOfAvgs - minOfAvgs,
+      })
+    }
+    return result
+  }, [summaryRows])
+
+  const hasNodeData = (nodeMetricsData?.clusters || []).some(c => c.nodes.length > 0)
 
   const chartData = useMemo(() => {
     if (!metricsData?.clusters) return []
@@ -302,6 +489,16 @@ function NpuTrendTab() {
             value={selectedClusters}
             onChange={setSelectedClusters}
             style={{ minWidth: 240 }}
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            maxTagCount="responsive"
+            placeholder="默认全部机器"
+            options={nodeOptions}
+            value={selectedNodes}
+            onChange={setSelectedNodes}
+            style={{ minWidth: 280 }}
           />
         </Space>
       </Card>
@@ -392,6 +589,134 @@ function NpuTrendTab() {
               ))}
             </LineChart>
           </ResponsiveContainer>
+        </Card>
+      )}
+
+      {hasNodeData ? (
+        <>
+          {nodeMetricsData?.clusters?.map(cluster => {
+            const visibleNodes = selectedNodes.length
+              ? cluster.nodes.filter(n => selectedNodes.includes(n.node_name))
+              : cluster.nodes
+            if (visibleNodes.length === 0) return null
+
+            const nodeChartData = buildNodeChartData(visibleNodes, timeRange)
+            const clusterAvg = visibleNodes.length > 0
+              ? visibleNodes.reduce((sum, n) =>
+                  sum + n.metrics.reduce((s, m) => s + m.npu_utilization, 0) / (n.metrics.length || 1), 0
+                ) / visibleNodes.length
+              : 0
+
+            return (
+              <Card key={cluster.cluster_id} title={`${cluster.cluster_name} — 机器 NPU 利用率趋势`}>
+                <ResponsiveContainer width="100%" height={320}>
+                  <LineChart data={nodeChartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="timeLabel" tick={{ fontSize: 12 }} angle={-30} textAnchor="end" height={50} />
+                    <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} />
+                    <Tooltip content={<NodeTrendTooltipContent />} />
+                    <Legend />
+                    <ReferenceLine
+                      y={clusterAvg}
+                      stroke="#faad14"
+                      strokeDasharray="6 4"
+                      label={{ value: `集群均值 ${clusterAvg.toFixed(1)}%`, position: 'right', fontSize: 11, fill: '#faad14' }}
+                    />
+                    {visibleNodes.map((node, i) => (
+                      <Line
+                        key={node.node_name}
+                        type="monotone"
+                        dataKey={`npu_${node.node_name}`}
+                        name={node.node_name}
+                        stroke={NODE_COLORS[i % NODE_COLORS.length]}
+                        strokeWidth={2}
+                        dot={{ r: 2 }}
+                        connectNulls
+                        unit="%"
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </Card>
+            )
+          })}
+
+          <Card title="机器利用率汇总（按集群分组）">
+            <Table<NodeSummaryRow>
+              dataSource={summaryRows}
+              pagination={false}
+              scroll={{ x: 900 }}
+              columns={[
+                {
+                  title: '集群',
+                  dataIndex: 'cluster_name',
+                  width: 140,
+                  filters: Array.from(new Set(summaryRows.map(r => r.cluster_name)))
+                    .sort()
+                    .map(v => ({ text: v, value: v })),
+                  onFilter: (value, record) => record.cluster_name === value,
+                },
+                {
+                  title: '机器',
+                  dataIndex: 'node_name',
+                  width: 220,
+                  render: (nodeName: string, record: NodeSummaryRow) => (
+                    <Popover
+                      trigger="hover"
+                      placement="right"
+                      mouseEnterDelay={0.3}
+                      title={nodeName}
+                      content={<NodeSparkline metrics={record.metrics} timeRange={timeRange} />}
+                    >
+                      <span style={{ cursor: 'pointer' }}>{nodeName}</span>
+                    </Popover>
+                  ),
+                },
+                { title: '均值', dataIndex: 'avg', width: 100, render: (v: number) => `${v.toFixed(1)}%`, sorter: (a, b) => a.avg - b.avg },
+                { title: '峰值', dataIndex: 'max', width: 100, render: (v: number) => `${v.toFixed(1)}%` },
+                { title: '最低', dataIndex: 'min', width: 100, render: (v: number) => `${v.toFixed(1)}%` },
+                { title: 'NPU 卡数', dataIndex: 'npu_total', width: 100, render: (v: number) => formatNpu(v) },
+                {
+                  title: '状态',
+                  width: 140,
+                  render: (_: unknown, record: NodeSummaryRow) => (
+                    <Space size={4} wrap>
+                      {record.avg < 5 && <Tag color="orange">疑似闲置</Tag>}
+                      {record.max >= 100 && <Tag color="red">存在满载</Tag>}
+                    </Space>
+                  ),
+                },
+              ]}
+              summary={() => (
+                <>
+                  {clusterSummaries.map(cs => (
+                    <Table.Summary.Row key={cs.cluster_id} style={{ background: '#fafafa', fontWeight: 600 }}>
+                      <Table.Summary.Cell index={0}>{cs.cluster_name} 汇总</Table.Summary.Cell>
+                      <Table.Summary.Cell index={1}>{cs.nodeCount} 台</Table.Summary.Cell>
+                      <Table.Summary.Cell index={2}>{cs.cluster_avg.toFixed(1)}%</Table.Summary.Cell>
+                      <Table.Summary.Cell index={3}>—</Table.Summary.Cell>
+                      <Table.Summary.Cell index={4}>—</Table.Summary.Cell>
+                      <Table.Summary.Cell index={5}>{formatNpu(cs.npuTotal)}</Table.Summary.Cell>
+                      <Table.Summary.Cell index={6}>
+                        <Space size={4}>
+                          <span>极差 {cs.cluster_spread.toFixed(1)}%</span>
+                          {cs.cluster_spread >= 50
+                            ? <Tag color="red">负载失衡</Tag>
+                            : cs.cluster_spread >= 30
+                              ? <Tag color="orange">轻度不均</Tag>
+                              : <Tag color="green">负载均衡</Tag>}
+                        </Space>
+                      </Table.Summary.Cell>
+                    </Table.Summary.Row>
+                  ))}
+                </>
+              )}
+            />
+          </Card>
+        </>
+      ) : (
+        <Card title="机器利用率汇总（按集群分组）">
+          <Empty description="暂无机器级趋势数据" />
         </Card>
       )}
     </Space>

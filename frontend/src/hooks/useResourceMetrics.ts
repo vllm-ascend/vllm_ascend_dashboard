@@ -13,6 +13,19 @@ export const useNpuMetrics = (params: {
   })
 }
 
+export const useNodeMetrics = (params: {
+  cluster_ids?: number[]
+  node_names?: string[]
+  time_range?: string
+}) => {
+  return useQuery({
+    queryKey: ['node-metrics', params],
+    queryFn: () => metricsApi.getNodeMetrics(params),
+    refetchInterval: 60000,
+    placeholderData: (prev: metricsApi.NodeMetricsResponse | undefined) => prev,
+  })
+}
+
 export const useResourceMetricsConfig = () => {
   return useQuery({
     queryKey: ['resource-metrics-config'],
@@ -28,6 +41,7 @@ export const useUpdateResourceMetricsConfig = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['resource-metrics-config'] })
       queryClient.invalidateQueries({ queryKey: ['npu-metrics'] })
+      queryClient.invalidateQueries({ queryKey: ['node-metrics'] })
     },
   })
 }

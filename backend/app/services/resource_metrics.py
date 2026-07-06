@@ -171,6 +171,72 @@ class ResourceMetricsService:
 
         return {"clusters": result_clusters}
 
+    async def query_node_metrics(
+        self,
+        cluster_ids: list[int] | None = None,
+        node_names: list[str] | None = None,
+        time_range: str = "24h",
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ) -> dict:
+        granularity_minutes = TIME_RANGE_GRANULARITY.get(time_range, 5)
+        duration = TIME_RANGE_DURATION.get(time_range, timedelta(hours=24))
+
+        if end_time is None:
+            end_time = datetime.now(UTC)
+        if start_time is None:
+            start_time = end_time - duration
+
+        cluster_query = select(KubernetesClusterConfig).where(KubernetesClusterConfig.enabled.is_(True))
+        if cluster_ids:
+            cluster_query = cluster_query.where(KubernetesClusterConfig.id.in_(cluster_ids))
+        cluster_query = cluster_query.order_by(
+            KubernetesClusterConfig.display_order.asc(), KubernetesClusterConfig.name.asc()
+        )
+        cluster_result = await self.db.execute(cluster_query)
+        clusters = list(cluster_result.scalars().all())
+
+        result_clusters = []
+
+        for cluster in clusters:
+            stmt = select(ResourceNodeMetrics).where(
+                ResourceNodeMetrics.cluster_id == cluster.id,
+                ResourceNodeMetrics.collected_at >= start_time,
+                ResourceNodeMetrics.collected_at <= end_time,
+            ).order_by(ResourceNodeMetrics.collected_at.asc())
+
+            if node_names:
+                stmt = stmt.where(ResourceNodeMetrics.node_name.in_(node_names))
+
+            metrics_result = await self.db.execute(stmt)
+            raw_metrics = list(metrics_result.scalars().all())
+
+            # 按 node_name 分组
+            node_groups: dict[str, list[ResourceNodeMetrics]] = {}
+            for m in raw_metrics:
+                node_groups.setdefault(m.node_name, []).append(m)
+
+            nodes = []
+            for node_name in sorted(node_groups.keys()):
+                node_raw = node_groups[node_name]
+                if granularity_minutes <= 1:
+                    aggregated = node_raw
+                else:
+                    aggregated = self._aggregate_node_metrics(node_raw, granularity_minutes)
+                points = [self._normalize_node_metric(m) for m in aggregated]
+                nodes.append({
+                    "node_name": node_name,
+                    "metrics": points,
+                })
+
+            result_clusters.append({
+                "cluster_id": cluster.id,
+                "cluster_name": cluster.name,
+                "nodes": nodes,
+            })
+
+        return {"clusters": result_clusters}
+
     def _aggregate_metrics(self, raw_metrics: list[ResourceNpuMetrics], granularity_minutes: int) -> list[dict]:
         if not raw_metrics:
             return []
@@ -226,6 +292,61 @@ class ResourceMetricsService:
         result["collected_at"] = dt
         return result
 
+    def _aggregate_node_metrics(
+        self, raw_metrics: list[ResourceNodeMetrics], granularity_minutes: int
+    ) -> list[dict]:
+        if not raw_metrics:
+            return []
+
+        grouped: dict[str, list[ResourceNodeMetrics]] = {}
+        for m in raw_metrics:
+            bucket = self._time_bucket(m.collected_at, granularity_minutes)
+            if bucket not in grouped:
+                grouped[bucket] = []
+            grouped[bucket].append(m)
+
+        result = []
+        for bucket_key in sorted(grouped.keys()):
+            group = grouped[bucket_key]
+            avg_npu_utilization = sum(m.npu_utilization for m in group) / len(group)
+            avg_cpu_utilization = sum(m.cpu_utilization for m in group) / len(group)
+            avg_memory_utilization = sum(m.memory_utilization for m in group) / len(group)
+            avg_pods_count = sum(m.executing_pods_count for m in group) / len(group)
+            last_metric = group[-1]
+
+            result.append({
+                "collected_at": last_metric.collected_at,
+                "npu_utilization": round(avg_npu_utilization, 2),
+                "npu_total": last_metric.npu_total,
+                "npu_used": last_metric.npu_used,
+                "npu_available": last_metric.npu_available,
+                "cpu_utilization": round(avg_cpu_utilization, 2),
+                "memory_utilization": round(avg_memory_utilization, 2),
+                "executing_pods_count": round(avg_pods_count),
+            })
+
+        return result
+
+    def _normalize_node_metric(self, m: ResourceNodeMetrics | dict) -> dict:
+        if isinstance(m, ResourceNodeMetrics):
+            dt = m.collected_at
+            result = {
+                "npu_utilization": m.npu_utilization,
+                "npu_total": m.npu_total,
+                "npu_used": m.npu_used,
+                "npu_available": m.npu_available,
+                "cpu_utilization": m.cpu_utilization,
+                "memory_utilization": m.memory_utilization,
+                "executing_pods_count": m.executing_pods_count,
+            }
+        else:
+            dt = m.get("collected_at")
+            result = dict(m)
+        if dt is not None and getattr(dt, "tzinfo", None) is None:
+            dt = dt.replace(tzinfo=UTC)
+        result["collected_at"] = dt
+        return result
+
     def _time_bucket(self, dt: datetime, granularity_minutes: int) -> str:
         total_minutes = int(dt.timestamp()) // 60
         bucket = total_minutes // granularity_minutes
@@ -238,10 +359,16 @@ class ResourceMetricsService:
 
         stmt = delete(ResourceNpuMetrics).where(ResourceNpuMetrics.collected_at < cutoff)
         result = await self.db.execute(stmt)
+        deleted = result.rowcount
+
+        # 清理节点级指标，避免数据无限增长
+        node_stmt = delete(ResourceNodeMetrics).where(ResourceNodeMetrics.collected_at < cutoff)
+        node_result = await self.db.execute(node_stmt)
+        deleted += node_result.rowcount
+
         await self.db.commit()
 
-        deleted = result.rowcount
-        logger.info(f"Cleaned up {deleted} NPU metrics older than {retention_days} days")
+        logger.info(f"Cleaned up {deleted} metrics records (cluster + node) older than {retention_days} days")
         return deleted
 
     async def get_config(self) -> dict:
