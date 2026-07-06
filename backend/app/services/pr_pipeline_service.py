@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Unicode
 
 from app.models import PullRequest
+from app.utils.company_detector import detect_company
 from app.schemas.pr_pipeline import (
     PRPipelineContributor,
     PRPipelineKanban,
@@ -280,6 +281,7 @@ class PRPipelineService:
             stmt = select(
                 PullRequest.author,
                 PullRequest.author_avatar_url,
+                PullRequest.author_email,
                 func.count(PullRequest.id).label("pr_count"),
                 func.sum(PullRequest.additions).label("lines_added"),
                 func.sum(PullRequest.deletions).label("lines_removed"),
@@ -287,7 +289,7 @@ class PRPipelineService:
                 PullRequest.owner == owner,
                 PullRequest.repo == repo,
                 PullRequest.created_at >= since,
-            ).group_by(PullRequest.author, PullRequest.author_avatar_url).order_by(desc("pr_count")).limit(limit)
+            ).group_by(PullRequest.author, PullRequest.author_avatar_url, PullRequest.author_email).order_by(desc("pr_count")).limit(limit)
             result = await db.execute(stmt)
             for row in result.all():
                 merged_stmt = select(func.count(PullRequest.id)).where(
@@ -304,9 +306,10 @@ class PRPipelineService:
                     username=row[0],
                     avatar_url=row[1],
                     type="author",
-                    pr_count=row[2],
-                    lines_added=row[3] or 0,
-                    lines_removed=row[4] or 0,
+                    company=detect_company(row[2]),
+                    pr_count=row[3],
+                    lines_added=row[4] or 0,
+                    lines_removed=row[5] or 0,
                     merged_count=merged_count,
                 ))
 
@@ -333,6 +336,25 @@ class PRPipelineService:
                         reviewer_stats[login]["response_hours"].append(hours)
 
             sorted_reviewers = sorted(reviewer_stats.items(), key=lambda x: x[1]["count"], reverse=True)[:limit]
+
+            # Batch-fetch emails for reviewer logins from PullRequest author data
+            reviewer_emails: dict[str, str | None] = {}
+            if sorted_reviewers:
+                reviewer_logins = [login for login, _ in sorted_reviewers]
+                email_stmt = select(
+                    PullRequest.author,
+                    PullRequest.author_email,
+                ).where(
+                    PullRequest.owner == owner,
+                    PullRequest.repo == repo,
+                    PullRequest.author.in_(reviewer_logins),
+                    PullRequest.author_email.isnot(None),
+                ).distinct()
+                email_result = await db.execute(email_stmt)
+                for row in email_result.all():
+                    if row[0] and row[1]:
+                        reviewer_emails[row[0]] = row[1]
+
             for login, stats in sorted_reviewers:
                 avg_response = None
                 if stats["response_hours"]:
@@ -341,6 +363,7 @@ class PRPipelineService:
                 contributors.append(PRPipelineContributor(
                     username=login,
                     type="reviewer",
+                    company=detect_company(reviewer_emails.get(login)),
                     review_count=stats["count"],
                     avg_first_response_hours=avg_response,
                 ))

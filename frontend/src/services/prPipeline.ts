@@ -100,6 +100,7 @@ export interface PRPipelineContributor {
   username: string
   avatar_url: string | null
   type: string
+  company: string | null
   pr_count: number
   review_count: number
   lines_added: number

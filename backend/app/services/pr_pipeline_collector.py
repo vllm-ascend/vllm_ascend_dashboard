@@ -149,6 +149,22 @@ class PRPipelineCollector:
         author = user_info.get("login", "")
         author_avatar_url = user_info.get("avatar_url", "")
 
+        # Fetch author email from PR commits (best-effort, non-fatal)
+        author_email = None
+        try:
+            commits = await self.github.get_pr_commits(owner, repo, pr_number)
+            if commits:
+                for commit in commits:
+                    commit_author_login = (commit.get("author") or {}).get("login", "")
+                    if not commit_author_login or commit_author_login == author:
+                        author_email = (commit.get("commit", {}).get("author", {}).get("email", ""))
+                        if author_email:
+                            break
+        except GitHubRateLimitError:
+            raise
+        except Exception as e:
+            logger.warning(f"Failed to fetch author email for PR #{pr_number}: {e}")
+
         head_info = pr.get("head", {}) or {}
         base_info = pr.get("base", {}) or {}
 
@@ -203,6 +219,7 @@ class PRPipelineCollector:
             existing.title = pr.get("title", "")
             existing.author = author
             existing.author_avatar_url = author_avatar_url
+            existing.author_email = author_email or existing.author_email
             existing.html_url = pr.get("html_url", "")
             existing.state = pr_state
             existing.is_draft = pr.get("draft", False) or False
@@ -235,6 +252,7 @@ class PRPipelineCollector:
                 title=pr.get("title", ""),
                 author=author,
                 author_avatar_url=author_avatar_url,
+                author_email=author_email,
                 html_url=pr.get("html_url", ""),
                 state=pr_state,
                 is_draft=pr.get("draft", False) or False,

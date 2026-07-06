@@ -137,6 +137,7 @@ class PRPipelineContributor(BaseModel):
     username: str
     avatar_url: str | None = None
     type: str
+    company: str | None = None
     pr_count: int = 0
     review_count: int = 0
     lines_added: int = 0
