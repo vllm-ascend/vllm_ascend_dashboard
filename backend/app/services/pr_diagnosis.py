@@ -100,10 +100,10 @@ class PRDiagnosisService:
                     "default_model": llm_config.default_model,
                 },
                 system_prompt=system_prompt,
-                max_turns=15,
-                timeout_seconds=300,
+                max_turns=10,
+                timeout_seconds=60,
             ),
-            timeout=330,
+            timeout=90,
         )
         return result.content, result.model_used or llm_config.default_model
 
@@ -119,7 +119,7 @@ class PRDiagnosisService:
                 system_prompt=system_prompt,
                 user_prompt=prompt,
                 temperature=0.3,
-                max_tokens=8192,
+                max_tokens=4096,
             ),
             timeout=300,
         )
