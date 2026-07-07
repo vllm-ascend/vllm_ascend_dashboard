@@ -101,7 +101,7 @@ scope: daily_report
 {{/if}}
 
 ---
-报告由 vLLM Ascend Dashboard 自动生成 | 详细数据见 {{dashboard_url}}
+vLLM Ascend Dashboard | 详细数据见 {{dashboard_url}}
 ```
 
 ## 输入数据说明
