@@ -121,7 +121,7 @@ class PRDiagnosisService:
                 temperature=0.3,
                 max_tokens=8192,
             ),
-            timeout=120,
+            timeout=300,
         )
         return llm_result.content, llm_config.default_model
 
@@ -186,44 +186,72 @@ class PRDiagnosisService:
 
     async def _get_failing_job_details(self, check_run: dict) -> dict:
         """获取失败 check run 的 Job 详情和日志"""
-        run_id = check_run.get("run_id")
+        import re
         check_name = check_run.get("name", "N/A")
-        check_url = check_run.get("html_url", "")
+        check_url = check_run.get("html_url", check_run.get("details_url", ""))
+
+        # check runs 没有 run_id 字段，从 details_url 解析
+        details_url = check_run.get("details_url", "")
+        run_id = None
+        job_id_from_url = None
+        if details_url:
+            m = re.search(r'/runs/(\d+)/job/(\d+)', details_url)
+            if m:
+                run_id = int(m.group(1))
+                job_id_from_url = int(m.group(2))
+            else:
+                m = re.search(r'/runs/(\d+)', details_url)
+                if m:
+                    run_id = int(m.group(1))
 
         if not run_id:
             return {"check_name": check_name, "url": check_url, "failing_jobs": []}
 
         try:
             client = self._get_github_client()
-            jobs = await client.get_job_list(run_id)
-            failing_jobs = [j for j in jobs if j.get("conclusion") == "failure"]
 
+            # 优先用 URL 中的 job_id 直接获取日志
             job_details = []
-            for job in failing_jobs[:3]:
-                job_id = job.get("id")
-                job_name = job.get("name", "N/A")
-                runner_name = job.get("runner_name", "N/A")
+            if job_id_from_url:
+                try:
+                    logs = await client.get_job_logs(job_id_from_url)
+                    log_excerpt = self._extract_errors_from_logs(logs)
+                    if log_excerpt:
+                        job_details.append({
+                            "job_name": check_name,
+                            "runner_name": "N/A",
+                            "failed_steps": [],
+                            "log_excerpt": log_excerpt,
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to fetch logs for job {job_id_from_url}: {e}")
 
-                failed_steps = [
-                    s.get("name", "N/A")
-                    for s in job.get("steps", [])
-                    if s.get("conclusion") == "failure"
-                ]
-
-                log_excerpt = ""
-                if job_id:
-                    try:
-                        logs = await client.get_job_logs(job_id)
-                        log_excerpt = self._extract_errors_from_logs(logs)
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch logs for job {job_id}: {e}")
-
-                job_details.append({
-                    "job_name": job_name,
-                    "runner_name": runner_name,
-                    "failed_steps": failed_steps,
-                    "log_excerpt": log_excerpt,
-                })
+            # 如果直接获取失败，尝试列出所有 jobs
+            if not job_details:
+                jobs = await client.get_job_list(run_id)
+                failing_jobs = [j for j in jobs if j.get("conclusion") == "failure"]
+                for job in failing_jobs[:3]:
+                    j_id = job.get("id")
+                    j_name = job.get("name", "N/A")
+                    runner = job.get("runner_name", "N/A")
+                    failed_steps = [
+                        s.get("name", "N/A")
+                        for s in job.get("steps", [])
+                        if s.get("conclusion") == "failure"
+                    ]
+                    log_excerpt = ""
+                    if j_id:
+                        try:
+                            logs = await client.get_job_logs(j_id)
+                            log_excerpt = self._extract_errors_from_logs(logs)
+                        except Exception:
+                            pass
+                    job_details.append({
+                        "job_name": j_name,
+                        "runner_name": runner,
+                        "failed_steps": failed_steps,
+                        "log_excerpt": log_excerpt,
+                    })
 
             return {
                 "check_name": check_name,
@@ -279,7 +307,13 @@ class PRDiagnosisService:
                         "utf-8", errors="replace"
                     )
                     if any(kw in content.lower() for kw in ["ready", "skip", "selected-test", "run-selected", "label"]):
-                        configs.append(f"### {name}\n```yaml\n{content[:6000]}\n```")
+                        # 只截取包含关键词的片段，避免整个 YAML 过大
+                        relevant_lines = []
+                        for line in content.split("\n"):
+                            if any(kw in line.lower() for kw in ["ready", "skip", "label", "selected-test", "run-selected", "if:", "jobs:", "name:"]):
+                                relevant_lines.append(line)
+                        snippet = "\n".join(relevant_lines[:80])
+                        configs.append(f"### {name}\n```yaml\n{snippet[:3000]}\n```")
                 except Exception:
                     continue
 
