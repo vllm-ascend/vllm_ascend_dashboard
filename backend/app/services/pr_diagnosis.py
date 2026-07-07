@@ -1,8 +1,9 @@
-"""PR 问题诊断服务 — 从 GitHub API 获取 CI 失败详情，使用 auto-bug-fixer 进行根因分析"""
+"""PR 问题诊断服务 — 从 GitHub API 获取 CI 失败详情 + 跨 PR 分析 + agentic LLM 深层次定位"""
 import asyncio
+import base64
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,18 +15,8 @@ from app.services.llm_client import LLMClient
 logger = logging.getLogger(__name__)
 
 FALLBACK_SYSTEM_PROMPT = """你是一名资深的 vLLM Ascend 社区代码评审专家和 CI/CD 诊断工程师。
-用户会提供一个 PR 的详细信息（包括标题、作者、状态、Review 情况、CI 检查结果等），
-请根据这些信息生成一份 PR 诊断报告。
-
-报告要求：
-1. **PR 概况**：标题、作者、状态、分支、代码变更规模
-2. **CI 诊断**：CI 是否通过、失败任务及可能原因、耗时分析
-3. **Review 诊断**：Review 状态、Reviewer 情况、是否有变更请求
-4. **风险点**：潜在问题（如长期未处理、CI 连续失败、代码冲突等）
-5. **建议**：下一步行动建议（如修复 CI、补充 Review、处理冲突等）
-
-报告格式：Markdown，简洁明了，每个板块先结论后数据。全文控制在 400-600 字。
-如果 CI 通过且 Review 正常，报告应正面肯定 PR 的健康状态。
+分析 PR 的 CI 失败，给出根因分析报告。运用关键日志证据 → 推导过程 → 调用链 → 根因链路的方法论。
+重点关注：失败是否与 PR 自身改动相关、是否存在跨 PR 依赖问题（如 skip 标签影响）、是否为 main 分支预存问题。
 """
 
 
@@ -41,7 +32,7 @@ class PRDiagnosisService:
         return self._github_client
 
     async def diagnose(self, pr_number: int) -> dict:
-        """诊断指定 PR 的 CI 失败，返回诊断报告"""
+        """诊断指定 PR 的 CI 失败，返回深层次诊断报告"""
         # 1. 获取 PR 信息（DB 优先，GitHub API 降级）
         pr_info = await self._get_pr_info(pr_number)
         head_sha = pr_info.get("head_sha")
@@ -58,16 +49,67 @@ class PRDiagnosisService:
             detail = await self._get_failing_job_details(run)
             failing_details.append(detail)
 
-        # 4. 构建上下文
-        context = self._build_context(pr_info, check_runs, failing_details)
+        # 4. 获取最近合入的 PR（跨 PR 分析）
+        recent_prs = await self._get_recent_merged_prs()
 
-        # 5. 获取 LLM 配置和系统提示词
+        # 5. 获取 CI 工作流配置（ready/skip 标签逻辑分析）
+        workflow_config = await self._get_workflow_config()
+
+        # 6. 构建上下文
+        context = self._build_context(
+            pr_info, check_runs, failing_details, recent_prs, workflow_config
+        )
+
+        # 7. 获取 LLM 配置和系统提示词
         llm_config = await self._get_llm_config()
         system_prompt = self._get_system_prompt()
 
-        # 6. 调用 LLM（120s 超时）
-        client = LLMClient()
+        # 8. 调用 LLM — 优先 agentic 模式，降级到直接调用
         start_time = datetime.now()
+        try:
+            result_content, model_used = await self._call_agentic_llm(
+                context, system_prompt, llm_config
+            )
+        except Exception as e:
+            logger.warning(f"Agentic LLM failed, falling back to direct: {e}")
+            result_content, model_used = await self._call_direct_llm(
+                context, system_prompt, llm_config
+            )
+        duration = (datetime.now() - start_time).total_seconds()
+
+        return {
+            "pr_number": pr_number,
+            "report": result_content,
+            "model": model_used or llm_config.default_model,
+            "provider": llm_config.provider,
+            "duration_seconds": round(duration, 1),
+            "tokens": 0,
+        }
+
+    async def _call_agentic_llm(self, prompt: str, system_prompt: str, llm_config) -> tuple[str, str]:
+        """使用 Claude Code CLI agentic 模式（支持工具调用）"""
+        from app.services.claude_code_cli import run_with_fallback
+
+        result = await asyncio.wait_for(
+            run_with_fallback(
+                prompt=prompt,
+                provider_config={
+                    "provider": llm_config.provider,
+                    "api_key": llm_config.api_key,
+                    "api_base_url": llm_config.api_base_url,
+                    "default_model": llm_config.default_model,
+                },
+                system_prompt=system_prompt,
+                max_turns=15,
+                timeout_seconds=300,
+            ),
+            timeout=330,
+        )
+        return result.content, result.model_used or llm_config.default_model
+
+    async def _call_direct_llm(self, prompt: str, system_prompt: str, llm_config) -> tuple[str, str]:
+        """直接调用 LLM（降级模式）"""
+        client = LLMClient()
         llm_result = await asyncio.wait_for(
             client.generate(
                 provider=llm_config.provider,
@@ -75,22 +117,13 @@ class PRDiagnosisService:
                 api_key=llm_config.api_key,
                 api_base=llm_config.api_base_url,
                 system_prompt=system_prompt,
-                user_prompt=context,
+                user_prompt=prompt,
                 temperature=0.3,
                 max_tokens=8192,
             ),
             timeout=120,
         )
-        duration = (datetime.now() - start_time).total_seconds()
-
-        return {
-            "pr_number": pr_number,
-            "report": llm_result.content,
-            "model": llm_config.default_model,
-            "provider": llm_config.provider,
-            "duration_seconds": round(duration, 1),
-            "tokens": llm_result.prompt_tokens + llm_result.completion_tokens,
-        }
+        return llm_result.content, llm_config.default_model
 
     async def _get_pr_info(self, pr_number: int) -> dict:
         """获取 PR 信息：DB 优先，GitHub API 降级"""
@@ -117,9 +150,6 @@ class PRDiagnosisService:
                 "changed_files": pr.changed_files,
                 "html_url": pr.html_url,
                 "is_draft": pr.is_draft,
-                "pipeline_stage": pr.pipeline_stage,
-                "review_status": pr.review_status,
-                "ci_status": pr.ci_status,
             }
 
         logger.info(f"PR #{pr_number} not in DB, fetching from GitHub API")
@@ -151,7 +181,7 @@ class PRDiagnosisService:
             logger.info(f"Got {len(runs)} check runs for SHA {head_sha[:8]}")
             return runs
         except Exception as e:
-            logger.warning(f"Failed to fetch check runs from GitHub API: {e}")
+            logger.warning(f"Failed to fetch check runs: {e}")
             return []
 
     async def _get_failing_job_details(self, check_run: dict) -> dict:
@@ -187,7 +217,6 @@ class PRDiagnosisService:
                         log_excerpt = self._extract_errors_from_logs(logs)
                     except Exception as e:
                         logger.warning(f"Failed to fetch logs for job {job_id}: {e}")
-                        log_excerpt = ""
 
                 job_details.append({
                     "job_name": job_name,
@@ -205,6 +234,59 @@ class PRDiagnosisService:
         except Exception as e:
             logger.warning(f"Failed to get job details for run {run_id}: {e}")
             return {"check_name": check_name, "url": check_url, "failing_jobs": [], "error": str(e)}
+
+    async def _get_recent_merged_prs(self) -> list:
+        """获取最近合入的 PR（用于跨 PR 依赖分析）"""
+        try:
+            client = self._get_github_client()
+            url = f"/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/pulls"
+            params = {"state": "closed", "sort": "updated", "direction": "desc", "per_page": 30}
+            result = await client._request("GET", url, params=params)
+
+            prs = []
+            for pr in result:
+                if not pr.get("merged_at"):
+                    continue
+                prs.append({
+                    "number": pr.get("number"),
+                    "title": pr.get("title", ""),
+                    "labels": [l.get("name", "") for l in pr.get("labels", [])],
+                    "merged_at": pr.get("merged_at"),
+                    "user": pr.get("user", {}).get("login", ""),
+                })
+            logger.info(f"Got {len(prs)} recently merged PRs")
+            return prs[:15]
+        except Exception as e:
+            logger.warning(f"Failed to fetch recent merged PRs: {e}")
+            return []
+
+    async def _get_workflow_config(self) -> str:
+        """获取 CI 工作流配置（分析 ready/skip 标签逻辑）"""
+        try:
+            client = self._get_github_client()
+            url = f"/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/contents/.github/workflows"
+            result = await client._request("GET", url)
+
+            configs = []
+            for item in result[:15]:
+                name = item.get("name", "")
+                if not name.endswith((".yml", ".yaml")):
+                    continue
+                try:
+                    file_url = f"/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/contents/{item['path']}"
+                    file_result = await client._request("GET", file_url)
+                    content = base64.b64decode(file_result.get("content", "")).decode(
+                        "utf-8", errors="replace"
+                    )
+                    if any(kw in content.lower() for kw in ["ready", "skip", "selected-test", "run-selected", "label"]):
+                        configs.append(f"### {name}\n```yaml\n{content[:6000]}\n```")
+                except Exception:
+                    continue
+
+            return "\n\n".join(configs[:3])
+        except Exception as e:
+            logger.warning(f"Failed to fetch workflow config: {e}")
+            return ""
 
     def _extract_errors_from_logs(self, logs: str) -> str:
         """从 CI 日志中提取错误相关的行"""
@@ -225,7 +307,6 @@ class PRDiagnosisService:
             stripped = line.strip()
             if not stripped:
                 continue
-
             if any(p in stripped for p in error_patterns):
                 start = max(0, i - 2)
                 end = min(len(lines), i + 8)
@@ -238,10 +319,13 @@ class PRDiagnosisService:
         result = "\n".join(error_lines[:80])
         return result[:10000]
 
-    def _build_context(self, pr: dict, check_runs: list, failing_details: list) -> str:
-        """构建 LLM 上下文 — 包含 PR 信息、CI 结果、失败详情、标签分析"""
+    def _build_context(
+        self, pr: dict, check_runs: list, failing_details: list,
+        recent_prs: list, workflow_config: str
+    ) -> str:
+        """构建 LLM 上下文 — 包含 PR 信息、CI 结果、失败详情、跨 PR 数据、工作流配置"""
         lines = [
-            f"## PR #{pr.get('pr_number')} CI 失败诊断请求",
+            f"## PR #{pr.get('pr_number')} CI 失败深层次诊断请求",
             "",
             "### PR 基本信息",
             f"- 标题: {pr.get('title', 'N/A')}",
@@ -258,24 +342,16 @@ class PRDiagnosisService:
             lines.append(f"- 标签: {', '.join(labels)}")
             skip_labels = [l for l in labels if "skip" in l.lower()]
             if skip_labels:
-                lines.append(f"  ⚠️ 注意：PR 包含 skip 相关标签: {', '.join(skip_labels)}，"
-                             f"可能影响 CI 测试范围，需分析是否因此导致非预期测试运行或失败")
+                lines.append(f"  ⚠️ 包含 skip 相关标签: {', '.join(skip_labels)}")
         else:
             lines.append("- 标签: 无")
-
-        if pr.get("pipeline_stage"):
-            lines.append(f"- Pipeline 阶段: {pr.get('pipeline_stage')}")
-        if pr.get("review_status"):
-            lines.append(f"- Review 状态: {pr.get('review_status')}")
-
-        lines.append("")
 
         # CI check runs 汇总
         total = len(check_runs)
         passed = sum(1 for r in check_runs if r.get("conclusion") == "success")
         failed = sum(1 for r in check_runs if r.get("conclusion") == "failure")
         skipped = sum(1 for r in check_runs if r.get("conclusion") in ("skipped", "neutral"))
-        lines.append(f"### CI Check 汇总（共 {total} 个，✅ {passed} 通过 / ❌ {failed} 失败 / ⏭️ {skipped} 跳过）")
+        lines.append(f"\n### CI Check 汇总（共 {total} 个，✅ {passed} / ❌ {failed} / ⏭️ {skipped}）")
         for run in check_runs[:15]:
             conclusion = run.get("conclusion", "N/A")
             icon = {"success": "✅", "failure": "❌", "skipped": "⏭️", "neutral": "➖"}.get(conclusion, "❓")
@@ -287,30 +363,55 @@ class PRDiagnosisService:
             for detail in failing_details:
                 lines.append(f"\n#### {detail.get('check_name', 'N/A')}")
                 if detail.get("url"):
-                    lines.append(f"- Check URL: {detail.get('url')}")
-                if detail.get("error"):
-                    lines.append(f"- 获取详情失败: {detail.get('error')}")
-
+                    lines.append(f"- URL: {detail.get('url')}")
                 for job in detail.get("failing_jobs", []):
                     lines.append(f"\n**Job: {job.get('job_name', 'N/A')}**")
                     lines.append(f"- Runner: {job.get('runner_name', 'N/A')}")
                     if job.get("failed_steps"):
                         lines.append(f"- 失败步骤: {', '.join(job['failed_steps'])}")
                     if job.get("log_excerpt"):
-                        lines.append("- 关键日志摘录:")
+                        lines.append("- 关键日志:")
                         lines.append("```")
                         lines.append(job["log_excerpt"])
                         lines.append("```")
-        else:
-            lines.append("\n### 失败详情: 未获取到失败的 CI Job 信息")
 
+        # 跨 PR 数据
+        if recent_prs:
+            lines.append(f"\n### 最近合入的 PR（{len(recent_prs)} 个，用于跨 PR 依赖分析）")
+            for rp in recent_prs:
+                rp_labels = rp.get("labels", [])
+                has_ready = "ready" in rp_labels
+                has_skip = any("skip" in l.lower() for l in rp_labels)
+                label_str = f" 标签: {', '.join(rp_labels)}" if rp_labels else " 无标签"
+                ready_flag = ""
+                if not has_ready:
+                    ready_flag = " ⚠️ 无 ready 标签（CI 可能跳过测试）"
+                if has_skip:
+                    ready_flag += " ⚠️ 有 skip 标签"
+                lines.append(f"- #{rp['number']} {rp['title'][:60]}{label_str}{ready_flag}")
+
+        # CI 工作流配置
+        if workflow_config:
+            lines.append(f"\n### CI 工作流配置（分析 ready/skip 标签逻辑）")
+            lines.append(workflow_config)
+
+        # 诊断指令
         lines.append("")
-        lines.append("请根据以上信息，运用根因分析方法论进行诊断，重点关注：")
-        lines.append("1. 失败的测试是否与 PR 自身改动相关，还是 main 分支预存问题")
-        lines.append("2. PR 标签（特别是 skip 相关标签）是否影响了 CI 测试范围，导致非预期行为")
-        lines.append("3. 失败的根因链路：从错误现象 → 日志证据 → 根因定位")
-        lines.append("4. 是否存在跨 PR 依赖问题（如其他 PR 的变更影响了当前 PR 的 CI）")
-        lines.append("5. 给出明确的修复建议和优先级")
+        lines.append("请运用根因分析方法论进行深层次诊断，必须覆盖以下维度：")
+        lines.append("")
+        lines.append("1. **失败与 PR 的关联性**：失败的测试/步骤是否与当前 PR 的改动相关？PR 改了哪些文件？失败在哪个模块？")
+        lines.append("2. **跨 PR 依赖分析**：检查最近合入的 PR，特别是那些没有 ready 标签的 PR。")
+        lines.append("   - 没有 ready 标签的 PR 合入时 CI 测试被跳过 → 坏代码可能直通主干")
+        lines.append("   - 当前 PR 带 ready 标签 → CI 拉到被污染的主干 → 跑到坏测试失败")
+        lines.append("3. **工作流配置分析**：分析 CI 工作流 YAML 中的 ready/skip 标签逻辑。")
+        lines.append("   - ready 是 opt-in（默认跳过测试）还是 opt-out（默认跑测试）？")
+        lines.append("   - 分支保护是否允许 skipped check 满足要求？")
+        lines.append("4. **main 分支预存问题**：失败是否在 main 分支上同样存在？")
+        lines.append("5. **具体修复建议**：给出代码级修复建议和流水线门禁改进建议。")
+        lines.append("")
+        lines.append("你可以使用 curl 命令访问 GitHub API 获取额外信息（环境变量 GITHUB_TOKEN 可用）：")
+        lines.append("- curl -s -H 'Authorization: token $GITHUB_TOKEN' https://api.github.com/repos/vllm-project/vllm-ascend/...")
+        lines.append("- 可以获取测试文件内容、PR diff、main 分支 CI 状态等")
 
         return "\n".join(lines)
 
@@ -323,7 +424,7 @@ class PRDiagnosisService:
                 logger.info("Using auto-bug-fixer skill for PR diagnosis")
                 return skill.content
         except Exception as e:
-            logger.warning(f"Failed to load auto-bug-fixer skill, using fallback: {e}")
+            logger.warning(f"Failed to load auto-bug-fixer skill: {e}")
         return FALLBACK_SYSTEM_PROMPT
 
     async def _get_llm_config(self):
