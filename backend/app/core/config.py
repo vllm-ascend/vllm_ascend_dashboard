@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # CORS 配置
     # 生产环境应明确指定允许的域名，不要使用 "*"
     CORS_ORIGINS: list[str] = [
+        "http://123.57.0.174",
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:5173",
