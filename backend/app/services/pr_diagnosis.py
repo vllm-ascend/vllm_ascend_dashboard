@@ -1,4 +1,4 @@
-"""PR 问题诊断服务 — 基于LLM分析PR状态、CI结果、Review情况，给出诊断报告"""
+"""PR 问题诊断服务 — 从 GitHub API 获取 CI 失败详情，使用 auto-bug-fixer 进行根因分析"""
 import asyncio
 import json
 import logging
@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models import CIResult, CIJob, PullRequest
+from app.models import PullRequest
 from app.models.daily_summary import LLMProviderConfig
 from app.services.llm_client import LLMClient
 
@@ -32,48 +32,40 @@ FALLBACK_SYSTEM_PROMPT = """你是一名资深的 vLLM Ascend 社区代码评审
 class PRDiagnosisService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        self._github_client = None
+
+    def _get_github_client(self):
+        if self._github_client is None:
+            from app.services.github_client import GitHubClient
+            self._github_client = GitHubClient(token=settings.GITHUB_TOKEN)
+        return self._github_client
 
     async def diagnose(self, pr_number: int) -> dict:
-        """诊断指定 PR，返回诊断报告"""
-        # 1. Fetch PR from DB
-        stmt = select(PullRequest).where(
-            PullRequest.pr_number == pr_number,
-            PullRequest.owner == settings.GITHUB_OWNER,
-            PullRequest.repo == settings.GITHUB_REPO,
-        )
-        result = await self.db.execute(stmt)
-        pr = result.scalar_one_or_none()
-        if not pr:
-            raise ValueError(f"PR #{pr_number} not found in database")
+        """诊断指定 PR 的 CI 失败，返回诊断报告"""
+        # 1. 获取 PR 信息（DB 优先，GitHub API 降级）
+        pr_info = await self._get_pr_info(pr_number)
+        head_sha = pr_info.get("head_sha")
+        if not head_sha:
+            raise ValueError(f"PR #{pr_number} 无法获取 head_sha")
 
-        # 2. Fetch CI results by head_sha
-        ci_results = []
-        ci_jobs = []
-        if pr.head_sha:
-            ci_stmt = select(CIResult).where(
-                CIResult.head_sha == pr.head_sha,
-                CIResult.status == "completed",
-            )
-            ci_result = await self.db.execute(ci_stmt)
-            ci_results = ci_result.scalars().all()
+        # 2. 从 GitHub API 获取 CI check runs
+        check_runs = await self._get_check_runs(head_sha)
+        failing_runs = [r for r in check_runs if r.get("conclusion") == "failure"]
 
-            if ci_results:
-                run_ids = [r.run_id for r in ci_results]
-                job_stmt = select(CIJob).where(CIJob.run_id.in_(run_ids))
-                job_result = await self.db.execute(job_stmt)
-                ci_jobs = job_result.scalars().all()
+        # 3. 获取失败 Job 的详细日志
+        failing_details = []
+        for run in failing_runs[:3]:
+            detail = await self._get_failing_job_details(run)
+            failing_details.append(detail)
 
-        # 3. Build context
-        context = self._build_context(pr, ci_results, ci_jobs)
-        context += "\n\n注意：这是一次 PR 诊断请求。请基于上述 PR 信息（包括 CI 结果、Review 状态、Pipeline 阶段），运用根因分析方法论进行诊断。如果 CI 通过且 Review 正常，应正面肯定 PR 的健康状态；如果存在 CI 失败或 Review 问题，请按照根因分析方法进行深入诊断。"
+        # 4. 构建上下文
+        context = self._build_context(pr_info, check_runs, failing_details)
 
-        # 4. Get LLM config
+        # 5. 获取 LLM 配置和系统提示词
         llm_config = await self._get_llm_config()
-
-        # 5. Get system prompt (auto-bug-fixer skill)
         system_prompt = self._get_system_prompt()
 
-        # 6. Call LLM (with 120s timeout)
+        # 6. 调用 LLM（120s 超时）
         client = LLMClient()
         start_time = datetime.now()
         llm_result = await asyncio.wait_for(
@@ -85,7 +77,7 @@ class PRDiagnosisService:
                 system_prompt=system_prompt,
                 user_prompt=context,
                 temperature=0.3,
-                max_tokens=4096,
+                max_tokens=8192,
             ),
             timeout=120,
         )
@@ -100,90 +92,225 @@ class PRDiagnosisService:
             "tokens": llm_result.prompt_tokens + llm_result.completion_tokens,
         }
 
-    def _build_context(self, pr, ci_results, ci_jobs) -> str:
-        """构建 LLM 上下文"""
+    async def _get_pr_info(self, pr_number: int) -> dict:
+        """获取 PR 信息：DB 优先，GitHub API 降级"""
+        stmt = select(PullRequest).where(
+            PullRequest.pr_number == pr_number,
+            PullRequest.owner == settings.GITHUB_OWNER,
+            PullRequest.repo == settings.GITHUB_REPO,
+        )
+        result = await self.db.execute(stmt)
+        pr = result.scalar_one_or_none()
+
+        if pr:
+            return {
+                "pr_number": pr.pr_number,
+                "title": pr.title,
+                "author": pr.author,
+                "state": pr.state,
+                "head_sha": pr.head_sha,
+                "head_branch": pr.head_branch,
+                "base_branch": pr.base_branch,
+                "labels": pr.labels or [],
+                "additions": pr.additions,
+                "deletions": pr.deletions,
+                "changed_files": pr.changed_files,
+                "html_url": pr.html_url,
+                "is_draft": pr.is_draft,
+                "pipeline_stage": pr.pipeline_stage,
+                "review_status": pr.review_status,
+                "ci_status": pr.ci_status,
+            }
+
+        logger.info(f"PR #{pr_number} not in DB, fetching from GitHub API")
+        client = self._get_github_client()
+        pr_data = await client.get_pr_detail(settings.GITHUB_OWNER, settings.GITHUB_REPO, pr_number)
+        return {
+            "pr_number": pr_number,
+            "title": pr_data.get("title", ""),
+            "author": pr_data.get("user", {}).get("login", ""),
+            "state": pr_data.get("state", ""),
+            "head_sha": pr_data.get("head", {}).get("sha", ""),
+            "head_branch": pr_data.get("head", {}).get("ref", ""),
+            "base_branch": pr_data.get("base", {}).get("ref", ""),
+            "labels": [l.get("name", "") for l in pr_data.get("labels", [])],
+            "additions": pr_data.get("additions", 0),
+            "deletions": pr_data.get("deletions", 0),
+            "changed_files": pr_data.get("changed_files", 0),
+            "html_url": pr_data.get("html_url", ""),
+            "is_draft": pr_data.get("draft", False),
+        }
+
+    async def _get_check_runs(self, head_sha: str) -> list:
+        """从 GitHub API 获取 CI check runs"""
+        try:
+            client = self._get_github_client()
+            runs = await client.get_check_runs_for_sha(
+                settings.GITHUB_OWNER, settings.GITHUB_REPO, head_sha
+            )
+            logger.info(f"Got {len(runs)} check runs for SHA {head_sha[:8]}")
+            return runs
+        except Exception as e:
+            logger.warning(f"Failed to fetch check runs from GitHub API: {e}")
+            return []
+
+    async def _get_failing_job_details(self, check_run: dict) -> dict:
+        """获取失败 check run 的 Job 详情和日志"""
+        run_id = check_run.get("run_id")
+        check_name = check_run.get("name", "N/A")
+        check_url = check_run.get("html_url", "")
+
+        if not run_id:
+            return {"check_name": check_name, "url": check_url, "failing_jobs": []}
+
+        try:
+            client = self._get_github_client()
+            jobs = await client.get_job_list(run_id)
+            failing_jobs = [j for j in jobs if j.get("conclusion") == "failure"]
+
+            job_details = []
+            for job in failing_jobs[:3]:
+                job_id = job.get("id")
+                job_name = job.get("name", "N/A")
+                runner_name = job.get("runner_name", "N/A")
+
+                failed_steps = [
+                    s.get("name", "N/A")
+                    for s in job.get("steps", [])
+                    if s.get("conclusion") == "failure"
+                ]
+
+                log_excerpt = ""
+                if job_id:
+                    try:
+                        logs = await client.get_job_logs(job_id)
+                        log_excerpt = self._extract_errors_from_logs(logs)
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch logs for job {job_id}: {e}")
+                        log_excerpt = ""
+
+                job_details.append({
+                    "job_name": job_name,
+                    "runner_name": runner_name,
+                    "failed_steps": failed_steps,
+                    "log_excerpt": log_excerpt,
+                })
+
+            return {
+                "check_name": check_name,
+                "url": check_url,
+                "conclusion": check_run.get("conclusion", ""),
+                "failing_jobs": job_details,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get job details for run {run_id}: {e}")
+            return {"check_name": check_name, "url": check_url, "failing_jobs": [], "error": str(e)}
+
+    def _extract_errors_from_logs(self, logs: str) -> str:
+        """从 CI 日志中提取错误相关的行"""
+        if not logs:
+            return ""
+
+        lines = logs.split("\n")
+        error_patterns = [
+            "FAILED", "##[error]", "Traceback", "AttributeError", "AssertionError",
+            "TypeError", "ValueError", "KeyError", "exit code", "short test summary",
+            "failed,", "FAILED TEST LOGS", "Process completed",
+            "Executing the custom container",
+        ]
+        error_lines = []
+        seen = set()
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if any(p in stripped for p in error_patterns):
+                start = max(0, i - 2)
+                end = min(len(lines), i + 8)
+                for j in range(start, end):
+                    l = lines[j].strip()
+                    if l and l not in seen:
+                        seen.add(l)
+                        error_lines.append(l[:500])
+
+        result = "\n".join(error_lines[:80])
+        return result[:10000]
+
+    def _build_context(self, pr: dict, check_runs: list, failing_details: list) -> str:
+        """构建 LLM 上下文 — 包含 PR 信息、CI 结果、失败详情、标签分析"""
         lines = [
-            f"## PR #{pr.pr_number} 诊断请求",
-            f"",
-            f"### PR 基本信息",
-            f"- 标题: {pr.title}",
-            f"- 作者: {pr.author}",
-            f"- 状态: {pr.state}" + (" (Draft)" if pr.is_draft else ""),
-            f"- 分支: {pr.head_branch or 'N/A'} → {pr.base_branch or 'N/A'}",
-            f"- 代码变更: +{pr.additions} -{pr.deletions} ({pr.changed_files} 文件)",
-            f"- Pipeline 阶段: {pr.pipeline_stage or 'N/A'}",
-            f"- Review 状态: {pr.review_status or 'N/A'}",
-            f"- CI 状态: {pr.ci_status or 'N/A'}",
-            f"- 创建时间: {pr.created_at}",
+            f"## PR #{pr.get('pr_number')} CI 失败诊断请求",
+            "",
+            "### PR 基本信息",
+            f"- 标题: {pr.get('title', 'N/A')}",
+            f"- 作者: {pr.get('author', 'N/A')}",
+            f"- 状态: {pr.get('state', 'N/A')}" + (" (Draft)" if pr.get('is_draft') else ""),
+            f"- 分支: {pr.get('head_branch', 'N/A')} → {pr.get('base_branch', 'N/A')}",
+            f"- 代码变更: +{pr.get('additions', 0)} -{pr.get('deletions', 0)} ({pr.get('changed_files', 0)} 文件)",
+            f"- Head SHA: {pr.get('head_sha', 'N/A')[:12]}",
+            f"- PR URL: {pr.get('html_url', 'N/A')}",
         ]
 
-        if pr.merged_at:
-            lines.append(f"- 合入时间: {pr.merged_at}")
-        if pr.closed_at:
-            lines.append(f"- 关闭时间: {pr.closed_at}")
-
-        # Reviewers
-        if pr.reviewers:
-            lines.append(f"\n### Reviewers ({len(pr.reviewers)})")
-            for r in pr.reviewers:
-                lines.append(f"- {r.get('login', 'N/A')}: {r.get('state', 'N/A')}")
-
-        # PR data JSON (reviews with comments)
-        if pr.data:
-            reviews = pr.data.get("reviews", [])
-            if reviews:
-                lines.append(f"\n### Review 详情 ({len(reviews)})")
-                for rev in reviews[:10]:  # limit to 10 reviews
-                    user = rev.get("user", {}).get("login", "N/A")
-                    state = rev.get("state", "N/A")
-                    body = rev.get("body", "")[:200]
-                    lines.append(f"- [{state}] {user}: {body}" if body else f"- [{state}] {user}")
-
-        # CI Results
-        if ci_results:
-            lines.append(f"\n### CI 检查结果 ({len(ci_results)})")
-            for ci in ci_results:
-                lines.append(f"- {ci.workflow_name} #{ci.run_number}: {ci.conclusion or ci.status} (耗时 {ci.duration_seconds or 0}s, 硬件: {ci.hardware or 'N/A'})")
-
-            # CI Jobs with failed steps
-            failed_jobs = [j for j in ci_jobs if j.conclusion == "failure"]
-            if failed_jobs:
-                lines.append(f"\n### 失败的 CI Jobs ({len(failed_jobs)})")
-                for job in failed_jobs[:5]:
-                    lines.append(f"- {job.job_name}: {job.conclusion}")
-                    if job.steps_data:
-                        try:
-                            steps = json.loads(job.steps_data) if isinstance(job.steps_data, str) else job.steps_data
-                            failed_steps = [s for s in steps if s.get("conclusion") == "failure"]
-                            for s in failed_steps[:3]:
-                                lines.append(f"  - 失败步骤: {s.get('name', 'N/A')}")
-                        except (json.JSONDecodeError, TypeError):
-                            pass
+        labels = pr.get("labels", [])
+        if labels:
+            lines.append(f"- 标签: {', '.join(labels)}")
+            skip_labels = [l for l in labels if "skip" in l.lower()]
+            if skip_labels:
+                lines.append(f"  ⚠️ 注意：PR 包含 skip 相关标签: {', '.join(skip_labels)}，"
+                             f"可能影响 CI 测试范围，需分析是否因此导致非预期测试运行或失败")
         else:
-            lines.append(f"\n### CI 检查结果: 无关联的 CI 运行记录")
+            lines.append("- 标签: 无")
 
-        # Computed metrics (derived from timestamps, mirroring PullRequestResponse schema)
-        def _hours(end, start):
-            if end and start:
-                try:
-                    return round((end - start).total_seconds() / 3600, 1)
-                except TypeError:
-                    return None
-            return None
+        if pr.get("pipeline_stage"):
+            lines.append(f"- Pipeline 阶段: {pr.get('pipeline_stage')}")
+        if pr.get("review_status"):
+            lines.append(f"- Review 状态: {pr.get('review_status')}")
 
-        ttr = _hours(pr.first_review_at, pr.created_at)
-        ttm = _hours(pr.merged_at, pr.created_at)
-        cid = _hours(pr.ci_completed_at, pr.ci_started_at)
+        lines.append("")
 
-        lines.append(f"\n### 时间指标")
-        if ttr is not None:
-            lines.append(f"- 首次 Review: {ttr:.1f}h")
-        if ttm is not None:
-            lines.append(f"- 合入耗时: {ttm:.1f}h")
-        if cid is not None:
-            lines.append(f"- CI 耗时: {cid:.1f}h")
+        # CI check runs 汇总
+        total = len(check_runs)
+        passed = sum(1 for r in check_runs if r.get("conclusion") == "success")
+        failed = sum(1 for r in check_runs if r.get("conclusion") == "failure")
+        skipped = sum(1 for r in check_runs if r.get("conclusion") in ("skipped", "neutral"))
+        lines.append(f"### CI Check 汇总（共 {total} 个，✅ {passed} 通过 / ❌ {failed} 失败 / ⏭️ {skipped} 跳过）")
+        for run in check_runs[:15]:
+            conclusion = run.get("conclusion", "N/A")
+            icon = {"success": "✅", "failure": "❌", "skipped": "⏭️", "neutral": "➖"}.get(conclusion, "❓")
+            lines.append(f"- {icon} {run.get('name', 'N/A')}: {conclusion}")
 
-        lines.append(f"\n请根据以上信息生成 PR 诊断报告。")
+        # 失败详情
+        if failing_details:
+            lines.append(f"\n### 失败详情（{len(failing_details)} 个失败 Check）")
+            for detail in failing_details:
+                lines.append(f"\n#### {detail.get('check_name', 'N/A')}")
+                if detail.get("url"):
+                    lines.append(f"- Check URL: {detail.get('url')}")
+                if detail.get("error"):
+                    lines.append(f"- 获取详情失败: {detail.get('error')}")
+
+                for job in detail.get("failing_jobs", []):
+                    lines.append(f"\n**Job: {job.get('job_name', 'N/A')}**")
+                    lines.append(f"- Runner: {job.get('runner_name', 'N/A')}")
+                    if job.get("failed_steps"):
+                        lines.append(f"- 失败步骤: {', '.join(job['failed_steps'])}")
+                    if job.get("log_excerpt"):
+                        lines.append("- 关键日志摘录:")
+                        lines.append("```")
+                        lines.append(job["log_excerpt"])
+                        lines.append("```")
+        else:
+            lines.append("\n### 失败详情: 未获取到失败的 CI Job 信息")
+
+        lines.append("")
+        lines.append("请根据以上信息，运用根因分析方法论进行诊断，重点关注：")
+        lines.append("1. 失败的测试是否与 PR 自身改动相关，还是 main 分支预存问题")
+        lines.append("2. PR 标签（特别是 skip 相关标签）是否影响了 CI 测试范围，导致非预期行为")
+        lines.append("3. 失败的根因链路：从错误现象 → 日志证据 → 根因定位")
+        lines.append("4. 是否存在跨 PR 依赖问题（如其他 PR 的变更影响了当前 PR 的 CI）")
+        lines.append("5. 给出明确的修复建议和优先级")
 
         return "\n".join(lines)
 
