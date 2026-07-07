@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Descriptions, Tag, Spin, Typography, Space, Button, Row, Col, Statistic, Timeline, Badge, Avatar } from 'antd'
-import { ArrowLeftOutlined, GithubOutlined, CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
-import { usePRDetail } from '../hooks/usePRPipeline'
+import { Card, Descriptions, Tag, Spin, Typography, Space, Button, Row, Col, Statistic, Timeline, Badge, Avatar, Alert } from 'antd'
+import { ArrowLeftOutlined, GithubOutlined, CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { usePRDetail, usePRDiagnosis } from '../hooks/usePRPipeline'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import dayjs from 'dayjs'
 
 const { Title, Text } = Typography
@@ -103,6 +106,9 @@ const PRDetail = () => {
   const navigate = useNavigate()
   const parsedNumber = prNumber ? Number(prNumber) : NaN
   const { data: pr, isLoading, error } = usePRDetail(parsedNumber)
+
+  const [diagnosisResult, setDiagnosisResult] = useState<string | null>(null)
+  const diagnosisMutation = usePRDiagnosis()
 
   if (isNaN(parsedNumber)) {
     return (
@@ -305,6 +311,22 @@ const PRDetail = () => {
         </Space>
       </div>
 
+      <div style={{ marginBottom: 24 }}>
+        <Button
+          type="primary"
+          icon={<ThunderboltOutlined />}
+          loading={diagnosisMutation.isPending}
+          onClick={() => {
+            diagnosisMutation.mutate(parsedNumber, {
+              onSuccess: (data) => setDiagnosisResult(data.report),
+              onError: () => setDiagnosisResult(null),
+            })
+          }}
+        >
+          AI 诊断
+        </Button>
+      </div>
+
       <Card style={{ marginBottom: 24 }}>
         <Descriptions column={2} bordered>
           <Descriptions.Item label="作者">
@@ -422,6 +444,43 @@ const PRDetail = () => {
               </Space>
             ))}
           </Space>
+        </Card>
+      )}
+
+      {diagnosisMutation.isError && (
+        <Alert
+          message="诊断失败"
+          description={String(diagnosisMutation.error?.message || '未知错误')}
+          type="error"
+          closable
+          style={{ marginTop: 16 }}
+        />
+      )}
+
+      {diagnosisResult && (
+        <Card
+          title="🤖 AI 诊断报告"
+          style={{ marginTop: 16 }}
+          extra={
+            diagnosisMutation.data && (
+              <span style={{ fontSize: 12, color: '#94a3b8' }}>
+                {diagnosisMutation.data.model} · {diagnosisMutation.data.duration_seconds}s · {diagnosisMutation.data.tokens} tokens
+              </span>
+            )
+          }
+        >
+          <div style={{
+            maxHeight: 600,
+            overflowY: 'auto',
+            padding: 16,
+            background: '#f8fafc',
+            borderRadius: 8,
+            border: '1px solid #e2e8f0'
+          }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {diagnosisResult}
+            </ReactMarkdown>
+          </div>
         </Card>
       )}
     </div>

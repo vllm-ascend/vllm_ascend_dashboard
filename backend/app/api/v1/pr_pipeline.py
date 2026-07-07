@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentAdminUser, CurrentUser, DbSession
 from app.core.config import settings
@@ -188,3 +188,25 @@ async def get_pr_detail(
     if not result:
         raise HTTPException(status_code=404, detail=f"PR #{pr_number} not found")
     return result
+
+
+@router.post("/{pr_number}/diagnose")
+async def diagnose_pr(
+    pr_number: int,
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """AI 诊断指定 PR"""
+    try:
+        from app.services.pr_diagnosis import PRDiagnosisService
+        diag_service = PRDiagnosisService(db)
+        result = await diag_service.diagnose(pr_number)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"PR diagnosis failed for #{pr_number}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"诊断失败: {str(e)}"
+        )
