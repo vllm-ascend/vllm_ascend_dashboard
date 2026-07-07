@@ -1,4 +1,5 @@
 """PR 问题诊断服务 — 基于LLM分析PR状态、CI结果、Review情况，给出诊断报告"""
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -68,18 +69,21 @@ class PRDiagnosisService:
         # 4. Get LLM config
         llm_config = await self._get_llm_config()
 
-        # 5. Call LLM
+        # 5. Call LLM (with 120s timeout)
         client = LLMClient()
         start_time = datetime.now()
-        llm_result = await client.generate(
-            provider=llm_config.provider,
-            model=llm_config.default_model,
-            api_key=llm_config.api_key,
-            api_base=llm_config.api_base_url,
-            system_prompt=SYSTEM_PROMPT,
-            user_prompt=context,
-            temperature=0.3,
-            max_tokens=4096,
+        llm_result = await asyncio.wait_for(
+            client.generate(
+                provider=llm_config.provider,
+                model=llm_config.default_model,
+                api_key=llm_config.api_key,
+                api_base=llm_config.api_base_url,
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=context,
+                temperature=0.3,
+                max_tokens=4096,
+            ),
+            timeout=120,
         )
         duration = (datetime.now() - start_time).total_seconds()
 

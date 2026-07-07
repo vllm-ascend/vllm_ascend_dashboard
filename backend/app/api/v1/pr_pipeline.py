@@ -208,5 +208,5 @@ async def diagnose_pr(
         logger.error(f"PR diagnosis failed for #{pr_number}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"诊断失败: {str(e)}"
+            detail="诊断失败，请稍后重试或检查 LLM 配置"
         )
