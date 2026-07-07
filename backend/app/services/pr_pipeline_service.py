@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import case, desc, func, select
+from sqlalchemy import case, desc, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Unicode
 
@@ -322,8 +322,9 @@ class PRPipelineService:
                 PullRequest.author, PullRequest.author_avatar_url, PullRequest.author_avatar_base64, PullRequest.author_email
             )
 
-            # COUNT query for total
-            count_stmt = base_stmt.with_only_columns(func.count()).order_by(None)
+            # COUNT query for total (wrap GROUP BY in subquery to count groups)
+            count_subq = base_stmt.with_only_columns(literal_column("1")).order_by(None).subquery()
+            count_stmt = select(func.count()).select_from(count_subq)
             author_total = (await db.execute(count_stmt)).scalar() or 0
 
             # Data query with aggregates + sort + offset + limit
