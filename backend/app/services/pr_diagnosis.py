@@ -64,17 +64,11 @@ class PRDiagnosisService:
         llm_config = await self._get_llm_config()
         system_prompt = self._get_system_prompt()
 
-        # 8. 调用 LLM — 优先 agentic 模式，降级到直接调用
+        # 8. 调用 LLM — direct 模式（agentic 模式在容器中不稳定，暂跳过）
         start_time = datetime.now()
-        try:
-            result_content, model_used = await self._call_agentic_llm(
-                context, system_prompt, llm_config
-            )
-        except Exception as e:
-            logger.warning(f"Agentic LLM failed, falling back to direct: {e}")
-            result_content, model_used = await self._call_direct_llm(
-                context, system_prompt, llm_config
-            )
+        result_content, model_used = await self._call_direct_llm(
+            context, system_prompt, llm_config
+        )
         duration = (datetime.now() - start_time).total_seconds()
 
         return {
@@ -443,9 +437,7 @@ class PRDiagnosisService:
         lines.append("4. **main 分支预存问题**：失败是否在 main 分支上同样存在？")
         lines.append("5. **具体修复建议**：给出代码级修复建议和流水线门禁改进建议。")
         lines.append("")
-        lines.append("你可以使用 curl 命令访问 GitHub API 获取额外信息（环境变量 GITHUB_TOKEN 可用）：")
-        lines.append("- curl -s -H 'Authorization: token $GITHUB_TOKEN' https://api.github.com/repos/vllm-project/vllm-ascend/...")
-        lines.append("- 可以获取测试文件内容、PR diff、main 分支 CI 状态等")
+        lines.append("注意：你当前处于单次调用模式，无法调用工具。请基于以上提供的信息直接进行分析，不要尝试使用 curl 或其他工具。")
 
         return "\n".join(lines)
 
