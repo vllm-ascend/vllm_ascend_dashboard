@@ -785,10 +785,10 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
   const [reviewerPage, setReviewerPage] = useState(1)
   const pageSize = 20
 
-  const { data: authorData, isLoading: authorLoading } = hooks.usePRPipelineContributors(
+  const { data: authorData, isLoading: authorLoading, isFetching: authorFetching } = hooks.usePRPipelineContributors(
     period, 'author', (authorPage - 1) * pageSize, pageSize, authorCompany,
   )
-  const { data: reviewerData, isLoading: reviewerLoading } = hooks.usePRPipelineContributors(
+  const { data: reviewerData, isLoading: reviewerLoading, isFetching: reviewerFetching } = hooks.usePRPipelineContributors(
     period, 'reviewer', (reviewerPage - 1) * pageSize, pageSize, reviewerCompany,
   )
 
@@ -905,7 +905,7 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
         <Table
           columns={authorColumns}
           dataSource={authors}
-          loading={authorLoading}
+          loading={authorFetching}
           rowKey="username"
           pagination={{
             current: authorPage,
@@ -937,7 +937,7 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
         <Table
           columns={reviewerColumns}
           dataSource={reviewers}
-          loading={reviewerLoading}
+          loading={reviewerFetching}
           rowKey="username"
           pagination={{
             current: reviewerPage,
