@@ -97,3 +97,9 @@ export const usePRPipelineHistoricalSync = () => {
     },
   })
 }
+
+export function usePRDiagnosis() {
+  return useMutation({
+    mutationFn: (prNumber: number) => api.diagnosePR(prNumber),
+  })
+}

@@ -1,4 +1,4 @@
-import api from './api'
+import api, { longTimeoutApiClient } from './api'
 
 export interface PullRequestResponse {
   id: number
@@ -234,4 +234,18 @@ export const historicalSyncPRPipeline = async (
 export const getPRDetail = async (prNumber: number): Promise<PullRequestResponse> => {
   const response = await api.get<PullRequestResponse>(`/pr-pipeline/${prNumber}`)
   return response.data
+}
+
+export interface PRDiagnosisResult {
+  pr_number: number
+  report: string
+  model: string
+  provider: string
+  duration_seconds: number
+  tokens: number
+}
+
+export async function diagnosePR(prNumber: number): Promise<PRDiagnosisResult> {
+  const { data } = await longTimeoutApiClient.post(`/pr-pipeline/${prNumber}/diagnose`)
+  return data
 }
