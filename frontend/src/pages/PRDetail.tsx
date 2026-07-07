@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Card, Descriptions, Tag, Spin, Typography, Space, Button, Row, Col, Statistic, Timeline, Badge, Avatar, Alert } from 'antd'
 import { ArrowLeftOutlined, GithubOutlined, CheckCircleOutlined, ClockCircleOutlined, ExclamationCircleOutlined, ThunderboltOutlined } from '@ant-design/icons'
@@ -109,6 +109,10 @@ const PRDetail = () => {
 
   const [diagnosisResult, setDiagnosisResult] = useState<string | null>(null)
   const diagnosisMutation = usePRDiagnosis()
+
+  useEffect(() => {
+    setDiagnosisResult(null)
+  }, [parsedNumber])
 
   if (isNaN(parsedNumber)) {
     return (
@@ -317,6 +321,7 @@ const PRDetail = () => {
           icon={<ThunderboltOutlined />}
           loading={diagnosisMutation.isPending}
           onClick={() => {
+            setDiagnosisResult(null)
             diagnosisMutation.mutate(parsedNumber, {
               onSuccess: (data) => setDiagnosisResult(data.report),
               onError: () => setDiagnosisResult(null),
