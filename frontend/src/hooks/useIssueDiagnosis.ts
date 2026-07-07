@@ -3,17 +3,16 @@ import { message } from 'antd'
 import {
   IssueDiagnosisRequest,
   CIJobOption,
-  CommitOption,
   getFailedCIJobs,
-  getRecentCommits,
   streamDiagnosis,
 } from '../services/issueDiagnosis'
+import { diagnosePR } from '../services/prPipeline'
 import type { DiagnosisSummary } from '../components/StreamMarkdownRenderer'
 
 export function useIssueDiagnosis() {
-  const [dataSourceType, setDataSourceType] = useState<string>('ci_job')
+  const [dataSourceType, setDataSourceType] = useState<string>('pr_pipeline')
+  const [prNumber, setPrNumber] = useState<number | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null)
-  const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(null)
   const [userPrompt, setUserPrompt] = useState('')
   const [logContent, setLogContent] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -23,9 +22,7 @@ export function useIssueDiagnosis() {
   const [error, setError] = useState<string | null>(null)
 
   const [ciJobOptions, setCiJobOptions] = useState<CIJobOption[]>([])
-  const [commitOptions, setCommitOptions] = useState<CommitOption[]>([])
   const [loadingJobs, setLoadingJobs] = useState(false)
-  const [loadingCommits, setLoadingCommits] = useState(false)
 
   const loadCIJobs = useCallback(async () => {
     setLoadingJobs(true)
@@ -39,37 +36,32 @@ export function useIssueDiagnosis() {
     }
   }, [])
 
-  const loadCommits = useCallback(async () => {
-    setLoadingCommits(true)
-    try {
-      const commits = await getRecentCommits(7)
-      setCommitOptions(commits)
-    } catch {
-      message.error('获取Commit列表失败')
-    } finally {
-      setLoadingCommits(false)
-    }
-  }, [])
-
   useEffect(() => {
     if (dataSourceType === 'ci_job' && ciJobOptions.length === 0) loadCIJobs()
-    if (dataSourceType === 'commit' && commitOptions.length === 0) loadCommits()
-  }, [dataSourceType, ciJobOptions.length, commitOptions.length, loadCIJobs, loadCommits])
+  }, [dataSourceType, ciJobOptions.length, loadCIJobs])
 
   const handleDataSourceTypeChange = useCallback((type: string) => {
     setDataSourceType(type)
     setSelectedJobId(null)
-    setSelectedCommitSha(null)
+    setPrNumber(null)
   }, [])
 
   const handleStartDiagnosis = useCallback(async () => {
-    const hasPromptOrLog = !!userPrompt || !!logContent
-    const hasDataSource = (dataSourceType === 'ci_job' && selectedJobId) ||
-      (dataSourceType === 'commit' && selectedCommitSha)
-
-    if (!hasPromptOrLog && !hasDataSource) {
-      message.warning('请选择数据源或输入提示词/日志内容')
-      return
+    if (dataSourceType === 'pr_pipeline') {
+      if (!prNumber) {
+        message.warning('请输入 PR 编号')
+        return
+      }
+    } else if (dataSourceType === 'ci_job') {
+      if (!selectedJobId && !userPrompt && !logContent) {
+        message.warning('请选择 CI Job 或输入提示词/日志内容')
+        return
+      }
+    } else {
+      if (!userPrompt && !logContent) {
+        message.warning('请输入提示词或日志内容')
+        return
+      }
     }
 
     setIsStreaming(true)
@@ -78,18 +70,34 @@ export function useIssueDiagnosis() {
     setSummary(null)
     setError(null)
 
-    const effectiveDataSourceType = hasDataSource ? dataSourceType : 'manual'
+    if (dataSourceType === 'pr_pipeline' && prNumber) {
+      try {
+        const result = await diagnosePR(prNumber)
+        setStreamContent(result.report)
+        setMeta({ provider: result.provider, model: result.model })
+        setSummary({
+          total_content_length: result.report.length,
+          duration_seconds: result.duration_seconds,
+          chunk_count: 1,
+        })
+      } catch (e: any) {
+        const errBody = e?.response?.data?.detail
+        setError(errBody || e.message || 'PR 诊断请求失败')
+      } finally {
+        setIsStreaming(false)
+      }
+      return
+    }
+
+    const hasDataSource = dataSourceType === 'ci_job' && selectedJobId
+    const effectiveDataSourceType = hasDataSource ? 'ci_job' : 'manual'
 
     const request: IssueDiagnosisRequest = {
-      data_source_type: effectiveDataSourceType as 'ci_job' | 'commit' | 'manual',
+      data_source_type: effectiveDataSourceType as 'ci_job' | 'manual',
     }
 
     if (dataSourceType === 'ci_job' && selectedJobId) {
       request.job_id = selectedJobId
-    } else if (dataSourceType === 'commit' && selectedCommitSha) {
-      const selectedCommit = commitOptions.find(c => c.sha === selectedCommitSha)
-      if (selectedCommit?.run_id) request.run_id = selectedCommit.run_id
-      request.commit_sha = selectedCommitSha
     }
 
     let prompt = userPrompt
@@ -113,7 +121,7 @@ export function useIssueDiagnosis() {
     } finally {
       setIsStreaming(false)
     }
-  }, [dataSourceType, selectedJobId, selectedCommitSha, userPrompt, logContent, commitOptions])
+  }, [dataSourceType, prNumber, selectedJobId, userPrompt, logContent])
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(streamContent)
@@ -153,8 +161,8 @@ export function useIssueDiagnosis() {
 
   return {
     dataSourceType, setDataSourceType,
+    prNumber, setPrNumber,
     selectedJobId, setSelectedJobId,
-    selectedCommitSha, setSelectedCommitSha,
     userPrompt, setUserPrompt,
     logContent, setLogContent,
     isStreaming,
@@ -164,9 +172,7 @@ export function useIssueDiagnosis() {
     error,
     clearError: () => setError(null),
     ciJobOptions,
-    commitOptions,
     loadingJobs,
-    loadingCommits,
     handleDataSourceTypeChange,
     handleStartDiagnosis,
     handleCopy,
