@@ -13,7 +13,7 @@ from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """你是一名资深的 vLLM Ascend 社区代码评审专家和 CI/CD 诊断工程师。
+FALLBACK_SYSTEM_PROMPT = """你是一名资深的 vLLM Ascend 社区代码评审专家和 CI/CD 诊断工程师。
 用户会提供一个 PR 的详细信息（包括标题、作者、状态、Review 情况、CI 检查结果等），
 请根据这些信息生成一份 PR 诊断报告。
 
@@ -65,11 +65,15 @@ class PRDiagnosisService:
 
         # 3. Build context
         context = self._build_context(pr, ci_results, ci_jobs)
+        context += "\n\n注意：这是一次 PR 诊断请求。请基于上述 PR 信息（包括 CI 结果、Review 状态、Pipeline 阶段），运用根因分析方法论进行诊断。如果 CI 通过且 Review 正常，应正面肯定 PR 的健康状态；如果存在 CI 失败或 Review 问题，请按照根因分析方法进行深入诊断。"
 
         # 4. Get LLM config
         llm_config = await self._get_llm_config()
 
-        # 5. Call LLM (with 120s timeout)
+        # 5. Get system prompt (auto-bug-fixer skill)
+        system_prompt = self._get_system_prompt()
+
+        # 6. Call LLM (with 120s timeout)
         client = LLMClient()
         start_time = datetime.now()
         llm_result = await asyncio.wait_for(
@@ -78,7 +82,7 @@ class PRDiagnosisService:
                 model=llm_config.default_model,
                 api_key=llm_config.api_key,
                 api_base=llm_config.api_base_url,
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_prompt=context,
                 temperature=0.3,
                 max_tokens=4096,
@@ -182,6 +186,18 @@ class PRDiagnosisService:
         lines.append(f"\n请根据以上信息生成 PR 诊断报告。")
 
         return "\n".join(lines)
+
+    def _get_system_prompt(self) -> str:
+        """获取系统提示词：优先从 skill registry 加载 auto-bug-fixer 技能"""
+        try:
+            from app.services.skill_registry import get_skill_registry
+            skill = get_skill_registry().get_skill_by_scope('ci_failure_analysis')
+            if skill and skill.content:
+                logger.info("Using auto-bug-fixer skill for PR diagnosis")
+                return skill.content
+        except Exception as e:
+            logger.warning(f"Failed to load auto-bug-fixer skill, using fallback: {e}")
+        return FALLBACK_SYSTEM_PROMPT
 
     async def _get_llm_config(self):
         """获取活跃的 LLM 配置"""
