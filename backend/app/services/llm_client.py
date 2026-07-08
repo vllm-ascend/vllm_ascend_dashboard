@@ -124,8 +124,8 @@ class OpenAIClient(BaseLLMClient):
                 if delta and delta.content:
                     yield delta.content
         except Exception as e:
-            logger.error(f"OpenAI streaming failed: {e}")
-            raise LLMError(f"OpenAI streaming failed: {str(e)}")
+            logger.error(f"LLM streaming failed: {type(e).__name__}")
+            raise LLMError("LLM 流式调用失败")
 
 
 class AnthropicClient(BaseLLMClient):
@@ -208,8 +208,8 @@ class AnthropicClient(BaseLLMClient):
                 async for text in stream.text_stream:
                     yield text
         except Exception as e:
-            logger.error(f"Anthropic streaming failed: {e}")
-            raise LLMError(f"Anthropic streaming failed: {str(e)}")
+            logger.error(f"LLM streaming failed: {type(e).__name__}")
+            raise LLMError("LLM 流式调用失败")
 
 
 class QwenClient(BaseLLMClient):
@@ -246,8 +246,8 @@ class QwenClient(BaseLLMClient):
                 generation_time=generation_time,
             )
         except Exception as e:
-            logger.error(f"Qwen API call failed: {e}")
-            raise LLMError(f"Qwen API call failed: {str(e)}")
+            logger.error(f"LLM API call failed: {type(e).__name__}")
+            raise LLMError("LLM API 调用失败")
 
     async def generate_stream(
         self,
@@ -279,8 +279,8 @@ class QwenClient(BaseLLMClient):
                 if delta and delta.content:
                     yield delta.content
         except Exception as e:
-            logger.error(f"Qwen streaming failed: {e}")
-            raise LLMError(f"Qwen streaming failed: {str(e)}")
+            logger.error(f"LLM streaming failed: {type(e).__name__}")
+            raise LLMError("LLM 流式调用失败")
 
 
 # 提供商对应的客户端类
