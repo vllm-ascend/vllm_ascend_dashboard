@@ -119,9 +119,7 @@ function IssueDiagnosis() {
               </Form.Item>
             )}
 
-            {dataSourceType !== 'pr_pipeline' && (
-              <>
-                <Divider orientation="left" style={{ marginTop: 8, marginBottom: 12 }}>
+            <Divider orientation="left" style={{ marginTop: 8, marginBottom: 12 }}>
                   <Space size={4}>
                     <FileTextOutlined />
                     <span style={{ fontSize: 13 }}>提示词与日志</span>
@@ -179,8 +177,6 @@ function IssueDiagnosis() {
                     },
                   ]}
                 />
-              </>
-            )}
 
             <Form.Item style={{ marginTop: 16 }}>
               <Button
