@@ -75,6 +75,8 @@ function IssueDiagnosis() {
     meta,
     summary,
     error,
+    historyId,
+    isLiked,
     ciJobOptions,
     loadingJobs,
     handleDataSourceTypeChange,
@@ -87,6 +89,7 @@ function IssueDiagnosis() {
     handleExport,
     handleReset,
     handleLogFileUpload,
+    handleLike,
     clearError,
   } = useIssueDiagnosis()
 
@@ -391,7 +394,18 @@ function IssueDiagnosis() {
                   )}
                 </Card>
 
-                <Card title="AI 分析结果" style={{ flex: 1, minHeight: 600 }}>
+                <Card title="AI 分析结果" style={{ flex: 1, minHeight: 600 }} extra={
+                  historyId && !isStreaming && streamContent ? (
+                    <Button
+                      type={isLiked ? 'primary' : 'default'}
+                      icon={<HeartOutlined />}
+                      onClick={handleLike}
+                      size="small"
+                    >
+                      {isLiked ? '已赞' : '点赞'}
+                    </Button>
+                  ) : null
+                }>
                   <StreamMarkdownRenderer
                     content={streamContent}
                     isStreaming={isStreaming}
