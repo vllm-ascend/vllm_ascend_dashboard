@@ -99,16 +99,21 @@ async def list_diagnosis_history(
     liked_only: bool = Query(False),
 ):
     """获取诊断历史记录列表"""
-    from app.models import IssueDiagnosisHistory
-    query = select(IssueDiagnosisHistory)
+    from app.models import IssueDiagnosisHistory, User
+    query = select(IssueDiagnosisHistory, User.username).outerjoin(User, IssueDiagnosisHistory.user_id == User.id)
     if diagnosis_type:
         query = query.where(IssueDiagnosisHistory.diagnosis_type == diagnosis_type)
     if liked_only:
         query = query.where(IssueDiagnosisHistory.is_liked == True)
 
-    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar() or 0
+    count_query = select(func.count(IssueDiagnosisHistory.id))
+    if diagnosis_type:
+        count_query = count_query.where(IssueDiagnosisHistory.diagnosis_type == diagnosis_type)
+    if liked_only:
+        count_query = count_query.where(IssueDiagnosisHistory.is_liked == True)
+    total = (await db.execute(count_query)).scalar() or 0
     query = query.order_by(IssueDiagnosisHistory.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    rows = (await db.execute(query)).scalars().all()
+    rows = (await db.execute(query)).all()
 
     return {
         "total": total,
@@ -117,6 +122,7 @@ async def list_diagnosis_history(
         "items": [
             {
                 "id": r.id,
+                "username": username or "未知用户",
                 "diagnosis_type": r.diagnosis_type,
                 "target_id": r.target_id,
                 "target_label": r.target_label,
@@ -128,7 +134,7 @@ async def list_diagnosis_history(
                 "report_preview": (r.report_content[:200] + "...") if r.report_content and len(r.report_content) > 200 else r.report_content,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
-            for r in rows
+            for r, username in rows
         ],
     }
 

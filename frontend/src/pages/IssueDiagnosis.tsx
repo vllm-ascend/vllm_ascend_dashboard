@@ -178,6 +178,12 @@ function IssueDiagnosis() {
       ),
     },
     {
+      title: '定位人',
+      dataIndex: 'username',
+      key: 'username',
+      width: 100,
+    },
+    {
       title: '定位时间',
       dataIndex: 'created_at',
       key: 'created_at',

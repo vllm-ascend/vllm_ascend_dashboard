@@ -135,6 +135,7 @@ export const streamDiagnosis = async (
 
 export interface DiagnosisHistoryItem {
   id: number
+  username: string
   diagnosis_type: string
   target_id: string
   target_label: string

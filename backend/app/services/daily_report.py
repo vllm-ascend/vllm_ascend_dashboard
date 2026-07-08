@@ -111,6 +111,7 @@ class DailyReportService:
                 report_data[window_key]["resource"] = await self._collect_resource_data()
                 report_data[window_key]["test"] = await self._collect_test_data()
                 report_data[window_key]["pr_pipeline"] = await self._collect_pr_pipeline_data()
+                report_data[window_key]["diagnosis_stats"] = await self._collect_diagnosis_stats(start_dt, end_dt)
 
         return {"report_date": report_date.isoformat(), **report_data}
 
@@ -333,6 +334,31 @@ class DailyReportService:
             }
         except Exception as e:
             logger.warning(f"Failed to collect PR pipeline data: {e}")
+            return {}
+
+    async def _collect_diagnosis_stats(self, start_dt, end_dt) -> dict:
+        """采集问题定位统计"""
+        try:
+            from app.models import IssueDiagnosisHistory
+            yesterday_count = (await self.db.execute(
+                select(func.count(IssueDiagnosisHistory.id)).where(
+                    IssueDiagnosisHistory.created_at >= start_dt,
+                    IssueDiagnosisHistory.created_at <= end_dt,
+                )
+            )).scalar() or 0
+            total_count = (await self.db.execute(
+                select(func.count(IssueDiagnosisHistory.id))
+            )).scalar() or 0
+            liked_count = (await self.db.execute(
+                select(func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.is_liked == True)
+            )).scalar() or 0
+            return {
+                "yesterday_count": yesterday_count,
+                "total_count": total_count,
+                "liked_count": liked_count,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to collect diagnosis stats: {e}")
             return {}
 
     def build_email_html(self, report_data: dict) -> str:
