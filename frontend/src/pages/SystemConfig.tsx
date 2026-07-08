@@ -2331,9 +2331,9 @@ function SystemConfig() {
               extra={
                 <Space direction="vertical" size={0}>
                   <span>留空表示不修改，输入新的 API Key 将会覆盖原有配置。</span>
-                  {llmProviders?.find((p: any) => p.provider === selectedLLMProvider)?.api_key_preview && (
-                    <span style={{ color: '#1890ff', fontWeight: 500 }}>
-                      已配置：{llmProviders.find((p: any) => p.provider === selectedLLMProvider)?.api_key_preview}
+                  {llmProviders?.find((p: any) => p.provider === selectedLLMProvider)?.api_key_configured && (
+                    <span style={{ color: '#52c41a', fontWeight: 500 }}>
+                      已配置
                     </span>
                   )}
                 </Space>

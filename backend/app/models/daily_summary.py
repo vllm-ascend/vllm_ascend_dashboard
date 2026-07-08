@@ -136,7 +136,7 @@ class LLMProviderConfig(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     provider = Column(String(50), nullable=False, unique=True)
     display_name = Column(String(100), nullable=False)
-    api_key = Column(String(500))  # API Key，直接存储（加密存储建议后续实现）
+    api_key = Column(String(500))  # API Key（加密存储）
     api_base_url = Column(String(500))
     default_model = Column(String(100), nullable=False)
     enabled = Column(Boolean, default=True)
@@ -144,3 +144,14 @@ class LLMProviderConfig(Base):
     display_order = Column(Integer, default=0)
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    @property
+    def decrypted_api_key(self) -> str:
+        """返回解密后的 API Key，解密失败则返回原值（兼容未迁移的明文）"""
+        if not self.api_key:
+            return ""
+        try:
+            from app.core.security import decrypt_api_key
+            return decrypt_api_key(self.api_key)
+        except Exception:
+            return self.api_key
