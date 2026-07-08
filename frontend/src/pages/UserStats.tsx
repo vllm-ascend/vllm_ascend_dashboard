@@ -28,8 +28,8 @@ function UserStats() {
   const [loadingUsage, setLoadingUsage] = useState(false)
 
   const dayOptions = [{ label: '最近7天', value: 7 }, { label: '最近30天', value: 30 }, { label: '最近90天', value: 90 }]
-  const loadLogin = async (d: number) => { setLoadingLogin(true); try { setLoginStats(await getLoginStats(d)) } catch {} finally { setLoadingLogin(false) } }
-  const loadUsage = async (d: number) => { setLoadingUsage(true); try { setUsageStats(await getFeatureUsageStats(d)) } catch {} finally { setLoadingUsage(false) } }
+  const loadLogin = async (d: number) => { setLoadingLogin(true); try { setLoginStats(await getLoginStats(d)) } catch (e) { console.error('Login stats failed:', e) } finally { setLoadingLogin(false) } }
+  const loadUsage = async (d: number) => { setLoadingUsage(true); try { setUsageStats(await getFeatureUsageStats(d)) } catch (e) { console.error('Feature usage stats failed:', e) } finally { setLoadingUsage(false) } }
 
   useEffect(() => { loadLogin(loginDays); loadUsage(usageDays) }, [loginDays, usageDays])
 
@@ -38,7 +38,7 @@ function UserStats() {
       <div className="stripe-page-header"><Title level={3} className="stripe-page-title"><BarChartOutlined style={{ marginRight: 8 }} />用户统计</Title></div>
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col span={24}>
-          <Card title="登录统计" extra={<Select value={loginDays} onChange={setLoginDays} options={dayOptions} style={{ width: 120 }} />}>
+          <Card title="活跃统计" extra={<Select value={loginDays} onChange={setLoginDays} options={dayOptions} style={{ width: 120 }} />}>
             {loadingLogin ? <Spin /> : loginStats ? (
               <>
                 <Row gutter={16}>
@@ -48,13 +48,13 @@ function UserStats() {
                   <Col span={6}><Statistic title="30日活跃" value={loginStats.active_users_30days} prefix={<RiseOutlined />} /></Col>
                 </Row>
                 <div style={{ marginTop: 24 }}>
-                  <Title level={5}>登录趋势</Title>
+                  <Title level={5}>活跃趋势</Title>
                   <TrendChart data={loginStats.login_trend} max={Math.max(...loginStats.login_trend.map(t => t.count), 1)} />
                 </div>
                 <div style={{ marginTop: 16 }}>
                   <Title level={5}>活跃用户排行</Title>
                   <Table dataSource={loginStats.top_users_by_login_count} rowKey="user_id" size="small" pagination={false}
-                    columns={[{ title: '用户名', dataIndex: 'username' }, { title: '登录次数', dataIndex: 'login_count', sorter: (a: any, b: any) => a.login_count - b.login_count }]} />
+                    columns={[{ title: '用户名', dataIndex: 'username' }, { title: '活跃次数', dataIndex: 'login_count', sorter: (a: any, b: any) => a.login_count - b.login_count }]} />
                 </div>
               </>
             ) : null}
