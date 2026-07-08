@@ -438,6 +438,7 @@ class PRDiagnosisService:
         lines.append("5. **具体修复建议**：给出代码级修复建议和流水线门禁改进建议。")
         lines.append("")
         lines.append("注意：你当前处于单次调用模式，无法调用工具。请基于以上提供的信息直接进行分析，不要尝试使用 curl 或其他工具。")
+        lines.append("请使用中文输出完整的诊断报告，包括标题、章节标题、分析内容、修复建议等全部使用中文。")
 
         return "\n".join(lines)
 
