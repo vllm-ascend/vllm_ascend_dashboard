@@ -466,7 +466,7 @@ class IssueDiagnosisHistory(Base):
     like_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    user = relationship("User", backref("diagnosis_histories"))
+    user = relationship("User", backref="diagnosis_histories")
 
 
 class TokenBlacklist(Base):
