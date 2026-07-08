@@ -216,6 +216,8 @@ async def diagnose_pr(
             )
             db.add(history)
             await db.commit()
+            await db.refresh(history)
+            result["history_id"] = history.id
         except Exception as e:
             logger.warning(f"Failed to save diagnosis history: {e}")
         return result

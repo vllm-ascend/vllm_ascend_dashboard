@@ -243,6 +243,7 @@ export interface PRDiagnosisResult {
   provider: string
   duration_seconds: number
   tokens: number
+  history_id?: number
 }
 
 export async function diagnosePR(prNumber: number): Promise<PRDiagnosisResult> {
