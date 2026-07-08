@@ -288,6 +288,7 @@ PROVIDER_CLIENTS = {
     "openai": OpenAIClient,
     "anthropic": AnthropicClient,
     "qwen": QwenClient,
+    "zhipu": OpenAIClient,
 }
 
 
