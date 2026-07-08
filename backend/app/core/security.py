@@ -1,9 +1,11 @@
+import base64
 import hashlib
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
+from cryptography.fernet import Fernet
 from jose import ExpiredSignatureError, JWTError, jwt
 
 from app.core.config import settings
@@ -67,3 +69,26 @@ def decode_token(token: str) -> dict | None:
     except Exception as e:
         _logger.error(f"Unexpected error during token decoding: {e}")
         return None
+
+
+# ============ API Key 加密/解密 ============
+
+def _fernet() -> Fernet:
+    secret = settings.KUBECONFIG_ENCRYPTION_KEY or settings.JWT_SECRET
+    digest = hashlib.sha256(secret.encode("utf-8")).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_api_key(plaintext: str) -> str:
+    if not plaintext:
+        return ""
+    return _fernet().encrypt(plaintext.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_api_key(ciphertext: str) -> str:
+    if not ciphertext:
+        return ""
+    try:
+        return _fernet().decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+    except Exception:
+        return ciphertext

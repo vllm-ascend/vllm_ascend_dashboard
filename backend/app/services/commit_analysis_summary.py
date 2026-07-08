@@ -41,7 +41,7 @@ class CommitAnalysisSummaryService:
                 prompt=prompt,
                 provider_config={
                     "provider": llm_config.provider,
-                    "api_key": llm_config.api_key,
+                    "api_key": llm_config.decrypted_api_key,
                     "api_base_url": llm_config.api_base_url,
                     "default_model": llm_config.default_model,
                 },

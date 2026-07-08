@@ -129,7 +129,7 @@ class LiteLLMSync:
                 "model_name": c.default_model,
                 "litellm_params": {
                     "model": f"{prefix}/{c.default_model}",
-                    "api_key": c.api_key,
+                    "api_key": c.decrypted_api_key,
                     "api_base": c.api_base_url or "",
                 },
             })
