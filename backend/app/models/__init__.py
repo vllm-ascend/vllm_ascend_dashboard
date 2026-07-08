@@ -464,7 +464,7 @@ class IssueDiagnosisHistory(Base):
     status = Column(String(20), default="success")
     is_liked = Column(Boolean, default=False)
     like_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", backref="diagnosis_histories")
 

@@ -135,7 +135,8 @@ export function useIssueDiagnosis() {
         (s) => {
           setSummary(s)
           setIsStreaming(false)
-          saveDiagnosisRecord({
+          if (accumulated.trim()) {
+            saveDiagnosisRecord({
             diagnosis_type: effectiveDataSourceType,
             target_id: targetId,
             target_label: targetLabel,
@@ -146,6 +147,7 @@ export function useIssueDiagnosis() {
           }).then((res) => {
             if (res.id) setHistoryId(res.id)
           }).catch((err) => console.warn('保存诊断记录失败:', err))
+          }
         },
         (errMsg) => { setError(errMsg); setIsStreaming(false) },
       )

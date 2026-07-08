@@ -212,27 +212,21 @@ async def toggle_like(
 
 @router.post("/history", summary="保存诊断记录")
 async def save_diagnosis(
+    body: dict,
     current_user: CurrentUser,
     db: DbSession,
-    diagnosis_type: str = Query(...),
-    target_id: str = Query(...),
-    target_label: str = Query(""),
-    report_content: str = Query(""),
-    model_used: str = Query(""),
-    duration_seconds: float = Query(0),
-    status: str = Query("success"),
 ):
     """保存诊断记录（用于流式诊断完成后前端调用）"""
     from app.models import IssueDiagnosisHistory
     record = IssueDiagnosisHistory(
         user_id=current_user.id,
-        diagnosis_type=diagnosis_type,
-        target_id=target_id,
-        target_label=target_label,
-        report_content=report_content,
-        model_used=model_used,
-        duration_seconds=duration_seconds,
-        status=status,
+        diagnosis_type=body.get("diagnosis_type", ""),
+        target_id=body.get("target_id", ""),
+        target_label=body.get("target_label", ""),
+        report_content=body.get("report_content", ""),
+        model_used=body.get("model_used", ""),
+        duration_seconds=body.get("duration_seconds", 0),
+        status=body.get("status", "success"),
     )
     db.add(record)
     await db.commit()

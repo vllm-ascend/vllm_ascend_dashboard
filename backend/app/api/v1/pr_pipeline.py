@@ -208,7 +208,7 @@ async def diagnose_pr(
                 user_id=current_user.id,
                 diagnosis_type="pr_pipeline",
                 target_id=str(pr_number),
-                target_label=result.get("pr_number", ""),
+                target_label=result.get("pr_title", f"PR #{pr_number}"),
                 report_content=result.get("report", ""),
                 model_used=result.get("model", ""),
                 duration_seconds=result.get("duration_seconds", 0),
