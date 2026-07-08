@@ -5,6 +5,7 @@ import {
   CIJobOption,
   getFailedCIJobs,
   streamDiagnosis,
+  saveDiagnosisRecord,
 } from '../services/issueDiagnosis'
 import { diagnosePR } from '../services/prPipeline'
 import type { DiagnosisSummary } from '../components/StreamMarkdownRenderer'
@@ -108,12 +109,36 @@ export function useIssueDiagnosis() {
     }
     if (prompt) request.user_prompt = prompt
 
+    const targetId = effectiveDataSourceType === 'ci_job' && selectedJobId
+      ? String(selectedJobId)
+      : `manual_${Date.now()}`
+    let targetLabel: string | undefined
+    if (effectiveDataSourceType === 'ci_job' && selectedJobId) {
+      const job = ciJobOptions.find(j => j.job_id === selectedJobId)
+      targetLabel = job ? `${job.workflow_name} - ${job.job_name}` : undefined
+    }
+
+    let accumulated = ''
+    let localMeta: { provider: string; model: string } | null = null
+
     try {
       await streamDiagnosis(
         request,
-        (chunk) => setStreamContent(prev => prev + chunk),
-        (m) => setMeta(m),
-        (s) => { setSummary(s); setIsStreaming(false) },
+        (chunk) => { accumulated += chunk; setStreamContent(prev => prev + chunk) },
+        (m) => { localMeta = m; setMeta(m) },
+        (s) => {
+          setSummary(s)
+          setIsStreaming(false)
+          saveDiagnosisRecord({
+            diagnosis_type: effectiveDataSourceType,
+            target_id: targetId,
+            target_label: targetLabel,
+            report_content: accumulated,
+            model_used: localMeta?.model,
+            duration_seconds: s.duration_seconds,
+            status: 'success',
+          }).catch((err) => console.warn('保存诊断记录失败:', err))
+        },
         (errMsg) => { setError(errMsg); setIsStreaming(false) },
       )
     } catch (e: any) {
@@ -121,7 +146,7 @@ export function useIssueDiagnosis() {
     } finally {
       setIsStreaming(false)
     }
-  }, [dataSourceType, prNumber, selectedJobId, userPrompt, logContent])
+  }, [dataSourceType, prNumber, selectedJobId, userPrompt, logContent, ciJobOptions])
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(streamContent)

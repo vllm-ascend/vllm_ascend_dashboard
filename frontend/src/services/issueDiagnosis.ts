@@ -1,3 +1,5 @@
+import api from './api'
+
 const API_BASE_URL = (typeof import.meta !== 'undefined' &&
   (import.meta as any).env?.VITE_API_BASE_URL) || 'http://localhost:8000/api/v1'
 
@@ -129,4 +131,85 @@ export const streamDiagnosis = async (
       }
     }
   }
+}
+
+export interface DiagnosisHistoryItem {
+  id: number
+  diagnosis_type: string
+  target_id: string
+  target_label: string
+  model_used: string
+  duration_seconds: number
+  status: string
+  is_liked: boolean
+  like_count: number
+  report_preview: string
+  created_at: string
+}
+
+export interface DiagnosisHistoryResponse {
+  total: number
+  page: number
+  page_size: number
+  items: DiagnosisHistoryItem[]
+}
+
+export interface DiagnosisStats {
+  total: number
+  success_count: number
+  success_rate: number
+  liked_count: number
+  pr_pipeline_count: number
+  ci_job_count: number
+}
+
+export interface DiagnosisDetail extends DiagnosisHistoryItem {
+  report_content: string
+}
+
+export async function getDiagnosisHistory(params: { page?: number; page_size?: number; diagnosis_type?: string; liked_only?: boolean }): Promise<DiagnosisHistoryResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.page) searchParams.set('page', String(params.page))
+  if (params.page_size) searchParams.set('page_size', String(params.page_size))
+  if (params.diagnosis_type) searchParams.set('diagnosis_type', params.diagnosis_type)
+  if (params.liked_only) searchParams.set('liked_only', 'true')
+  const { data } = await api.get(`/issue-diagnosis/history?${searchParams.toString()}`)
+  return data
+}
+
+export async function getDiagnosisStats(): Promise<DiagnosisStats> {
+  const { data } = await api.get('/issue-diagnosis/history/stats')
+  return data
+}
+
+export async function getDiagnosisDetail(id: number): Promise<DiagnosisDetail> {
+  const { data } = await api.get(`/issue-diagnosis/history/${id}`)
+  return data
+}
+
+export async function toggleDiagnosisLike(id: number): Promise<{ id: number; is_liked: boolean; like_count: number }> {
+  const { data } = await api.post(`/issue-diagnosis/history/${id}/like`)
+  return data
+}
+
+export async function saveDiagnosisRecord(params: {
+  diagnosis_type: string
+  target_id: string
+  target_label?: string
+  report_content: string
+  model_used?: string
+  duration_seconds?: number
+  status?: string
+}): Promise<{ id: number; status: string }> {
+  const searchParams = new URLSearchParams({
+    diagnosis_type: params.diagnosis_type,
+    target_id: params.target_id,
+    report_content: params.report_content,
+  })
+  if (params.target_label) searchParams.set('target_label', params.target_label)
+  if (params.model_used) searchParams.set('model_used', params.model_used)
+  if (params.duration_seconds) searchParams.set('duration_seconds', String(params.duration_seconds))
+  if (params.status) searchParams.set('status', params.status)
+  const { data } = await api.post(`/issue-diagnosis/history?${searchParams.toString()}`)
+  return data
 }
