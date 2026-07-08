@@ -73,6 +73,7 @@ class PRDiagnosisService:
 
         return {
             "pr_number": pr_number,
+            "pr_title": pr_info.get("title", ""),
             "report": result_content,
             "model": model_used or llm_config.default_model,
             "provider": llm_config.provider,
@@ -398,9 +399,11 @@ class PRDiagnosisService:
                     if job.get("failed_steps"):
                         lines.append(f"- 失败步骤: {', '.join(job['failed_steps'])}")
                     if job.get("log_excerpt"):
+                        # 转义日志中的代码围栏，防止 prompt injection
+                        safe_excerpt = job["log_excerpt"].replace("```", "ˋˋˋ")
                         lines.append("- 关键日志:")
                         lines.append("```")
-                        lines.append(job["log_excerpt"])
+                        lines.append(safe_excerpt)
                         lines.append("```")
 
         # 跨 PR 数据

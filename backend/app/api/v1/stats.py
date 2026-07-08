@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 TZ = ZoneInfo("Asia/Shanghai")
 
 
+def _date_expr(column):
+    """返回按上海时区分组的日期表达式"""
+    if _is_sqlite:
+        return func.date(column, '+8 hours')
+    return func.date(func.convert_tz(column, '+00:00', '+08:00'))
+
+
 @router.get("/login", response_model=LoginStatsResponse, summary="登录/活跃统计")
 async def get_login_stats(
     current_user: CurrentAdminUser,
@@ -46,10 +53,10 @@ async def get_login_stats(
         login_trend = []
         trend_days = min(days, 90)
         stmt = (
-            select(func.date(FeatureUsageLog.access_time).label("day"), func.count(FeatureUsageLog.id).label("cnt"))
+            select(_date_expr(FeatureUsageLog.access_time).label("day"), func.count(FeatureUsageLog.id).label("cnt"))
             .where(FeatureUsageLog.access_time >= now - timedelta(days=trend_days))
-            .group_by(func.date(FeatureUsageLog.access_time))
-            .order_by(func.date(FeatureUsageLog.access_time))
+            .group_by(_date_expr(FeatureUsageLog.access_time))
+            .order_by(_date_expr(FeatureUsageLog.access_time))
         )
         trend_rows = (await db.execute(stmt)).all()
         trend_map = {str(r.day): r.cnt for r in trend_rows}
@@ -120,10 +127,10 @@ async def get_feature_usage_stats(
         daily_trend = []
         trend_days = min(days, 90)
         stmt = (
-            select(func.date(FeatureUsageLog.access_time).label("day"), func.count(FeatureUsageLog.id).label("cnt"))
+            select(_date_expr(FeatureUsageLog.access_time).label("day"), func.count(FeatureUsageLog.id).label("cnt"))
             .where(FeatureUsageLog.access_time >= now - timedelta(days=trend_days))
-            .group_by(func.date(FeatureUsageLog.access_time))
-            .order_by(func.date(FeatureUsageLog.access_time))
+            .group_by(_date_expr(FeatureUsageLog.access_time))
+            .order_by(_date_expr(FeatureUsageLog.access_time))
         )
         trend_rows = (await db.execute(stmt)).all()
         trend_map = {str(r.day): r.cnt for r in trend_rows}

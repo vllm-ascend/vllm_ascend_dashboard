@@ -202,15 +202,6 @@ export async function saveDiagnosisRecord(params: {
   duration_seconds?: number
   status?: string
 }): Promise<{ id: number; status: string }> {
-  const searchParams = new URLSearchParams({
-    diagnosis_type: params.diagnosis_type,
-    target_id: params.target_id,
-    report_content: params.report_content,
-  })
-  if (params.target_label) searchParams.set('target_label', params.target_label)
-  if (params.model_used) searchParams.set('model_used', params.model_used)
-  if (params.duration_seconds) searchParams.set('duration_seconds', String(params.duration_seconds))
-  if (params.status) searchParams.set('status', params.status)
-  const { data } = await api.post(`/issue-diagnosis/history?${searchParams.toString()}`)
+  const { data } = await api.post('/issue-diagnosis/history', params)
   return data
 }
