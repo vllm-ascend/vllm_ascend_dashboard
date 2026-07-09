@@ -54,10 +54,10 @@ export const usePRPipelineMetrics = (days?: number) => {
   })
 }
 
-export const usePRPipelineContributors = (days?: number, type?: string, limit?: number) => {
+export const usePRPipelineContributors = (days?: number, type?: string, skip?: number, limit?: number, company?: string, sortBy?: string) => {
   return useQuery({
-    queryKey: ['pr-pipeline-contributors', days, type, limit],
-    queryFn: () => api.getContributors(days, type, limit),
+    queryKey: ['pr-pipeline-contributors', days, type, skip, limit, company, sortBy],
+    queryFn: () => api.getContributors(days, type, skip, limit, company, sortBy),
   })
 }
 
@@ -87,6 +87,14 @@ export const usePRPipelineSync = () => {
   })
 }
 
+export const usePRPipelineSyncStatus = () => {
+  return useQuery({
+    queryKey: ['pr-pipeline-sync-status'],
+    queryFn: () => api.getSyncStatus(),
+    refetchInterval: 30_000,
+  })
+}
+
 export const usePRPipelineHistoricalSync = () => {
   const queryClient = useQueryClient()
 
@@ -96,5 +104,11 @@ export const usePRPipelineHistoricalSync = () => {
     onSuccess: () => {
       invalidatePRPipelineQueries(queryClient)
     },
+  })
+}
+
+export function usePRDiagnosis() {
+  return useMutation({
+    mutationFn: (prNumber: number) => api.diagnosePR(prNumber),
   })
 }

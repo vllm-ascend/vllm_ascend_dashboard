@@ -64,6 +64,7 @@ async def init_db():
 
         await _migrate_email_column()
         await _migrate_login_log_columns()
+        await _migrate_avatar_base64_column()
 
         # 初始化 LLM 提供商默认配置
         await _init_llm_provider_configs()
@@ -134,6 +135,38 @@ async def _migrate_login_log_columns():
 
     except Exception as e:
         logger.warning(f"Login log column migration skipped (non-fatal): {e}")
+
+
+async def _migrate_avatar_base64_column():
+    """Ensure pull_requests has author email/avatar cache columns for PR pipeline."""
+    try:
+        from sqlalchemy import text, inspect
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+        from app.db.base import _is_sqlite
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            def _get_columns(conn):
+                return [c['name'] for c in inspect(conn).get_columns('pull_requests')]
+            existing_cols = await db.run_sync(_get_columns)
+
+            pending_columns = []
+            if 'author_email' not in existing_cols:
+                pending_columns.append(("author_email", "VARCHAR(200)"))
+            if 'author_avatar_base64' not in existing_cols:
+                avatar_col_type = "TEXT" if _is_sqlite else "LONGTEXT"
+                pending_columns.append(("author_avatar_base64", avatar_col_type))
+
+            for col_name, col_type in pending_columns:
+                logger.info("Adding missing column '%s' to pull_requests", col_name)
+                await db.execute(text(f"ALTER TABLE pull_requests ADD COLUMN {col_name} {col_type}"))
+
+            if pending_columns:
+                await db.commit()
+                logger.info("Added missing pull_requests columns: %s", ", ".join(name for name, _ in pending_columns))
+
+    except Exception as e:
+        logger.warning(f"PR pipeline author column migration skipped (non-fatal): {e}")
 
 
 async def _warmup_claude_code_cli():
@@ -349,8 +382,10 @@ def create_app() -> FastAPI:
         allow_origins=[
             "http://localhost:3000",
             "http://localhost:5173",
+            "http://localhost:5000",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5173",
+            "http://127.0.0.1:5000",
         ],
         allow_credentials=True,
         allow_methods=["*"],

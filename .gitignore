@@ -133,3 +133,12 @@ CODE_REVIEW.md
 
 # LiteLLM runtime config (generated, contains API keys)
 deploy/config/litellm_runtime.yaml
+
+# Temp / analysis (not for commit)
+analysis_eval/
+backend/matches_v5.xlsx
+backend/scripts/match_failures_to_prs.py
+docs/AI-assisted-CI-issue-localization-report.md
+docs/superpowers/specs/2026-07-01-analysis-accuracy-eval.md
+docs/user-manual.md
+screenshots/

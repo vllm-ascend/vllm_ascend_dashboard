@@ -804,13 +804,13 @@ async def update_daily_summary_config(
 
 @router.get("/llm-providers")
 async def get_llm_providers(
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
     db: AsyncSession = Depends(get_db)
 ):
     """
     获取 LLM 提供商列表
 
-    所有登录用户可访问
+    需要管理员权限
     """
     from app.models.daily_summary import LLMProviderConfig
     try:
@@ -827,7 +827,6 @@ async def get_llm_providers(
                 "is_active": p.is_active,
                 "display_order": p.display_order,
                 "api_key_configured": bool(p.api_key),
-                "api_key_preview": p.api_key[:8] + "..." + p.api_key[-4:] if p.api_key and len(p.api_key) >= 12 else None,
                 "api_base_url": p.api_base_url,
             }
             for p in providers
@@ -896,7 +895,8 @@ async def update_llm_provider(
             provider_config.display_name = config['display_name']
 
         if 'api_key' in config:
-            provider_config.api_key = config['api_key']
+            from app.core.security import encrypt_api_key
+            provider_config.api_key = encrypt_api_key(config['api_key'])
 
         if 'api_base_url' in config:
             provider_config.api_base_url = config['api_base_url']
@@ -945,6 +945,7 @@ async def create_llm_provider(
 ):
     """创建新的 LLM 提供商（需 super_admin）"""
     from app.models.daily_summary import LLMProviderConfig
+    from app.core.security import encrypt_api_key
 
     provider_name = config.get("provider", "").strip()
     if not provider_name:
@@ -960,7 +961,7 @@ async def create_llm_provider(
     new_config = LLMProviderConfig(
         provider=provider_name,
         display_name=config.get("display_name", provider_name),
-        api_key=config.get("api_key", ""),
+        api_key=encrypt_api_key(config.get("api_key", "")) if config.get("api_key") else "",
         api_base_url=config.get("api_base_url", ""),
         default_model=config.get("default_model", ""),
         enabled=config.get("enabled", True),

@@ -744,6 +744,42 @@ class GitHubClient:
         result = await self._request("GET", url, params=params)
         return result
 
+    async def get_user_email(self, username: str, owner: str, repo: str) -> str | None:
+        """
+        Get a user's email address. Tries commit history first (most reliable),
+        falls back to user profile.
+
+        Args:
+            username: GitHub login
+            owner: repo owner
+            repo: repo name
+
+        Returns:
+            Email string or None
+        """
+        # Strategy 1: look for commits by this user in the repo (git emails always present)
+        try:
+            url = f"/repos/{owner}/{repo}/commits"
+            params = {"author": username, "per_page": 1}
+            commits = await self._request("GET", url, params=params)
+            if commits:
+                email = (commits[0].get("commit", {}).get("author", {}).get("email", ""))
+                if email:
+                    return email
+        except Exception:
+            pass
+
+        # Strategy 2: user profile (public_email often null)
+        try:
+            user = await self._request("GET", f"/users/{username}")
+            email = user.get("email") or user.get("public_email")
+            if email:
+                return email
+        except Exception:
+            pass
+
+        return None
+
     async def get_pr_detail(
         self,
         owner: str,

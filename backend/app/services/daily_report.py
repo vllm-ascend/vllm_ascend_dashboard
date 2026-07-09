@@ -107,6 +107,12 @@ class DailyReportService:
                 "performance": perf_data,
             }
 
+            if window_key == "yesterday":
+                report_data[window_key]["resource"] = await self._collect_resource_data()
+                report_data[window_key]["test"] = await self._collect_test_data()
+                report_data[window_key]["pr_pipeline"] = await self._collect_pr_pipeline_data()
+                report_data[window_key]["diagnosis_stats"] = await self._collect_diagnosis_stats(start_dt, end_dt)
+
         return {"report_date": report_date.isoformat(), **report_data}
 
     async def _collect_ci_data(self, start_dt, end_dt) -> dict:
@@ -268,8 +274,95 @@ class DailyReportService:
             "avg_p99_latency": sum(p99_latencies) / len(p99_latencies) if p99_latencies else None,
         }
 
+    async def _collect_resource_data(self) -> dict:
+        """采集资源看板 NPU 利用率概况"""
+        try:
+            from app.services.resource_metrics import ResourceMetricsService
+            svc = ResourceMetricsService(self.db)
+            data = await svc.query_npu_metrics(time_range="24h")
+            clusters = []
+            for c in data.get("clusters", []):
+                metrics = c.get("metrics", [])
+                if not metrics:
+                    continue
+                avg_util = sum(m.get("npu_utilization", 0) for m in metrics) / len(metrics)
+                last = metrics[-1]
+                clusters.append({
+                    "cluster_name": c.get("cluster_name", ""),
+                    "avg_npu_utilization": round(avg_util, 1),
+                    "npu_total": last.get("npu_total", 0),
+                    "npu_used": last.get("npu_used", 0),
+                    "executing_pods": last.get("executing_pods_count", 0),
+                })
+            return {"clusters": clusters}
+        except Exception as e:
+            logger.warning(f"Failed to collect resource data: {e}")
+            return {"clusters": []}
+
+    async def _collect_test_data(self) -> dict:
+        """采集测试看板概况"""
+        try:
+            from app.services.test_board_service import TestBoardService
+            svc = TestBoardService(self.db)
+            overview = await svc.get_overview(days=1)
+            return {
+                "health_score": overview.get("health_score", {}),
+                "total_cases": overview.get("total_cases", 0),
+                "pass_rate_7d": overview.get("pass_rate_7d", 0),
+                "flaky_case_count": overview.get("flaky_case_count", 0),
+            }
+        except Exception as e:
+            logger.warning(f"Failed to collect test data: {e}")
+            return {}
+
+    async def _collect_pr_pipeline_data(self) -> dict:
+        """采集 PR 流水线概况"""
+        try:
+            from app.services.pr_pipeline_service import PRPipelineService
+            svc = PRPipelineService()
+            overview = await svc.get_overview(self.db, settings.GITHUB_OWNER, settings.GITHUB_REPO, days=1)
+            return {
+                "open_count": overview.open_count,
+                "merged_count": overview.merged_count,
+                "closed_count": overview.closed_count,
+                "backlog_index": overview.backlog_index,
+                "backlog_level": overview.backlog_level,
+                "merge_rate": overview.merge_rate,
+                "avg_time_to_merge_hours": overview.avg_time_to_merge_hours,
+                "recent_opened_count": overview.recent_opened_count,
+                "recent_merged_count": overview.recent_merged_count,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to collect PR pipeline data: {e}")
+            return {}
+
+    async def _collect_diagnosis_stats(self, start_dt, end_dt) -> dict:
+        """采集问题定位统计"""
+        try:
+            from app.models import IssueDiagnosisHistory
+            yesterday_count = (await self.db.execute(
+                select(func.count(IssueDiagnosisHistory.id)).where(
+                    IssueDiagnosisHistory.created_at >= start_dt,
+                    IssueDiagnosisHistory.created_at <= end_dt,
+                )
+            )).scalar() or 0
+            total_count = (await self.db.execute(
+                select(func.count(IssueDiagnosisHistory.id))
+            )).scalar() or 0
+            liked_count = (await self.db.execute(
+                select(func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.is_liked == True)
+            )).scalar() or 0
+            return {
+                "yesterday_count": yesterday_count,
+                "total_count": total_count,
+                "liked_count": liked_count,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to collect diagnosis stats: {e}")
+            return {}
+
     def build_email_html(self, report_data: dict) -> str:
-        """使用 Jinja2 渲染 HTML 邮件"""
+        """使用 Jinja2 渲染 HTML 邮件（旧模板，降级时使用）"""
         env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
         template = env.get_template("daily_report.html")
 
@@ -278,6 +371,22 @@ class DailyReportService:
         return template.render(
             report_data=report_data,
             report_date=report_data["report_date"],
+            dashboard_url=dashboard_url,
+        )
+
+    def build_ai_email_html(self, ai_report_markdown: str, report_date: str) -> str:
+        """使用 Jinja2 渲染 LLM 报告 HTML 邮件（新模板）"""
+        import markdown as md_lib
+        ai_report_html = md_lib.markdown(ai_report_markdown, extensions=['tables', 'fenced_code'])
+
+        env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
+        template = env.get_template("ai_report_email.html")
+
+        dashboard_url = settings.CORS_ORIGINS[0] if settings.CORS_ORIGINS else "http://localhost:3000"
+
+        return template.render(
+            report_date=report_date,
+            ai_report_html=ai_report_html,
             dashboard_url=dashboard_url,
         )
 
@@ -322,7 +431,7 @@ class DailyReportService:
             result = await client.generate(
                 provider=llm_config.provider,
                 model=llm_config.default_model,
-                api_key=llm_config.api_key,
+                api_key=llm_config.decrypted_api_key,
                 api_base=llm_config.api_base_url,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -379,15 +488,23 @@ class DailyReportService:
         try:
             report_data = await self.generate_report(report_date)
 
-            # 用 LLM 生成洞察式报告，替换 300 字截断片段
+            # 用 LLM 生成洞察式报告
             ai_report = await self._generate_ai_report(report_data)
             if ai_report:
+                # LLM 报告直接作为邮件正文（新模板），替代旧模板
+                history.ai_report_content = ai_report
+                # 同时保留 ai_summary_snippet 供前端兼容
                 report_data["yesterday"]["github"]["ai_summary_snippet"] = ai_report
-                logger.info("AI report generated and injected into report data")
+                try:
+                    html_content = self.build_ai_email_html(ai_report, report_data["report_date"])
+                    logger.info("AI report generated, used as email body with new template")
+                except Exception as e:
+                    logger.warning(f"Failed to build AI email HTML, falling back to old template: {e}")
+                    html_content = self.build_email_html(report_data)
             else:
-                logger.info("AI report generation skipped or failed, using original snippet")
-
-            html_content = self.build_email_html(report_data)
+                # 降级到旧模板
+                html_content = self.build_email_html(report_data)
+                logger.info("AI report generation skipped or failed, using original template")
 
             history.ci_summary = report_data["yesterday"]["ci"]
             history.model_summary = report_data["yesterday"]["model"]

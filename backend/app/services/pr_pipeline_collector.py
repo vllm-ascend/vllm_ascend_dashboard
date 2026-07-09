@@ -1,8 +1,10 @@
+import base64
 import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -160,6 +162,38 @@ class PRPipelineCollector:
         author = user_info.get("login", "")
         author_avatar_url = user_info.get("avatar_url", "")
 
+        # Fetch author email from PR commits (best-effort, non-fatal)
+        author_email = None
+        commit_items = pr.get("commits")
+        commits = commit_items if isinstance(commit_items, list) else []
+        try:
+            if not isinstance(commit_items, list):
+                commits = await self.github.get_pr_commits(owner, repo, pr_number)
+            if commits:
+                for commit in commits:
+                    commit_author_login = (commit.get("author") or {}).get("login", "")
+                    if not commit_author_login or commit_author_login == author:
+                        author_email = (commit.get("commit", {}).get("author", {}).get("email", ""))
+                        if author_email:
+                            break
+        except GitHubRateLimitError:
+            raise
+        except Exception as e:
+            logger.warning(f"Failed to fetch author email for PR #{pr_number}: {e}")
+
+        # Download author avatar and store as base64 (best-effort, non-fatal)
+        author_avatar_base64 = None
+        if author_avatar_url:
+            try:
+                async with httpx.AsyncClient(timeout=10) as http:
+                    resp = await http.get(author_avatar_url)
+                    if resp.status_code == 200:
+                        content_type = resp.headers.get("content-type", "image/png")
+                        b64 = base64.b64encode(resp.content).decode("ascii")
+                        author_avatar_base64 = f"data:{content_type};base64,{b64}"
+            except Exception as e:
+                logger.warning(f"Failed to download avatar for PR #{pr_number} ({author}): {e}")
+
         head_info = pr.get("head", {}) or {}
         base_info = pr.get("base", {}) or {}
 
@@ -207,7 +241,7 @@ class PRPipelineCollector:
             "deletions": total_deletions,
             "changed_files": total_changed,
             "reviews": reviews,
-            "commits": pr.get("commits", []) if isinstance(pr.get("commits"), list) else [],
+            "commits": commits,
             "files_count": len(files),
         }
 
@@ -215,6 +249,8 @@ class PRPipelineCollector:
             existing.title = pr.get("title", "")
             existing.author = author
             existing.author_avatar_url = author_avatar_url
+            existing.author_email = author_email or existing.author_email
+            existing.author_avatar_base64 = author_avatar_base64
             existing.html_url = pr.get("html_url", "")
             existing.state = pr_state
             existing.is_draft = pr.get("draft", False) or False
@@ -247,6 +283,8 @@ class PRPipelineCollector:
                 title=pr.get("title", ""),
                 author=author,
                 author_avatar_url=author_avatar_url,
+                author_avatar_base64=author_avatar_base64,
+                author_email=author_email,
                 html_url=pr.get("html_url", ""),
                 state=pr_state,
                 is_draft=pr.get("draft", False) or False,

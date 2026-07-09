@@ -45,7 +45,7 @@ class TestContributorEmails:
         service = PRPipelineService()
         result = await service.get_contributors(db_session, OWNER, REPO, days=30, type="author")
 
-        alice = next(item for item in result if item.username == "alice")
+        alice = next(item for item in result.items if item.username == "alice")
         assert alice.emails == ["alice@example.com"]
         assert alice.primary_email == "alice@example.com"
 
@@ -91,8 +91,54 @@ class TestContributorEmails:
 
         service = PRPipelineService()
         contributors = await service.get_contributors(db_session, OWNER, REPO, days=30, type="author")
-        alice = next(item for item in contributors if item.username == "alice")
+        alice = next(item for item in contributors.items if item.username == "alice")
         assert alice.primary_email == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_author_contributor_merges_same_login_with_multiple_emails(self, db_session):
+        """A GitHub login should stay one contributor even when commits use several emails."""
+        now = datetime.now(UTC)
+        pr1 = make_pr(
+            pr_number=9301,
+            author="alice",
+            created_at=now - timedelta(days=2),
+        )
+        pr1.author_email = "alice@users.noreply.github.com"
+        pr1.data = {
+            "commits": [
+                {
+                    "author": {"login": "alice"},
+                    "commit": {"author": {"email": "alice@users.noreply.github.com"}},
+                }
+            ]
+        }
+        pr2 = make_pr(
+            pr_number=9302,
+            author="alice",
+            created_at=now - timedelta(days=1),
+        )
+        pr2.author_email = "alice@example.com"
+        pr2.data = {
+            "commits": [
+                {
+                    "author": {"login": "alice"},
+                    "commit": {"author": {"email": "alice@example.com"}},
+                }
+            ]
+        }
+        db_session.add_all([pr1, pr2])
+        await db_session.commit()
+
+        service = PRPipelineService()
+        result = await service.get_contributors(db_session, OWNER, REPO, days=30, type="author")
+
+        alice_rows = [item for item in result.items if item.username == "alice"]
+        assert len(alice_rows) == 1
+        assert alice_rows[0].pr_count == 2
+        assert set(alice_rows[0].emails) == {
+            "alice@users.noreply.github.com",
+            "alice@example.com",
+        }
 
 
 # ============================================================================

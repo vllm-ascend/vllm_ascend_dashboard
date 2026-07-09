@@ -244,6 +244,7 @@ async def get_latest_report(
             "model_summary": latest.model_summary,
             "github_summary": latest.github_summary,
             "performance_summary": latest.performance_summary,
+            "ai_report_content": latest.ai_report_content,
         }
     except Exception as e:
         logger.error(f"Failed to get latest report: {e}")

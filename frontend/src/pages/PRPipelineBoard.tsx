@@ -153,9 +153,9 @@ const renderCIStatusTag = (status: string | null) => {
   return <Tag color={CI_STATUS_COLORS[status] || 'default'}>{CI_STATUS_LABELS[status] || status}</Tag>
 }
 
-const renderAvatar = (author: string, avatarUrl: string | null, email?: string | null) => (
+const renderAvatar = (author: string, avatarUrl: string | null, avatarBase64?: string | null, email?: string | null) => (
   <Space size={4}>
-    <Avatar size={20} src={avatarUrl} style={{ backgroundColor: '#1677ff' }}>
+    <Avatar size={20} src={avatarBase64 || avatarUrl} style={{ backgroundColor: '#1677ff' }}>
       {author?.[0]?.toUpperCase()}
     </Avatar>
     <Text>{email ? `${author} <${email}>` : author}</Text>
@@ -779,20 +779,39 @@ const MetricsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: 
 }
 
 const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown: (f: DrillDownFilters) => void }) => {
-  const [contributorType, setContributorType] = useState<string | undefined>(undefined)
-  const { data, isLoading } = hooks.usePRPipelineContributors(period, contributorType, 20)
+  const [authorCompany, setAuthorCompany] = useState<string | undefined>(undefined)
+  const [reviewerCompany, setReviewerCompany] = useState<string | undefined>(undefined)
+  const [authorPage, setAuthorPage] = useState(1)
+  const [reviewerPage, setReviewerPage] = useState(1)
+  const pageSize = 20
 
-  if (isLoading) return <Spin style={{ display: 'block', margin: '40px auto' }} />
+  const { data: authorData, isLoading: authorLoading, isFetching: authorFetching } = hooks.usePRPipelineContributors(
+    period, 'author', (authorPage - 1) * pageSize, pageSize, authorCompany,
+  )
+  const { data: reviewerData, isLoading: reviewerLoading, isFetching: reviewerFetching } = hooks.usePRPipelineContributors(
+    period, 'reviewer', (reviewerPage - 1) * pageSize, pageSize, reviewerCompany,
+  )
 
-  const authors = (data || []).filter((c: PRPipelineContributor) => c.type === 'author' || c.pr_count > 0)
-  const reviewers = (data || []).filter((c: PRPipelineContributor) => c.type === 'reviewer' || c.review_count > 0)
+  const authors = authorData?.items || []
+  const authorTotal = authorData?.total || 0
+  const reviewers = reviewerData?.items || []
+  const reviewerTotal = reviewerData?.total || 0
 
   const authorColumns = [
     {
       title: '作者',
       key: 'username',
       width: 260,
-      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url, record.primary_email),
+      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url, record.avatar_base64, record.primary_email),
+    },
+    {
+      title: '公司',
+      key: 'company',
+      width: 80,
+      render: (_: unknown, record: PRPipelineContributor) => {
+        if (!record.company) return <Text type="secondary">—</Text>
+        return <Tag color="blue">{record.company}</Tag>
+      },
     },
     {
       title: <MetricTitle title="PR 数量" definitionKey="pr_count" />,
@@ -835,7 +854,16 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
       title: '评审人',
       key: 'username',
       width: 180,
-      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
+      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url, record.avatar_base64),
+    },
+    {
+      title: '公司',
+      key: 'company',
+      width: 80,
+      render: (_: unknown, record: PRPipelineContributor) => {
+        if (!record.company) return <Text type="secondary">—</Text>
+        return <Tag color="blue">{record.company}</Tag>
+      },
     },
     {
       title: <MetricTitle title="Review 数量" definitionKey="review_count" />,
@@ -856,44 +884,107 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
-        <Select
-          placeholder="贡献者类型"
-          allowClear
-          style={{ width: 150 }}
-          value={contributorType}
-          onChange={setContributorType}
-          options={[
-            { value: 'author', label: '作者' },
-            { value: 'reviewer', label: '评审人' },
-          ]}
+      <Card
+        title="作者"
+        extra={
+          <Select
+            placeholder="公司筛选"
+            allowClear
+            size="small"
+            style={{ width: 130 }}
+            value={authorCompany}
+            onChange={(val) => { setAuthorCompany(val); setAuthorPage(1); }}
+            options={[
+              { value: '华为', label: '华为' },
+              { value: 'none', label: '未标注' },
+            ]}
+          />
+        }
+        style={{ marginBottom: 24 }}
+      >
+        <Table
+          columns={authorColumns}
+          dataSource={authors}
+          loading={authorFetching}
+          rowKey="username"
+          pagination={{
+            current: authorPage,
+            pageSize,
+            total: authorTotal,
+            onChange: (p) => setAuthorPage(p),
+            showSizeChanger: false,
+          }}
         />
-      </div>
+      </Card>
 
-      {!contributorType || contributorType === 'author' ? (
-        <Card title="Top 作者" style={{ marginBottom: 24 }}>
-          <Table
-            columns={authorColumns}
-            dataSource={authors}
-            loading={isLoading}
-            rowKey="username"
-            pagination={{ pageSize: 10 }}
+      <Card
+        title="评审人"
+        extra={
+          <Select
+            placeholder="公司筛选"
+            allowClear
+            size="small"
+            style={{ width: 130 }}
+            value={reviewerCompany}
+            onChange={(val) => { setReviewerCompany(val); setReviewerPage(1); }}
+            options={[
+              { value: '华为', label: '华为' },
+              { value: 'none', label: '未标注' },
+            ]}
           />
-        </Card>
-      ) : null}
-
-      {!contributorType || contributorType === 'reviewer' ? (
-        <Card title="Top 评审人">
-          <Table
-            columns={reviewerColumns}
-            dataSource={reviewers}
-            loading={isLoading}
-            rowKey="username"
-            pagination={{ pageSize: 10 }}
-          />
-        </Card>
-      ) : null}
+        }
+      >
+        <Table
+          columns={reviewerColumns}
+          dataSource={reviewers}
+          loading={reviewerFetching}
+          rowKey="username"
+          pagination={{
+            current: reviewerPage,
+            pageSize,
+            total: reviewerTotal,
+            onChange: (p) => setReviewerPage(p),
+            showSizeChanger: false,
+          }}
+        />
+      </Card>
     </div>
+  )
+}
+
+const SyncButton = ({ daysBack }: { daysBack: number }) => {
+  const syncMutation = hooks.usePRPipelineSync()
+  const { data: syncStatus } = hooks.usePRPipelineSyncStatus()
+  const isSyncing = syncStatus?.running || syncMutation.isPending
+
+  const handleSync = () => {
+    if (isSyncing) {
+      message.warning('同步正在进行中，请稍候')
+      return
+    }
+    syncMutation.mutate(daysBack, {
+      onSuccess: (data) => {
+        if (data?.running) {
+          message.warning('同步正在进行中，请稍候')
+        } else {
+          message.success(data?.message || '同步已开始')
+        }
+      },
+      onError: (error: any) => {
+        message.error(error?.response?.data?.detail || '同步失败')
+      },
+    })
+  }
+
+  return (
+    <Button
+      icon={<SyncOutlined />}
+      loading={isSyncing}
+      disabled={isSyncing}
+      onClick={handleSync}
+    >
+      {isSyncing ? '同步中...' : '同步数据'}
+    </Button>
   )
 }
 
@@ -905,23 +996,11 @@ const PRPipelineBoard = () => {
   const [listFilters, setListFilters] = useState<DrillDownFilters>({})
   const [listPage, setListPage] = useState(1)
   const [listPageSize, setListPageSize] = useState(20)
-  const syncMutation = hooks.usePRPipelineSync()
 
   const handleDrillDown = (filters: DrillDownFilters) => {
     setListFilters(filters)
     setListPage(1)
     setActiveTab('list')
-  }
-
-  const handleSync = () => {
-    syncMutation.mutate(Math.max(overviewPeriod, metricsPeriod, contributorsPeriod), {
-      onSuccess: (data) => {
-        message.success(data?.message || '同步完成')
-      },
-      onError: (error: any) => {
-        message.error(error?.response?.data?.detail || '同步失败')
-      },
-    })
   }
 
   const tabItems = [
@@ -1028,13 +1107,7 @@ const PRPipelineBoard = () => {
           <Title level={3} style={{ margin: 0 }}>PR 流水线看板</Title>
           <Text type="secondary">跟踪 Pull Requests 的 Review 和 CI 流水线</Text>
         </div>
-        <Button
-          icon={<SyncOutlined />}
-          loading={syncMutation.isPending}
-          onClick={handleSync}
-        >
-          同步数据
-        </Button>
+        <SyncButton daysBack={Math.max(overviewPeriod, metricsPeriod, contributorsPeriod)} />
       </div>
 
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />

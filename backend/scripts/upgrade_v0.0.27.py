@@ -1,0 +1,67 @@
+"""Database upgrade v0.0.27 - add author_email + ai_report_content columns"""
+import asyncio
+import logging
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from sqlalchemy import text
+
+from app.db.base import SessionLocal, engine
+
+logger = logging.getLogger(__name__)
+DESCRIPTION = "Add author_email + author_avatar_base64 to pull_requests, ai_report_content to daily_report_history"
+
+
+async def check_column_exists(table_name, column_name):
+    try:
+        def _g(conn):
+            from sqlalchemy import inspect
+            return [c['name'] for c in inspect(conn).get_columns(table_name)]
+        async with engine.begin() as conn:
+            return column_name in await conn.run_sync(_g)
+    except Exception:
+        return False
+
+
+async def upgrade():
+    print("\n" + "=" * 60)
+    print("  Starting upgrade to v0.0.27")
+    print("=" * 60 + "\n")
+
+    async with SessionLocal() as db:
+        if await check_column_exists("pull_requests", "author_email"):
+            print("  [OK] Column 'author_email' already exists")
+        else:
+            await db.execute(text(
+                "ALTER TABLE pull_requests ADD COLUMN author_email VARCHAR(200)"
+            ))
+            await db.commit()
+            print("  [DONE] Added column 'author_email' to pull_requests")
+
+        if await check_column_exists("pull_requests", "author_avatar_base64"):
+            print("  [OK] Column 'author_avatar_base64' already exists")
+        else:
+            await db.execute(text(
+                "ALTER TABLE pull_requests ADD COLUMN author_avatar_base64 TEXT NULL"
+            ))
+            await db.commit()
+            print("  [DONE] Added column 'author_avatar_base64' to pull_requests")
+
+        if await check_column_exists("daily_report_history", "ai_report_content"):
+            print("  [OK] Column 'ai_report_content' already exists")
+        else:
+            await db.execute(text(
+                "ALTER TABLE daily_report_history ADD COLUMN ai_report_content TEXT NULL"
+            ))
+            await db.commit()
+            print("  [DONE] Added column 'ai_report_content'")
+
+    print("\n" + "=" * 60)
+    print("  Upgrade v0.0.27 complete!")
+    print("=" * 60 + "\n")
+
+
+if __name__ == "__main__":
+    asyncio.run(upgrade())

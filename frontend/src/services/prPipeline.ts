@@ -101,13 +101,20 @@ export interface PRPipelineContributor {
   avatar_url: string | null
   emails: string[]
   primary_email: string | null
+  avatar_base64: string | null
   type: string
+  company: string | null
   pr_count: number
   review_count: number
   lines_added: number
   lines_removed: number
   avg_first_response_hours: number | null
   merged_count: number
+}
+
+export interface PRPipelineContributorsResponse {
+  total: number
+  items: PRPipelineContributor[]
 }
 
 export interface PRPipelineKanban {
@@ -187,10 +194,13 @@ export const getMetrics = async (days?: number): Promise<PRPipelineMetrics> => {
 export const getContributors = async (
   days?: number,
   type?: string,
-  limit?: number
-): Promise<PRPipelineContributor[]> => {
-  const response = await api.get<PRPipelineContributor[]>('/pr-pipeline/contributors', {
-    params: { days, type, limit },
+  skip?: number,
+  limit?: number,
+  company?: string,
+  sortBy?: string,
+): Promise<PRPipelineContributorsResponse> => {
+  const response = await api.get<PRPipelineContributorsResponse>('/pr-pipeline/contributors', {
+    params: { days, type, skip, limit, company, sort_by: sortBy },
   })
   return response.data
 }
@@ -200,10 +210,15 @@ export const getTrends = async (days?: number): Promise<PRPipelineTrendsResponse
   return response.data
 }
 
-export const syncPRPipeline = async (daysBack?: number): Promise<{ message: string }> => {
-  const response = await longTimeoutApiClient.post<{ message: string }>('/pr-pipeline/sync', {
+export const syncPRPipeline = async (daysBack?: number): Promise<{ message: string; running?: boolean }> => {
+  const response = await longTimeoutApiClient.post<{ message: string; running?: boolean }>('/pr-pipeline/sync', {
     days_back: daysBack,
   })
+  return response.data
+}
+
+export const getSyncStatus = async (): Promise<{ running: boolean }> => {
+  const response = await api.get<{ running: boolean }>('/pr-pipeline/sync/status')
   return response.data
 }
 
@@ -221,4 +236,19 @@ export const historicalSyncPRPipeline = async (
 export const getPRDetail = async (prNumber: number): Promise<PullRequestResponse> => {
   const response = await api.get<PullRequestResponse>(`/pr-pipeline/${prNumber}`)
   return response.data
+}
+
+export interface PRDiagnosisResult {
+  pr_number: number
+  report: string
+  model: string
+  provider: string
+  duration_seconds: number
+  tokens: number
+  history_id?: number
+}
+
+export async function diagnosePR(prNumber: number): Promise<PRDiagnosisResult> {
+  const { data } = await longTimeoutApiClient.post(`/pr-pipeline/${prNumber}/diagnose`)
+  return data
 }

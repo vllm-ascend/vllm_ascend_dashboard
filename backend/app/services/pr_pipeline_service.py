@@ -3,13 +3,16 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Unicode
 
+from app.core.config import settings
 from app.models import PullRequest
+from app.utils.company_detector import detect_company
 from app.schemas.pr_pipeline import (
     PRPipelineContributor,
+    PRPipelineContributorsResponse,
     PRPipelineKanban,
     PRPipelineListResponse,
     PRPipelineMetrics,
@@ -270,48 +273,88 @@ class PRPipelineService:
         repo: str,
         days: int = 30,
         type: str | None = None,
+        skip: int = 0,
         limit: int = 20,
-    ) -> list[PRPipelineContributor]:
+        company: str | None = None,
+        sort_by: str = "pr_count",
+    ) -> PRPipelineContributorsResponse:
         now = datetime.now(UTC)
         since = now - timedelta(days=days)
 
+        # Map sort_by to actual column
+        author_sort_map = {
+            "pr_count": desc("pr_count"),
+            "merged_count": desc("pr_count"),  # merged_count is a separate query, default to pr_count
+            "lines_added": desc("lines_added"),
+            "lines_removed": desc("lines_removed"),
+        }
+        reviewer_sort_map = {
+            "review_count": None,  # sorted separately
+            "avg_first_response_hours": None,
+        }
+        order_clause = author_sort_map.get(sort_by, desc("pr_count"))
+
         contributors: list[PRPipelineContributor] = []
+        author_total = 0
+        reviewer_total = 0
 
         if type is None or type == "author":
-            stmt = select(
+            base_stmt = select(
                 PullRequest.author,
-                PullRequest.author_avatar_url,
-                func.count(PullRequest.id).label("pr_count"),
-                func.sum(PullRequest.additions).label("lines_added"),
-                func.sum(PullRequest.deletions).label("lines_removed"),
+                func.max(PullRequest.author_avatar_url).label("author_avatar_url"),
+                func.max(PullRequest.author_avatar_base64).label("author_avatar_base64"),
+                func.max(PullRequest.author_email).label("author_email"),
             ).where(
                 PullRequest.owner == owner,
                 PullRequest.repo == repo,
                 PullRequest.created_at >= since,
-            ).group_by(PullRequest.author, PullRequest.author_avatar_url).order_by(desc("pr_count")).limit(limit)
-            result = await db.execute(stmt)
-            for row in result.all():
-                emails = await self._get_author_emails(db, owner, repo, row[0], since)
-                merged_stmt = select(func.count(PullRequest.id)).where(
-                    PullRequest.owner == owner,
-                    PullRequest.repo == repo,
-                    PullRequest.author == row[0],
-                    PullRequest.state == "merged",
-                    PullRequest.created_at >= since,
-                )
-                merged_result = await db.execute(merged_stmt)
-                merged_count = merged_result.scalar() or 0
+            )
 
+            # Company filter at SQL level
+            if company == "华为":
+                base_stmt = base_stmt.where(PullRequest.author_email.like("%@huawei.com"))
+            elif company == "none":
+                base_stmt = base_stmt.where(
+                    (PullRequest.author_email.is_(None)) |
+                    (PullRequest.author_email.not_like("%@huawei.com"))
+                )
+
+            base_stmt = base_stmt.group_by(PullRequest.author)
+
+            # COUNT query for total (wrap GROUP BY in subquery to count groups)
+            count_subq = base_stmt.with_only_columns(literal_column("1")).order_by(None).subquery()
+            count_stmt = select(func.count()).select_from(count_subq)
+            author_total = (await db.execute(count_stmt)).scalar() or 0
+
+            # Data query with aggregates + sort + offset + limit
+            data_stmt = base_stmt.add_columns(
+                func.count(PullRequest.id).label("pr_count"),
+                func.sum(case((PullRequest.state == "merged", 1), else_=0)).label("merged_count"),
+                func.sum(PullRequest.additions).label("lines_added"),
+                func.sum(PullRequest.deletions).label("lines_removed"),
+            ).order_by(order_clause)
+
+            if type == "author":
+                data_stmt = data_stmt.offset(skip).limit(limit)
+            else:
+                data_stmt = data_stmt.limit(limit * 5)  # both types: reasonable cap
+
+            result = await db.execute(data_stmt)
+            for row in result.all():
+                emails = await self._get_author_emails(db, owner, repo, row[0], since, row[3])
+                primary_email = emails[0] if emails else None
                 contributors.append(PRPipelineContributor(
                     username=row[0],
                     avatar_url=row[1],
                     emails=emails,
-                    primary_email=emails[0] if emails else None,
+                    primary_email=primary_email,
+                    avatar_base64=row[2],
                     type="author",
-                    pr_count=row[2],
-                    lines_added=row[3] or 0,
-                    lines_removed=row[4] or 0,
-                    merged_count=merged_count,
+                    company=detect_company(primary_email),
+                    pr_count=row[4],
+                    merged_count=row[5] or 0,
+                    lines_added=row[6] or 0,
+                    lines_removed=row[7] or 0,
                 ))
 
         if type is None or type == "reviewer":
@@ -336,20 +379,74 @@ class PRPipelineService:
                         hours = (row[1] - row[2]).total_seconds() / 3600
                         reviewer_stats[login]["response_hours"].append(hours)
 
-            sorted_reviewers = sorted(reviewer_stats.items(), key=lambda x: x[1]["count"], reverse=True)[:limit]
+            sorted_reviewers = sorted(reviewer_stats.items(), key=lambda x: x[1]["count"], reverse=True)
+
+            # Batch-fetch emails for reviewer logins from PullRequest author data
+            reviewer_emails: dict[str, str | None] = {}
+            if sorted_reviewers:
+                reviewer_logins = [login for login, _ in sorted_reviewers]
+                email_stmt = select(
+                    PullRequest.author,
+                    PullRequest.author_email,
+                ).where(
+                    PullRequest.owner == owner,
+                    PullRequest.repo == repo,
+                    PullRequest.author.in_(reviewer_logins),
+                    PullRequest.author_email.isnot(None),
+                ).distinct()
+                email_result = await db.execute(email_stmt)
+                for row in email_result.all():
+                    if row[0] and row[1]:
+                        reviewer_emails[row[0]] = row[1]
+
+    
+            # Build sorted contributor list with company info
+            sorted_contribs = []
             for login, stats in sorted_reviewers:
                 avg_response = None
                 if stats["response_hours"]:
                     avg_response = round(sum(stats["response_hours"]) / len(stats["response_hours"]), 1)
+                sorted_contribs.append((login, stats, avg_response, detect_company(reviewer_emails.get(login))))
 
+            # Company filter at Python level (reviewer company comes from DB/GitHub lookup)
+            if company == "华为":
+                sorted_contribs = [(l, s, a, c) for l, s, a, c in sorted_contribs if c == "华为"]
+            elif company == "none":
+                sorted_contribs = [(l, s, a, c) for l, s, a, c in sorted_contribs if c is None]
+
+            # Sort reviewers
+            if sort_by == "avg_first_response_hours":
+                sorted_contribs.sort(key=lambda x: x[2] or float("inf"))
+            else:
+                sorted_contribs.sort(key=lambda x: x[1]["count"], reverse=True)
+
+            for login, stats, avg_response, contrib_company in sorted_contribs:
                 contributors.append(PRPipelineContributor(
                     username=login,
                     type="reviewer",
+                    company=contrib_company,
                     review_count=stats["count"],
                     avg_first_response_hours=avg_response,
                 ))
 
-        return contributors
+            reviewer_total = len(sorted_contribs)  # count after company filter, before pagination
+
+            # Apply pagination for reviewer-only requests (authors already added above)
+            if type == "reviewer":
+                # Keep only reviewers, apply skip/limit
+                reviewers_only = [c for c in contributors if c.type == "reviewer"]
+                contributors = [c for c in contributors if c.type == "author"] + reviewers_only[skip:skip + limit]
+
+        if type is None:
+            # Both types: cap each list independently
+            author_items = [c for c in contributors if c.type == "author"][:limit]
+            reviewer_items = [c for c in contributors if c.type == "reviewer"][:limit]
+            contributors = author_items + reviewer_items
+
+        return PRPipelineContributorsResponse(
+            total=author_total + reviewer_total,
+            items=contributors,
+        )
 
     async def _get_author_emails(
         self,
@@ -358,6 +455,7 @@ class PRPipelineService:
         repo: str,
         author: str,
         since: datetime,
+        fallback_email: str | None = None,
     ) -> list[str]:
         stmt = select(PullRequest.data).where(
             PullRequest.owner == owner,
@@ -367,6 +465,8 @@ class PRPipelineService:
         )
         result = await db.execute(stmt)
         counts: Counter[str] = Counter()
+        if fallback_email:
+            counts[fallback_email] += 1
 
         for row in result.all():
             data = row[0] or {}

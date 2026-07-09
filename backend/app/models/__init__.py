@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    DateTime,
     Float,
     ForeignKey,
     Integer,
@@ -15,7 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import backref, declarative_base, relationship
 from sqlalchemy.types import JSON
 
 # 导出所有模型类，方便其他地方导入
@@ -30,6 +31,7 @@ __all__ = [
     "JobFailureAnalysis",
     "PullRequest",
     "UserLoginLog", "FeatureUsageLog", "TokenBlacklist",
+    "IssueDiagnosisHistory",
     "TestCase", "TestRun", "TestSuiteSnapshot", "FailureAnnotation",
     "AppLog",
 ]
@@ -282,6 +284,7 @@ class DailyReportHistory(Base):
     model_summary = Column(JSON)
     github_summary = Column(JSON)
     performance_summary = Column(JSON)
+    ai_report_content = Column(Text)
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
 
@@ -448,6 +451,24 @@ class FeatureUsageLog(Base):
     user = relationship("User", back_populates="usage_logs")
 
 
+class IssueDiagnosisHistory(Base):
+    __tablename__ = "issue_diagnosis_history"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    diagnosis_type = Column(String(20), nullable=False)  # pr_pipeline, ci_job, manual
+    target_id = Column(String(100), nullable=False)  # PR number or job ID
+    target_label = Column(String(200))  # PR title or job name
+    report_content = Column(Text)
+    model_used = Column(String(100))
+    duration_seconds = Column(Float, default=0)
+    status = Column(String(20), default="success")
+    is_liked = Column(Boolean, default=False)
+    like_count = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", backref="diagnosis_histories")
+
+
 class TokenBlacklist(Base):
     __tablename__ = "token_blacklist"
 
@@ -475,6 +496,8 @@ class PullRequest(Base):
     title = Column(String(500), nullable=False)
     author = Column(String(100), nullable=False, index=True)
     author_avatar_url = Column(String(500))
+    author_avatar_base64 = Column(Text)  # Cached avatar as data:image/png;base64,...
+    author_email = Column(String(200))
     html_url = Column(String(500))
     state = Column(String(20), nullable=False, index=True)
     is_draft = Column(Boolean, default=False, index=True)

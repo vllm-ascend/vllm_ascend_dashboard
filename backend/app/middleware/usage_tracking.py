@@ -10,7 +10,7 @@ from app.models import FeatureUsageLog
 
 logger = logging.getLogger(__name__)
 
-EXCLUDED_PATHS = ("/health", "/docs", "/redoc", "/openapi.json", "/auth/login", "/auth/register", "/auth/refresh")
+EXCLUDED_PATHS = ("/health", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh")
 
 FEATURE_NAME_MAP = {
     "/api/v1/ci": "CI看板", "/api/v1/models": "模型看板", "/api/v1/performance": "性能数据",
