@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Card, Tabs, Table, Statistic, Row, Col, Tag, Empty, Typography, Select, Spin, message, Button, Input, Space } from 'antd'
-import { CodeOutlined, DownloadOutlined, SyncOutlined, ArrowRightOutlined } from '@ant-design/icons'
+import { Card, Tabs, Table, Statistic, Row, Col, Tag, Empty, Typography, Select, Spin, message, Button, Input, Space, Alert } from 'antd'
+import { CodeOutlined, DownloadOutlined, SyncOutlined, ArrowRightOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -9,8 +9,10 @@ import {
 import {
   getOverview, getComplexity, getDuplication, getHeatmap, getTrends,
   getSecurity, syncHeatmap, compareVersions, exportMetrics,
+  getDerivedMetrics, getAlerts, getCICorrelation, triggerCollection,
   type CodeMetricsOverview, type ComplexityItem, type DuplicationItem,
   type HeatmapItem, type TrendItem, type SecurityItem, type CompareResult,
+  type DerivedMetrics, type CodeMetricsAlert, type CICorrelationItem,
 } from '../services/codeMetrics'
 
 const { Title, Text } = Typography
@@ -36,11 +38,21 @@ function CodeMetricsBoard() {
   const [tabLoading, setTabLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
 
+  const [derived, setDerived] = useState<DerivedMetrics | null>(null)
+  const [alerts, setAlerts] = useState<CodeMetricsAlert[]>([])
+  const [ciCorrelation, setCICorrelation] = useState<CICorrelationItem[]>([])
+  const [triggering, setTriggering] = useState(false)
+
   const loadOverview = async (d: number) => {
     setLoading(true)
     try { setOverview(await getOverview(d)) } catch (e) { console.error('Overview failed:', e); message.error('加载数据失败') }
     finally { setLoading(false) }
+    getDerivedMetrics(period).then(r => setDerived(r)).catch(() => {})
   }
+
+  useEffect(() => {
+    getAlerts().then(r => setAlerts(r.alerts)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (activeTab === 'overview') loadOverview(period)
@@ -66,6 +78,10 @@ function CodeMetricsBoard() {
     }
     else if (activeTab === 'compare') {
       // no auto-load, wait for user input
+    }
+    else if (activeTab === 'ci-correlation') {
+      setTabLoading(true)
+      getCICorrelation(period).then(r => setCICorrelation(r.items)).catch(e => { console.error(e); message.error('加载失败') }).finally(() => setTabLoading(false))
     }
   }, [activeTab, period])
 
@@ -160,6 +176,40 @@ function CodeMetricsBoard() {
                   <Col span={6}><Statistic title="Lint 错误" value={overview.metrics?.lint_errors || 0} /></Col>
                 </Row>
               </Card>
+
+              {derived && (
+                <Card title="PR 衍生指标" size="small" style={{ marginTop: 16 }}>
+                  <Row gutter={16}>
+                    <Col span={4}><Statistic title="PR 总数" value={derived.pr_count} /></Col>
+                    <Col span={4}><Statistic title="新增行数" value={derived.total_additions} /></Col>
+                    <Col span={4}><Statistic title="删除行数" value={derived.total_deletions} /></Col>
+                  </Row>
+                  <Row gutter={16} style={{ marginTop: 16 }}>
+                    <Col span={12}>
+                      <Text strong>PR 大小分布</Text>
+                      <div style={{ marginTop: 8 }}>
+                        {Object.entries(derived.size_distribution).map(([k, v]) => (
+                          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                            <Text>{k}</Text>
+                            <Tag>{v}</Tag>
+                          </div>
+                        ))}
+                      </div>
+                    </Col>
+                    <Col span={12}>
+                      <Text strong>修改类型分布</Text>
+                      <div style={{ marginTop: 8 }}>
+                        {Object.entries(derived.type_distribution).map(([k, v]) => (
+                          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                            <Text>{k}</Text>
+                            <Tag>{v}</Tag>
+                          </div>
+                        ))}
+                      </div>
+                    </Col>
+                  </Row>
+                </Card>
+              )}
 
               <div style={{ marginTop: 8, textAlign: 'right' }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>
@@ -342,6 +392,48 @@ function CodeMetricsBoard() {
         </>
       ),
     },
+    {
+      key: 'ci-correlation',
+      label: 'CI 关联',
+      children: (
+        <Spin spinning={tabLoading}>
+          {ciCorrelation.length === 0 ? (
+            <Empty description="暂无关联数据" />
+          ) : (
+            <>
+              <Card title="代码质量 vs CI 成功率" size="small" style={{ marginBottom: 16 }}>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={ciCorrelation}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis yAxisId="left" />
+                    <YAxis yAxisId="right" orientation="right" />
+                    <Tooltip />
+                    <Legend />
+                    <Line yAxisId="left" type="monotone" dataKey="health_score" name="健康度" stroke="#1677ff" />
+                    <Line yAxisId="right" type="monotone" dataKey="ci_success_rate" name="CI 成功率(%)" stroke="#52c41a" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Card>
+              <Card title="超大复杂度函数 vs CI 成功率" size="small">
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={ciCorrelation}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis yAxisId="left" />
+                    <YAxis yAxisId="right" orientation="right" />
+                    <Tooltip />
+                    <Legend />
+                    <Line yAxisId="left" type="monotone" dataKey="cc_huge_count" name="超大复杂度函数数" stroke="#ff4d4f" />
+                    <Line yAxisId="right" type="monotone" dataKey="ci_success_rate" name="CI 成功率(%)" stroke="#52c41a" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Card>
+            </>
+          )}
+        </Spin>
+      ),
+    },
   ]
 
   return (
@@ -354,19 +446,48 @@ function CodeMetricsBoard() {
           </Title>
           <Text type="secondary">vllm-ascend 仓库代码质量量化度量 — 圈复杂度 / 重复率 / 安全规范</Text>
         </div>
-        <Button icon={<DownloadOutlined />} onClick={async () => {
-          try {
-            const blob = await exportMetrics('csv', period)
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = 'code_metrics.csv'
-            a.click()
-            URL.revokeObjectURL(url)
-            message.success('导出成功')
-          } catch { message.error('导出失败') }
-        }}>导出 CSV</Button>
+        <Space>
+          <Button icon={<ThunderboltOutlined />} loading={triggering} onClick={async () => {
+            setTriggering(true)
+            try {
+              const r = await triggerCollection('main')
+              if (r.status === 'triggered') message.success('采集任务已触发')
+              else message.warning(r.message || '触发失败')
+            } catch { message.error('触发失败') }
+            finally { setTriggering(false) }
+          }}>手动采集</Button>
+          <Button icon={<DownloadOutlined />} onClick={async () => {
+            try {
+              const blob = await exportMetrics('csv', period)
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = 'code_metrics.csv'
+              a.click()
+              URL.revokeObjectURL(url)
+              message.success('导出成功')
+            } catch { message.error('导出失败') }
+          }}>导出 CSV</Button>
+        </Space>
       </div>
+      {alerts.length > 0 && (
+        <Alert
+          message={`代码度量告警 (${alerts.length})`}
+          description={
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {alerts.map((a, i) => (
+                <li key={i}>
+                  <Tag color={a.level === 'error' ? 'red' : a.level === 'warning' ? 'orange' : 'blue'}>{a.level}</Tag>
+                  {a.message}
+                </li>
+              ))}
+            </ul>
+          }
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
     </div>
   )

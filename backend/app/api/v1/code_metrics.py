@@ -693,3 +693,209 @@ async def cleanup_old_details(
     await db.commit()
 
     return {"deleted": len(old_ids), "retention_days": retention_days}
+
+
+@router.get("/derived-metrics", summary="衍生指标（PR 维度聚合）")
+async def get_derived_metrics(
+    current_user: CurrentUser,
+    db: DbSession,
+    days: int = Query(30, ge=1, le=365),
+):
+    """从 PR 数据聚合衍生指标：PR 大小分布、代码变更量、修改类型分布"""
+    from app.models import PullRequest
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = select(PullRequest).where(
+        PullRequest.owner == "vllm-project",
+        PullRequest.repo == "vllm-ascend",
+        PullRequest.created_at >= cutoff,
+    )
+    result = await db.execute(stmt)
+    prs = result.scalars().all()
+
+    # PR 大小分布
+    size_dist = {"XS(<10)": 0, "S(10-50)": 0, "M(50-200)": 0, "L(200-500)": 0, "XL(>500)": 0}
+    total_add = 0
+    total_del = 0
+    type_dist: Counter = Counter()
+
+    for pr in prs:
+        additions = pr.additions or 0
+        deletions = pr.deletions or 0
+        total_add += additions
+        total_del += deletions
+
+        if additions < 10:
+            size_dist["XS(<10)"] += 1
+        elif additions < 50:
+            size_dist["S(10-50)"] += 1
+        elif additions < 200:
+            size_dist["M(50-200)"] += 1
+        elif additions < 500:
+            size_dist["L(200-500)"] += 1
+        else:
+            size_dist["XL(>500)"] += 1
+
+        # 修改类型从 data JSON 提取
+        data = pr.data or {}
+        commit_types = data.get("commit_types", [])
+        if isinstance(commit_types, list):
+            for ct in commit_types:
+                if isinstance(ct, str):
+                    type_dist[ct] += 1
+        elif isinstance(commit_types, str):
+            type_dist[commit_types] += 1
+
+    return {
+        "pr_count": len(prs),
+        "total_additions": total_add,
+        "total_deletions": total_del,
+        "size_distribution": size_dist,
+        "type_distribution": dict(type_dist.most_common(10)),
+    }
+
+
+@router.post("/trigger", summary="手动触发 CI 采集（管理员）")
+async def trigger_collection(
+    current_user: CurrentAdminUser,
+    db: DbSession,
+    branch: str = Query("main", description="目标分支"),
+    tag: str = Query("", description="目标 tag（可选）"),
+):
+    """触发 vllm-ascend CI 中的代码度量采集工作流"""
+    try:
+        from app.services.github_client import GitHubClient
+        from app.core.config import settings
+
+        client = GitHubClient(token=settings.GITHUB_TOKEN)
+        # 尝试触发 code-metrics workflow
+        url = f"/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/workflows/code-metrics.yml/dispatches"
+        payload = {"ref": branch, "inputs": {"branch": branch, "tag": tag}}
+        await client._request("POST", url, data=payload)
+        return {"status": "triggered", "branch": branch, "tag": tag}
+    except Exception as e:
+        logger.warning(f"Failed to trigger code-metrics workflow: {e}")
+        return {
+            "status": "failed",
+            "message": "CI 工作流未配置或触发失败，请在 vllm-ascend 仓库创建 code-metrics.yml 工作流",
+            "branch": branch,
+        }
+
+
+@router.get("/alerts", summary="代码度量告警检查")
+async def check_alerts(
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """检查代码度量告警：健康度降级、新增超大复杂度函数"""
+    # 获取最近两个快照
+    stmt = select(CodeMetricsSnapshot).order_by(
+        CodeMetricsSnapshot.snapshot_date.desc()
+    ).limit(2)
+    result = await db.execute(stmt)
+    snapshots = result.scalars().all()
+
+    alerts = []
+
+    if len(snapshots) >= 2:
+        latest, prev = snapshots[0], snapshots[1]
+
+        # 健康度降级 > 10 分
+        if prev.health_score and latest.health_score:
+            drop = prev.health_score - latest.health_score
+            if drop > 10:
+                alerts.append({
+                    "level": "warning",
+                    "type": "health_score_drop",
+                    "message": f"健康度评分从 {prev.health_score} 降至 {latest.health_score}（下降 {drop:.1f} 分）",
+                    "snapshot_date": latest.snapshot_date.isoformat() if latest.snapshot_date else None,
+                })
+
+        # 新增超大复杂度函数
+        if latest.cc_huge_count and prev.cc_huge_count:
+            new_huge = latest.cc_huge_count - prev.cc_huge_count
+            if new_huge > 0:
+                alerts.append({
+                    "level": "warning",
+                    "type": "new_huge_complexity",
+                    "message": f"新增 {new_huge} 个超大复杂度函数（当前共 {latest.cc_huge_count} 个）",
+                    "snapshot_date": latest.snapshot_date.isoformat() if latest.snapshot_date else None,
+                })
+
+        # 重复率上升 > 2%
+        if prev.dup_ratio and latest.dup_ratio:
+            rise = latest.dup_ratio - prev.dup_ratio
+            if rise > 2:
+                alerts.append({
+                    "level": "info",
+                    "type": "duplication_rise",
+                    "message": f"代码重复率从 {prev.dup_ratio:.2f}% 升至 {latest.dup_ratio:.2f}%（上升 {rise:.2f}%）",
+                    "snapshot_date": latest.snapshot_date.isoformat() if latest.snapshot_date else None,
+                })
+
+        # 不安全函数新增
+        if latest.unsafe_functions_count and prev.unsafe_functions_count:
+            new_unsafe = latest.unsafe_functions_count - prev.unsafe_functions_count
+            if new_unsafe > 0:
+                alerts.append({
+                    "level": "error",
+                    "type": "new_unsafe_functions",
+                    "message": f"新增 {new_unsafe} 个不安全函数调用",
+                    "snapshot_date": latest.snapshot_date.isoformat() if latest.snapshot_date else None,
+                })
+
+    return {"alerts": alerts, "count": len(alerts)}
+
+
+@router.get("/ci-correlation", summary="CI 关联分析")
+async def get_ci_correlation(
+    current_user: CurrentUser,
+    db: DbSession,
+    days: int = Query(30, ge=1, le=365),
+):
+    """分析代码度量与 CI 结果的关联性"""
+    from app.models import CIResult
+    from sqlalchemy import func as sql_func
+
+    cutoff = date.today() - timedelta(days=days)
+
+    # 获取度量快照
+    metrics_stmt = select(CodeMetricsSnapshot).where(
+        CodeMetricsSnapshot.snapshot_date >= cutoff
+    ).order_by(CodeMetricsSnapshot.snapshot_date.asc())
+    metrics_result = await db.execute(metrics_stmt)
+    snapshots = metrics_result.scalars().all()
+
+    # 获取 CI 数据（按天聚合）
+    ci_stmt = select(
+        sql_func.date(CIResult.run_started_at).label("day"),
+        sql_func.count(CIResult.id).label("total"),
+        sql_func.sum(sql_func.case((CIResult.conclusion == "success", 1), else_=0)).label("success"),
+    ).where(
+        CIResult.run_started_at >= cutoff
+    ).group_by(sql_func.date(CIResult.run_started_at)).order_by(sql_func.date(CIResult.run_started_at).asc())
+    ci_result = await db.execute(ci_stmt)
+    ci_by_date = {str(row.day): {"total": row.total, "success": row.success, "rate": (row.success / row.total * 100) if row.total > 0 else 0} for row in ci_result}
+
+    # 合并数据
+    correlation_data = []
+    for snap in snapshots:
+        date_str = snap.snapshot_date.isoformat() if snap.snapshot_date else None
+        ci = ci_by_date.get(date_str, {})
+        correlation_data.append({
+            "date": date_str,
+            "cc_huge_count": snap.cc_huge_count,
+            "dup_ratio": snap.dup_ratio,
+            "health_score": snap.health_score,
+            "ci_total": ci.get("total", 0),
+            "ci_success_rate": round(ci.get("rate", 0), 1),
+        })
+
+    return {
+        "items": correlation_data,
+        "summary": {
+            "snapshots": len(snapshots),
+            "ci_days": len(ci_by_date),
+            "matched_days": len(correlation_data),
+        }
+    }

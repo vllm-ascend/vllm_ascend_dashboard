@@ -127,3 +127,47 @@ export async function exportMetrics(format?: string, days?: number): Promise<Blo
   const { data } = await api.get('/code-metrics/export', { params: { format, days }, responseType: format === 'csv' ? 'blob' : 'json' })
   return data
 }
+
+export interface DerivedMetrics {
+  pr_count: number
+  total_additions: number
+  total_deletions: number
+  size_distribution: Record<string, number>
+  type_distribution: Record<string, number>
+}
+
+export interface CodeMetricsAlert {
+  level: string
+  type: string
+  message: string
+  snapshot_date: string | null
+}
+
+export interface CICorrelationItem {
+  date: string | null
+  cc_huge_count: number
+  dup_ratio: number
+  health_score: number
+  ci_total: number
+  ci_success_rate: number
+}
+
+export async function getDerivedMetrics(days?: number): Promise<DerivedMetrics> {
+  const { data } = await api.get('/code-metrics/derived-metrics', { params: { days } })
+  return data
+}
+
+export async function getAlerts(): Promise<{ alerts: CodeMetricsAlert[]; count: number }> {
+  const { data } = await api.get('/code-metrics/alerts')
+  return data
+}
+
+export async function getCICorrelation(days?: number): Promise<{ items: CICorrelationItem[]; summary: Record<string, number> }> {
+  const { data } = await api.get('/code-metrics/ci-correlation', { params: { days } })
+  return data
+}
+
+export async function triggerCollection(branch?: string, tag?: string): Promise<{ status: string; message?: string; branch?: string }> {
+  const { data } = await api.post('/code-metrics/trigger', null, { params: { branch, tag } })
+  return data
+}
