@@ -150,14 +150,10 @@ function App() {
               <Route path="models/reports/:date" element={<ModelDailyReport />} />
               {/* 告警规则 */}
               <Route path="alert-rules" element={<AlertRulesManagement />} />
-              {/* 问题定位（管理员） */}
+              {/* 问题定位（所有用户） */}
               <Route
                 path="issue-diagnosis"
-                element={
-                  <AdminRoute>
-                    <IssueDiagnosis />
-                  </AdminRoute>
-                }
+                element={<IssueDiagnosis />}
               />
               {/* 用户统计（管理员） */}
               <Route
