@@ -40,11 +40,21 @@ class PRPipelineCollector:
                 files = await self.github.get_pr_files(owner, repo, pr_number)
 
                 if "additions" not in pr or pr.get("additions") is None:
+                    commit_items = pr.get("commits") if isinstance(pr.get("commits"), list) else []
                     try:
                         detail = await self.github.get_pr_detail(owner, repo, pr_number)
                         pr = {**pr, **detail}
+                        if commit_items:
+                            pr["commits"] = commit_items
                     except Exception as e:
                         logger.warning(f"Failed to fetch PR detail for #{pr_number}: {e}")
+
+                if not isinstance(pr.get("commits"), list):
+                    try:
+                        pr["commits"] = await self.github.get_pr_commits(owner, repo, pr_number)
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch PR commits for #{pr_number}: {e}")
+                        pr["commits"] = []
 
                 db_pr = await self._upsert_pr(pr, owner, repo, reviews, files)
                 if db_pr:
@@ -77,6 +87,7 @@ class PRPipelineCollector:
     ) -> PullRequest | None:
         try:
             pr = await self.github.get_pr_detail(owner, repo, pr_number)
+            pr["commits"] = await self.github.get_pr_commits(owner, repo, pr_number)
             reviews = await self.github.get_pr_reviews(owner, repo, pr_number)
             files = await self.github.get_pr_files(owner, repo, pr_number)
 
@@ -196,6 +207,7 @@ class PRPipelineCollector:
             "deletions": total_deletions,
             "changed_files": total_changed,
             "reviews": reviews,
+            "commits": pr.get("commits", []) if isinstance(pr.get("commits"), list) else [],
             "files_count": len(files),
         }
 

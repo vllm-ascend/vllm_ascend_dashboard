@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -290,6 +291,7 @@ class PRPipelineService:
             ).group_by(PullRequest.author, PullRequest.author_avatar_url).order_by(desc("pr_count")).limit(limit)
             result = await db.execute(stmt)
             for row in result.all():
+                emails = await self._get_author_emails(db, owner, repo, row[0], since)
                 merged_stmt = select(func.count(PullRequest.id)).where(
                     PullRequest.owner == owner,
                     PullRequest.repo == repo,
@@ -303,6 +305,8 @@ class PRPipelineService:
                 contributors.append(PRPipelineContributor(
                     username=row[0],
                     avatar_url=row[1],
+                    emails=emails,
+                    primary_email=emails[0] if emails else None,
                     type="author",
                     pr_count=row[2],
                     lines_added=row[3] or 0,
@@ -346,6 +350,44 @@ class PRPipelineService:
                 ))
 
         return contributors
+
+    async def _get_author_emails(
+        self,
+        db: AsyncSession,
+        owner: str,
+        repo: str,
+        author: str,
+        since: datetime,
+    ) -> list[str]:
+        stmt = select(PullRequest.data).where(
+            PullRequest.owner == owner,
+            PullRequest.repo == repo,
+            PullRequest.author == author,
+            PullRequest.created_at >= since,
+        )
+        result = await db.execute(stmt)
+        counts: Counter[str] = Counter()
+
+        for row in result.all():
+            data = row[0] or {}
+            commits = data.get("commits") or []
+            if not isinstance(commits, list):
+                continue
+            for commit in commits:
+                if not isinstance(commit, dict):
+                    continue
+                commit_author = commit.get("author") or {}
+                login = commit_author.get("login") if isinstance(commit_author, dict) else None
+                if login and login != author:
+                    continue
+
+                commit_data = commit.get("commit") or {}
+                author_data = commit_data.get("author") if isinstance(commit_data, dict) else {}
+                email = author_data.get("email") if isinstance(author_data, dict) else None
+                if email:
+                    counts[email] += 1
+
+        return [email for email, _ in counts.most_common()]
 
     async def get_trends(
         self,

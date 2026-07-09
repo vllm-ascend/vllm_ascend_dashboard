@@ -1,6 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from '../services/prPipeline'
 
+const invalidatePRPipelineQueries = (queryClient: ReturnType<typeof useQueryClient>) => {
+  queryClient.invalidateQueries({
+    predicate: (query) => {
+      const key = query.queryKey[0]
+      return typeof key === 'string' && key.startsWith('pr-pipeline')
+    },
+  })
+}
+
 export const usePRPipelineOverview = (days?: number) => {
   return useQuery({
     queryKey: ['pr-pipeline-overview', days],
@@ -73,7 +82,7 @@ export const usePRPipelineSync = () => {
   return useMutation({
     mutationFn: (daysBack?: number) => api.syncPRPipeline(daysBack),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pr-pipeline'] })
+      invalidatePRPipelineQueries(queryClient)
     },
   })
 }
@@ -85,7 +94,7 @@ export const usePRPipelineHistoricalSync = () => {
     mutationFn: (params?: { phases?: string[]; monthsBack?: number }) =>
       api.historicalSyncPRPipeline(params?.phases, params?.monthsBack),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pr-pipeline'] })
+      invalidatePRPipelineQueries(queryClient)
     },
   })
 }

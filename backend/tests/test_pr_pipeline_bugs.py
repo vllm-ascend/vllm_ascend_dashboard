@@ -12,6 +12,89 @@ OWNER = "vllm-ascend"
 REPO = "vllm-ascend"
 
 
+class TestContributorEmails:
+    """Contributor rows should expose commit author emails for PR authors."""
+
+    @pytest.mark.asyncio
+    async def test_author_contributor_includes_commit_emails(self, db_session):
+        now = datetime.now(UTC)
+        pr = make_pr(
+            pr_number=9101,
+            author="alice",
+            created_at=now - timedelta(days=1),
+        )
+        pr.data = {
+            "commits": [
+                {
+                    "author": {"login": "alice"},
+                    "commit": {"author": {"email": "alice@example.com"}},
+                },
+                {
+                    "author": {"login": "alice"},
+                    "commit": {"author": {"email": "alice@example.com"}},
+                },
+                {
+                    "author": {"login": "other"},
+                    "commit": {"author": {"email": "other@example.com"}},
+                },
+            ]
+        }
+        db_session.add(pr)
+        await db_session.commit()
+
+        service = PRPipelineService()
+        result = await service.get_contributors(db_session, OWNER, REPO, days=30, type="author")
+
+        alice = next(item for item in result if item.username == "alice")
+        assert alice.emails == ["alice@example.com"]
+        assert alice.primary_email == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_collector_preserves_commit_list_when_pr_detail_has_commit_count(self, db_session):
+        """GitHub PR detail has commits as a count; it must not overwrite commit details."""
+        now = datetime.now(UTC)
+        commit_items = [
+            {
+                "author": {"login": "alice"},
+                "commit": {"author": {"email": "alice@example.com"}},
+            }
+        ]
+        pr_summary = {
+            "number": 9201,
+            "title": "Preserve commits",
+            "state": "open",
+            "html_url": "https://github.com/example/repo/pull/9201",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+            "user": {"login": "alice", "avatar_url": ""},
+            "head": {"sha": "abc123", "ref": "feature"},
+            "base": {"ref": "main"},
+            "labels": [],
+            "draft": False,
+            "commits": commit_items,
+        }
+        pr_detail = {
+            "additions": 10,
+            "deletions": 2,
+            "changed_files": 1,
+            "commits": 1,
+        }
+        github = MagicMock()
+        github.get_pull_requests_by_date_range = AsyncMock(return_value=[pr_summary])
+        github.get_pr_detail = AsyncMock(return_value=pr_detail)
+        github.get_pr_reviews = AsyncMock(return_value=[])
+        github.get_pr_files = AsyncMock(return_value=[])
+        github.get_check_runs_for_sha = AsyncMock(return_value=[])
+
+        collector = PRPipelineCollector(github, db_session)
+        await collector.collect_prs(OWNER, REPO, days_back=1)
+
+        service = PRPipelineService()
+        contributors = await service.get_contributors(db_session, OWNER, REPO, days=30, type="author")
+        alice = next(item for item in contributors if item.username == "alice")
+        assert alice.primary_email == "alice@example.com"
+
+
 # ============================================================================
 # B1: Backlog index formula — should be Open(non-Draft) / daily_merge_avg
 # ============================================================================

@@ -136,6 +136,8 @@ class PRPipelineMetrics(BaseModel):
 class PRPipelineContributor(BaseModel):
     username: str
     avatar_url: str | None = None
+    emails: list[str] = []
+    primary_email: str | None = None
     type: str
     pr_count: int = 0
     review_count: int = 0

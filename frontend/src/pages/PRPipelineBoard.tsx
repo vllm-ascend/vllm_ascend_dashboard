@@ -153,12 +153,12 @@ const renderCIStatusTag = (status: string | null) => {
   return <Tag color={CI_STATUS_COLORS[status] || 'default'}>{CI_STATUS_LABELS[status] || status}</Tag>
 }
 
-const renderAvatar = (author: string, avatarUrl: string | null) => (
+const renderAvatar = (author: string, avatarUrl: string | null, email?: string | null) => (
   <Space size={4}>
     <Avatar size={20} src={avatarUrl} style={{ backgroundColor: '#1677ff' }}>
       {author?.[0]?.toUpperCase()}
     </Avatar>
-    <Text>{author}</Text>
+    <Text>{email ? `${author} <${email}>` : author}</Text>
   </Space>
 )
 
@@ -791,8 +791,8 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
     {
       title: '作者',
       key: 'username',
-      width: 180,
-      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url),
+      width: 260,
+      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url, record.primary_email),
     },
     {
       title: <MetricTitle title="PR 数量" definitionKey="pr_count" />,
@@ -914,7 +914,7 @@ const PRPipelineBoard = () => {
   }
 
   const handleSync = () => {
-    syncMutation.mutate(undefined, {
+    syncMutation.mutate(Math.max(overviewPeriod, metricsPeriod, contributorsPeriod), {
       onSuccess: (data) => {
         message.success(data?.message || '同步完成')
       },

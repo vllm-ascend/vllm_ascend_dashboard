@@ -1,4 +1,4 @@
-import api from './api'
+import api, { longTimeoutApiClient } from './api'
 
 export interface PullRequestResponse {
   id: number
@@ -99,6 +99,8 @@ export interface PRPipelineMetrics {
 export interface PRPipelineContributor {
   username: string
   avatar_url: string | null
+  emails: string[]
+  primary_email: string | null
   type: string
   pr_count: number
   review_count: number
@@ -199,7 +201,7 @@ export const getTrends = async (days?: number): Promise<PRPipelineTrendsResponse
 }
 
 export const syncPRPipeline = async (daysBack?: number): Promise<{ message: string }> => {
-  const response = await api.post<{ message: string }>('/pr-pipeline/sync', {
+  const response = await longTimeoutApiClient.post<{ message: string }>('/pr-pipeline/sync', {
     days_back: daysBack,
   })
   return response.data
@@ -209,7 +211,7 @@ export const historicalSyncPRPipeline = async (
   phases?: string[],
   monthsBack?: number
 ): Promise<{ message: string }> => {
-  const response = await api.post<{ message: string }>('/pr-pipeline/historical-sync', {
+  const response = await longTimeoutApiClient.post<{ message: string }>('/pr-pipeline/historical-sync', {
     phases,
     months_back: monthsBack,
   })
