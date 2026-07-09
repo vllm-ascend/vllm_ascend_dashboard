@@ -13,6 +13,7 @@ from app.api.v1 import (
     alert_rules,
     auth,
     ci,
+    code_metrics,
     commit_analysis,
     daily_report,
     daily_summary,
@@ -408,6 +409,7 @@ def create_app() -> FastAPI:
     app.include_router(pr_pipeline.router, prefix="/api/v1/pr-pipeline", tags=["PR 流水线"])
     app.include_router(test_board.router, prefix="/api/v1", tags=["测试看板"])
     app.include_router(logs.router, prefix="/api/v1/logs", tags=["日志中心"])
+    app.include_router(code_metrics.router, prefix="/api/v1/code-metrics", tags=["代码度量"])
 
     @app.get("/health")
     async def health_check():
