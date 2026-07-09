@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Card, Tabs, Table, Statistic, Row, Col, Tag, Empty, Typography, Select, Spin } from 'antd'
-import { CodeOutlined } from '@ant-design/icons'
+import { Card, Tabs, Table, Statistic, Row, Col, Tag, Empty, Typography, Select, Spin, message, Button, Input, Space } from 'antd'
+import { CodeOutlined, DownloadOutlined, SyncOutlined, ArrowRightOutlined } from '@ant-design/icons'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -8,8 +8,9 @@ import {
 } from 'recharts'
 import {
   getOverview, getComplexity, getDuplication, getHeatmap, getTrends,
+  getSecurity, syncHeatmap, compareVersions, exportMetrics,
   type CodeMetricsOverview, type ComplexityItem, type DuplicationItem,
-  type HeatmapItem, type TrendItem,
+  type HeatmapItem, type TrendItem, type SecurityItem, type CompareResult,
 } from '../services/codeMetrics'
 
 const { Title, Text } = Typography
@@ -27,18 +28,45 @@ function CodeMetricsBoard() {
   const [heatmap, setHeatmap] = useState<HeatmapItem[]>([])
   const [trends, setTrends] = useState<TrendItem[]>([])
 
+  const [security, setSecurity] = useState<SecurityItem[]>([])
+  const [compareResult, setCompareResult] = useState<CompareResult | null>(null)
+  const [tagA, setTagA] = useState('')
+  const [tagB, setTagB] = useState('')
+  const [comparing, setComparing] = useState(false)
+  const [tabLoading, setTabLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+
   const loadOverview = async (d: number) => {
     setLoading(true)
-    try { setOverview(await getOverview(d)) } catch (e) { console.error('Overview failed:', e) }
+    try { setOverview(await getOverview(d)) } catch (e) { console.error('Overview failed:', e); message.error('加载数据失败') }
     finally { setLoading(false) }
   }
 
   useEffect(() => {
     if (activeTab === 'overview') loadOverview(period)
-    else if (activeTab === 'complexity') getComplexity(100).then(r => setComplexity(r.items)).catch(e => console.error(e))
-    else if (activeTab === 'duplication') getDuplication(100).then(r => setDuplication(r.items)).catch(e => console.error(e))
-    else if (activeTab === 'heatmap') getHeatmap(50).then(r => setHeatmap(r.items)).catch(e => console.error(e))
-    else if (activeTab === 'trends') getTrends(period).then(r => setTrends(r.items)).catch(e => console.error(e))
+    else if (activeTab === 'complexity') {
+      setTabLoading(true)
+      getComplexity(100).then(r => setComplexity(r.items)).catch(e => { console.error(e); message.error('加载数据失败') }).finally(() => setTabLoading(false))
+    }
+    else if (activeTab === 'duplication') {
+      setTabLoading(true)
+      getDuplication(100).then(r => setDuplication(r.items)).catch(e => { console.error(e); message.error('加载数据失败') }).finally(() => setTabLoading(false))
+    }
+    else if (activeTab === 'heatmap') {
+      setTabLoading(true)
+      getHeatmap(50).then(r => setHeatmap(r.items)).catch(e => { console.error(e); message.error('加载数据失败') }).finally(() => setTabLoading(false))
+    }
+    else if (activeTab === 'trends') {
+      setTabLoading(true)
+      getTrends(period).then(r => setTrends(r.items)).catch(e => { console.error(e); message.error('加载数据失败') }).finally(() => setTabLoading(false))
+    }
+    else if (activeTab === 'security') {
+      setTabLoading(true)
+      getSecurity(100).then(r => setSecurity(r.items)).catch(e => { console.error(e); message.error('加载失败') }).finally(() => setTabLoading(false))
+    }
+    else if (activeTab === 'compare') {
+      // no auto-load, wait for user input
+    }
   }, [activeTab, period])
 
   const radarData = overview?.health_scores ? [
@@ -125,6 +153,12 @@ function CodeMetricsBoard() {
                   <Col span={4}><Statistic title="Lint 错误" value={overview.metrics?.lint_errors || 0} /></Col>
                   <Col span={4}><Statistic title="TODO/FIXME" value={(overview.metrics?.todo_count || 0) + (overview.metrics?.fixme_count || 0)} /></Col>
                 </Row>
+                <Row gutter={16} style={{ marginTop: 16 }}>
+                  <Col span={6}><Statistic title="TODO" value={overview.metrics?.todo_count || 0} /></Col>
+                  <Col span={6}><Statistic title="FIXME" value={overview.metrics?.fixme_count || 0} /></Col>
+                  <Col span={6}><Statistic title="不安全函数" value={overview.metrics?.unsafe_functions_count || 0} valueStyle={{ color: (overview.metrics?.unsafe_functions_count || 0) > 0 ? '#ff4d4f' : '#52c41a' }} /></Col>
+                  <Col span={6}><Statistic title="Lint 错误" value={overview.metrics?.lint_errors || 0} /></Col>
+                </Row>
               </Card>
 
               <div style={{ marginTop: 8, textAlign: 'right' }}>
@@ -141,60 +175,97 @@ function CodeMetricsBoard() {
       key: 'complexity',
       label: '复杂度',
       children: (
-        <Table
-          dataSource={complexity}
-          rowKey={(r) => `${r.file_path}:${r.function_name}`}
-          columns={[
-            { title: '函数', dataIndex: 'function_name', width: 200 },
-            { title: '文件', dataIndex: 'file_path', width: 300, ellipsis: true },
-            { title: '语言', dataIndex: 'language', width: 80, render: (v: string) => v ? <Tag color={v === 'Python' ? 'blue' : 'orange'}>{v}</Tag> : '-' },
-            { title: '圈复杂度', dataIndex: 'cyclomatic_complexity', width: 100, sorter: (a: ComplexityItem, b: ComplexityItem) => (a.cyclomatic_complexity || 0) - (b.cyclomatic_complexity || 0), render: (v: number) => <Tag color={(v || 0) > 20 ? 'red' : (v || 0) > 15 ? 'orange' : 'green'}>{v}</Tag> },
-            { title: '嵌套深度', dataIndex: 'max_nesting_depth', width: 100 },
-            { title: '函数行数', dataIndex: 'function_lines', width: 100 },
-          ]}
-          pagination={{ pageSize: 20 }}
-        />
+        <Spin spinning={tabLoading}>
+          <Table
+            dataSource={complexity}
+            rowKey={(r) => `${r.file_path}:${r.function_name}`}
+            columns={[
+              { title: '函数', dataIndex: 'function_name', width: 200 },
+              { title: '文件', dataIndex: 'file_path', width: 300, ellipsis: true },
+              { title: '语言', dataIndex: 'language', width: 80, render: (v: string) => v ? <Tag color={v === 'Python' ? 'blue' : 'orange'}>{v}</Tag> : '-' },
+              { title: '圈复杂度', dataIndex: 'cyclomatic_complexity', width: 100, sorter: (a: ComplexityItem, b: ComplexityItem) => (a.cyclomatic_complexity || 0) - (b.cyclomatic_complexity || 0), render: (v: number) => <Tag color={(v || 0) > 20 ? 'red' : (v || 0) > 15 ? 'orange' : 'green'}>{v}</Tag> },
+              { title: '嵌套深度', dataIndex: 'max_nesting_depth', width: 100 },
+              { title: '函数行数', dataIndex: 'function_lines', width: 100 },
+            ]}
+            pagination={{ pageSize: 20 }}
+          />
+        </Spin>
       ),
     },
     {
       key: 'duplication',
       label: '重复率',
       children: (
-        <Table
-          dataSource={duplication}
-          rowKey={(r, i) => String(i)}
-          columns={[
-            { title: '文件 A', dataIndex: 'file_a', ellipsis: true },
-            { title: '文件 B', dataIndex: 'file_b', ellipsis: true },
-            { title: '重复行数', dataIndex: 'lines', width: 100, sorter: (a: DuplicationItem, b: DuplicationItem) => a.lines - b.lines },
-            { title: '代码片段', dataIndex: 'fragment', ellipsis: true, width: 300 },
-          ]}
-          pagination={{ pageSize: 20 }}
-        />
+        <Spin spinning={tabLoading}>
+          <Table
+            dataSource={duplication}
+            rowKey={(r) => `${r.file_a}:${r.file_b}`}
+            columns={[
+              { title: '文件 A', dataIndex: 'file_a', ellipsis: true },
+              { title: '文件 B', dataIndex: 'file_b', ellipsis: true },
+              { title: '重复行数', dataIndex: 'lines', width: 100, sorter: (a: DuplicationItem, b: DuplicationItem) => a.lines - b.lines },
+              { title: '代码片段', dataIndex: 'fragment', ellipsis: true, width: 300 },
+            ]}
+            pagination={{ pageSize: 20 }}
+          />
+        </Spin>
+      ),
+    },
+    {
+      key: 'security',
+      label: '安全规范',
+      children: (
+        <Spin spinning={tabLoading}>
+          <Table
+            dataSource={security}
+            rowKey={(r, i) => String(i)}
+            columns={[
+              { title: '严重级别', dataIndex: 'severity', width: 100, render: (v: string) => <Tag color={v === 'error' ? 'red' : v === 'warning' ? 'orange' : 'blue'}>{v || '-'}</Tag> },
+              { title: '工具', dataIndex: 'tool', width: 100 },
+              { title: '规则', dataIndex: 'rule_id', width: 150 },
+              { title: '文件', dataIndex: 'file_path', ellipsis: true },
+              { title: '行号', dataIndex: 'line_number', width: 80 },
+              { title: '消息', dataIndex: 'message', ellipsis: true },
+            ]}
+            pagination={{ pageSize: 20 }}
+          />
+        </Spin>
       ),
     },
     {
       key: 'heatmap',
       label: '热力图',
       children: (
-        <Table
-          dataSource={heatmap}
-          rowKey="file_path"
-          columns={[
-            { title: '文件路径', dataIndex: 'file_path', ellipsis: true },
-            { title: '变更次数', dataIndex: 'change_count', width: 100, sorter: (a: HeatmapItem, b: HeatmapItem) => a.change_count - b.change_count, render: (v: number) => <Tag color={v > 20 ? 'red' : v > 10 ? 'orange' : 'blue'}>{v}</Tag> },
-            { title: 'Bug 修复次数', dataIndex: 'bug_fix_count', width: 120 },
-            { title: '最后变更', dataIndex: 'last_changed', width: 180 },
-          ]}
-          pagination={{ pageSize: 20 }}
-        />
+        <Spin spinning={tabLoading}>
+          <Button icon={<SyncOutlined />} loading={syncing} onClick={async () => {
+            setSyncing(true)
+            try {
+              const r = await syncHeatmap(30)
+              message.success(`同步完成: ${r.updated} 个文件`)
+              const h = await getHeatmap(50)
+              setHeatmap(h.items)
+            } catch { message.error('同步失败') }
+            finally { setSyncing(false) }
+          }} style={{ marginBottom: 16 }}>从 PR 数据同步热力图</Button>
+          <Table
+            dataSource={heatmap}
+            rowKey="file_path"
+            columns={[
+              { title: '文件路径', dataIndex: 'file_path', ellipsis: true },
+              { title: '变更次数', dataIndex: 'change_count', width: 100, sorter: (a: HeatmapItem, b: HeatmapItem) => a.change_count - b.change_count, render: (v: number) => <Tag color={v > 20 ? 'red' : v > 10 ? 'orange' : 'blue'}>{v}</Tag> },
+              { title: 'Bug 修复次数', dataIndex: 'bug_fix_count', width: 120 },
+              { title: '最后变更', dataIndex: 'last_changed', width: 180 },
+            ]}
+            pagination={{ pageSize: 20 }}
+          />
+        </Spin>
       ),
     },
     {
       key: 'trends',
       label: '趋势',
       children: (
-        <>
+        <Spin spinning={tabLoading}>
           <Select value={period} onChange={setPeriod} options={[
             { label: '近 30 天', value: 30 },
             { label: '近 90 天', value: 90 },
@@ -228,6 +299,46 @@ function CodeMetricsBoard() {
               </LineChart>
             </ResponsiveContainer>
           </Card>
+        </Spin>
+      ),
+    },
+    {
+      key: 'compare',
+      label: '版本对比',
+      children: (
+        <>
+          <Space style={{ marginBottom: 16 }}>
+            <Input placeholder="Tag A (如 v0.13.0)" value={tagA} onChange={e => setTagA(e.target.value)} style={{ width: 200 }} />
+            <ArrowRightOutlined />
+            <Input placeholder="Tag B (如 v0.18.0)" value={tagB} onChange={e => setTagB(e.target.value)} style={{ width: 200 }} />
+            <Button type="primary" loading={comparing} disabled={!tagA || !tagB} onClick={async () => {
+              setComparing(true)
+              try {
+                const result = await compareVersions(tagA, tagB)
+                setCompareResult(result)
+                if (result.error) message.warning(result.error)
+              } catch (e) { message.error('对比失败') }
+              finally { setComparing(false) }
+            }}>对比</Button>
+          </Space>
+          {compareResult?.a && compareResult?.b ? (
+            <Table
+              dataSource={Object.keys(compareResult.a).filter(k => k !== 'tag' && k !== 'snapshot_date').map(k => ({
+                key: k, metric: k, a: compareResult.a![k], b: compareResult.b![k], delta: compareResult.deltas[k] || 0
+              }))}
+              columns={[
+                { title: '指标', dataIndex: 'metric', width: 200 },
+                { title: compareResult.a.tag || 'A', dataIndex: 'a', width: 150 },
+                { title: compareResult.b.tag || 'B', dataIndex: 'b', width: 150 },
+                { title: '变化', dataIndex: 'delta', width: 100, render: (v: number) => <Tag color={v > 0 ? 'red' : v < 0 ? 'green' : 'default'}>{v > 0 ? '+' : ''}{v}</Tag> },
+              ]}
+              pagination={false}
+            />
+          ) : compareResult?.error ? (
+            <Empty description={compareResult.error} />
+          ) : (
+            <Empty description="输入两个 tag 进行对比" />
+          )}
         </>
       ),
     },
@@ -235,12 +346,26 @@ function CodeMetricsBoard() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <Title level={3} style={{ margin: 0 }}>
-          <CodeOutlined style={{ marginRight: 8 }} />
-          代码度量看板
-        </Title>
-        <Text type="secondary">vllm-ascend 仓库代码质量量化度量 — 圈复杂度 / 重复率 / 安全规范</Text>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <Title level={3} style={{ margin: 0 }}>
+            <CodeOutlined style={{ marginRight: 8 }} />
+            代码度量看板
+          </Title>
+          <Text type="secondary">vllm-ascend 仓库代码质量量化度量 — 圈复杂度 / 重复率 / 安全规范</Text>
+        </div>
+        <Button icon={<DownloadOutlined />} onClick={async () => {
+          try {
+            const blob = await exportMetrics('csv', period)
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = 'code_metrics.csv'
+            a.click()
+            URL.revokeObjectURL(url)
+            message.success('导出成功')
+          } catch { message.error('导出失败') }
+        }}>导出 CSV</Button>
       </div>
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
     </div>

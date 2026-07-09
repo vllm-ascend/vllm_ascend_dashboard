@@ -91,3 +91,39 @@ export async function getTrends(days?: number): Promise<{ items: TrendItem[] }> 
   const { data } = await api.get('/code-metrics/trends', { params: { days } })
   return data
 }
+
+export interface SecurityItem {
+  file_path: string
+  line_number: number | null
+  severity: string | null
+  tool: string | null
+  rule_id: string | null
+  message: string | null
+}
+
+export interface CompareResult {
+  a: Record<string, any> | null
+  b: Record<string, any> | null
+  deltas: Record<string, number>
+  error?: string
+}
+
+export async function getSecurity(limit?: number): Promise<{ items: SecurityItem[] }> {
+  const { data } = await api.get('/code-metrics/security', { params: { limit } })
+  return data
+}
+
+export async function syncHeatmap(days?: number): Promise<{ updated: number; total_files: number }> {
+  const { data } = await api.post('/code-metrics/heatmap/sync', null, { params: { days } })
+  return data
+}
+
+export async function compareVersions(tagA: string, tagB: string): Promise<CompareResult> {
+  const { data } = await api.get('/code-metrics/compare', { params: { tag_a: tagA, tag_b: tagB } })
+  return data
+}
+
+export async function exportMetrics(format?: string, days?: number): Promise<Blob | any> {
+  const { data } = await api.get('/code-metrics/export', { params: { format, days }, responseType: format === 'csv' ? 'blob' : 'json' })
+  return data
+}

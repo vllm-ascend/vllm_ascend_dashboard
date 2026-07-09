@@ -43,6 +43,7 @@ TABLES = {
             id INTEGER PRIMARY KEY AUTO_INCREMENT,
             repo VARCHAR(200) NOT NULL DEFAULT 'vllm-ascend',
             branch VARCHAR(100) NOT NULL DEFAULT 'main',
+            tag VARCHAR(100),
             snapshot_date DATE NOT NULL,
             collection_status VARCHAR(20) DEFAULT 'complete',
             collection_duration_seconds INTEGER DEFAULT 0,
@@ -98,6 +99,7 @@ TABLES = {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             repo VARCHAR(200) NOT NULL DEFAULT 'vllm-ascend',
             branch VARCHAR(100) NOT NULL DEFAULT 'main',
+            tag VARCHAR(100),
             snapshot_date DATE NOT NULL,
             collection_status VARCHAR(20) DEFAULT 'complete',
             collection_duration_seconds INTEGER DEFAULT 0,
@@ -265,6 +267,7 @@ TABLES = {
 SQLITE_INDEXES = {
     "code_metrics_snapshots": [
         "CREATE INDEX IF NOT EXISTS ix_cms_snapshot_date ON code_metrics_snapshots(snapshot_date)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_snapshot_date_repo_branch ON code_metrics_snapshots(snapshot_date, repo, branch)",
     ],
     "code_metrics_complexity_details": [
         "CREATE INDEX IF NOT EXISTS ix_cmcd_snapshot_id ON code_metrics_complexity_details(snapshot_id)",
@@ -274,6 +277,9 @@ SQLITE_INDEXES = {
     ],
     "code_metrics_security_details": [
         "CREATE INDEX IF NOT EXISTS ix_cmsd_snapshot_id ON code_metrics_security_details(snapshot_id)",
+    ],
+    "code_metrics_file_heatmap": [
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_heatmap_repo_file ON code_metrics_file_heatmap(repo, file_path)",
     ],
 }
 

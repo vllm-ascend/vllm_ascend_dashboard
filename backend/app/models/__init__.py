@@ -632,6 +632,7 @@ class CodeMetricsSnapshot(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     repo = Column(String(200), nullable=False, default="vllm-ascend")
     branch = Column(String(100), nullable=False, default="main")
+    tag = Column(String(100))  # git tag for version comparison (e.g., v0.18.0)
     snapshot_date = Column(Date, nullable=False)
     collection_status = Column(String(20), default="complete")  # complete/partial/failed
     collection_duration_seconds = Column(Integer, default=0)
