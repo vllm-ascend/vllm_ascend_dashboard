@@ -155,18 +155,26 @@ class CodeMetricsCollector:
             import lizard as lizard_lib
 
             def _analyze():
-                analyzer = lizard_lib.Lizard()
+                import lizard as lizard_lib
                 results = []
-                for file_info in analyzer.analyze_path(repo_path):
-                    for func in file_info.function_list:
-                        results.append({
-                            "file_path": file_info.filename,
-                            "function_name": func.name,
-                            "cyclomatic_complexity": func.cyclomatic_complexity,
-                            "max_nesting_depth": getattr(func, "max_nesting_depth", 0),
-                            "nloc": func.nloc,
-                            "start_line": func.start_line,
-                        })
+                for root, dirs, files in os.walk(repo_path):
+                    dirs[:] = [d for d in dirs if d not in ['.git', 'build', '__pycache__', 'node_modules', '.venv', 'dist']]
+                    for fname in files:
+                        if fname.endswith(('.py', '.cpp', '.cc', '.h', '.hpp', '.c')):
+                            fpath = os.path.join(root, fname)
+                            try:
+                                info = lizard_lib.analyze_file(fpath)
+                                for func in info.function_list:
+                                    results.append({
+                                        "file_path": fpath,
+                                        "function_name": func.name,
+                                        "cyclomatic_complexity": func.cyclomatic_complexity,
+                                        "max_nesting_depth": getattr(func, "max_nesting_depth", 0),
+                                        "nloc": func.nloc,
+                                        "start_line": func.start_line,
+                                    })
+                            except Exception:
+                                pass
                 return results
 
             functions = await asyncio.to_thread(_analyze)
