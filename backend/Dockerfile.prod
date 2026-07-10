@@ -24,19 +24,34 @@ FROM docker.m.daocloud.io/library/python:3.11-slim AS production
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    procps \
-    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev shared-mime-info fonts-noto-cjk \
+# Configure apt mirrors for Chinese network (Aliyun)
+RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
+
+# Install runtime dependencies (with retry for flaky network)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    for i in 1 2 3; do \
+        apt-get update && apt-get install -y --no-install-recommends \
+            curl ca-certificates git procps \
+            libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev shared-mime-info \
+            && break || sleep 10; \
+    done \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash appuser
 
-# Install Node.js 20.x LTS + Claude Code CLI (for AI-powered log analysis)
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && npm install -g @anthropic-ai/claude-code \
+# Install Node.js 20.x LTS + Claude Code CLI
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    for i in 1 2 3; do \
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+        && apt-get install -y nodejs \
+        && break || sleep 10; \
+    done \
+    && npm config set registry https://registry.npmmirror.com \
+    && for i in 1 2 3; do \
+        npm install -g @anthropic-ai/claude-code && break || sleep 10; \
+    done \
+    && npm config delete registry \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment

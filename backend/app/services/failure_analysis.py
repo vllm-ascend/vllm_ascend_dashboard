@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta, UTC
 from typing import Optional
@@ -172,19 +173,51 @@ class FailureAnalysisService:
         await db.refresh(analysis)
 
         try:
-            llm_result = await run_with_fallback(
-                prompt=user_prompt,
-                provider_config={
-                    "provider": llm_config.provider,
-                    "api_key": llm_config.api_key,
-                    "api_base_url": llm_config.api_base_url,
-                    "default_model": llm_config.default_model,
-                },
-                system_prompt=system_prompt,
-                max_turns=max_turns_val,
-                timeout_seconds=timeout_val,
-                output_format="json",
-            )
+            # ── 路由：Agent Service（新） vs Claude Code CLI（旧）──
+            if os.environ.get("AGENT_SERVICE_ENABLED", "").lower() in ("1", "true", "yes"):
+                from app.services.agent_service import AgentService, AgentTask
+
+                agent_svc = AgentService(db)
+                agent_result = await agent_svc.run(AgentTask(
+                    prompt=user_prompt,
+                    provider_config={
+                        "provider": llm_config.provider,
+                        "api_key": llm_config.api_key,
+                        "api_base_url": llm_config.api_base_url,
+                        "default_model": llm_config.default_model,
+                    },
+                    system_prompt=system_prompt,
+                    skill_scope="ci_failure_analysis",
+                    max_steps=min(max_turns_val, 20),
+                    memory_type="failure_analysis",
+                    memory_filters={"workflow_name": job.workflow_name},
+                    source_id=analysis.id,
+                ))
+
+                # 适配 AgentResult → ClaudeCodeResult（后续代码期望此类型）
+                from app.services.claude_code_cli import ClaudeCodeResult
+                llm_result = ClaudeCodeResult(
+                    content=agent_result.content,
+                    turns=agent_result.steps if agent_result.steps > 0 else 1,
+                    duration_seconds=agent_result.duration_seconds,
+                    model_used=agent_result.model_used,
+                    exit_code=agent_result.exit_code,
+                    stderr=agent_result.error_message,
+                )
+            else:
+                llm_result = await run_with_fallback(
+                    prompt=user_prompt,
+                    provider_config={
+                        "provider": llm_config.provider,
+                        "api_key": llm_config.api_key,
+                        "api_base_url": llm_config.api_base_url,
+                        "default_model": llm_config.default_model,
+                    },
+                    system_prompt=system_prompt,
+                    max_turns=max_turns_val,
+                    timeout_seconds=timeout_val,
+                    output_format="json",
+                )
             # 清洗 GLM-5.1 的 <think> 和 tool call 噪音
             raw = llm_result.content
             raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
