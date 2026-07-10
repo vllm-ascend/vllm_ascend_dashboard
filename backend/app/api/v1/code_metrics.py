@@ -72,6 +72,82 @@ def _calculate_health_score(data: dict) -> dict:
     }
 
 
+async def _sync_heatmap_from_github(
+    db,
+    github_client,
+    owner: str,
+    repo: str,
+    days: int = 30,
+) -> dict:
+    """Shared helper: aggregate file change frequency from PRs via GitHub API.
+
+    Fetches PR file lists from the GitHub API (not from stored PR.data) and
+    upserts into the ``code_metrics_file_heatmap`` table.
+    """
+    from app.models import PullRequest
+    from collections import Counter
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = (
+        select(PullRequest.pr_number, PullRequest.title)
+        .where(
+            PullRequest.owner == owner,
+            PullRequest.repo == repo,
+            PullRequest.created_at >= cutoff,
+        )
+        .order_by(PullRequest.created_at.desc())
+        .limit(100)
+    )
+    result = await db.execute(stmt)
+
+    file_changes: Counter = Counter()
+    file_bug_fixes: Counter = Counter()
+    bug_keywords = ["fix", "bug", "error", "crash", "fail", "issue", "patch"]
+
+    for row in result:
+        pr_number = row[0]
+        title = (row[1] or "").lower()
+        is_bug_fix = any(kw in title for kw in bug_keywords)
+        try:
+            files = await github_client.get_pr_files(owner, repo, pr_number)
+            for f in files:
+                path = f.get("filename", "") if isinstance(f, dict) else ""
+                if path:
+                    file_changes[path] += 1
+                    if is_bug_fix:
+                        file_bug_fixes[path] += 1
+        except Exception as e:
+            logger.warning(f"Failed to fetch files for PR #{pr_number}: {e}")
+
+    updated = 0
+    for path, count in file_changes.most_common(500):
+        existing = await db.execute(
+            select(CodeMetricsFileHeatmap).where(
+                CodeMetricsFileHeatmap.repo == "vllm-ascend",
+                CodeMetricsFileHeatmap.file_path == path,
+            )
+        )
+        record = existing.scalar_one_or_none()
+        if record:
+            record.change_count = count
+            record.bug_fix_count = file_bug_fixes.get(path, 0)
+            record.last_changed = datetime.now(timezone.utc)
+        else:
+            db.add(
+                CodeMetricsFileHeatmap(
+                    repo="vllm-ascend",
+                    file_path=path,
+                    change_count=count,
+                    bug_fix_count=file_bug_fixes.get(path, 0),
+                    last_changed=datetime.now(timezone.utc),
+                )
+            )
+        updated += 1
+
+    await db.commit()
+    return {"updated": updated, "total_files": len(file_changes)}
+
+
 @router.post("/snapshot", summary="上传代码度量快照（CI 调用）")
 async def upload_snapshot(
     body: dict,
@@ -419,67 +495,17 @@ async def sync_heatmap(
     days: int = Query(30, ge=1, le=365),
 ):
     """从 PR 数据聚合文件变更频率，更新热力图"""
-    from app.models import PullRequest
+    from app.services.github_client import GitHubClient
+    from app.core.config import settings
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    stmt = select(PullRequest.data, PullRequest.title).where(
-        PullRequest.owner == "vllm-project",
-        PullRequest.repo == "vllm-ascend",
-        PullRequest.created_at >= cutoff,
-    )
-    result = await db.execute(stmt)
-
-    file_changes: Counter = Counter()
-    file_bug_fixes: Counter = Counter()
-    bug_keywords = ["fix", "bug", "error", "crash", "fail", "issue", "patch"]
-
-    for row in result:
-        data = row[0] or {}
-        title = (row[1] or "").lower()
-        is_bug_fix = any(kw in title for kw in bug_keywords)
-        files = data.get("files", [])
-        if not isinstance(files, list):
-            continue
-        for f in files:
-            if isinstance(f, dict):
-                path = f.get("filename", f.get("path", ""))
-            elif isinstance(f, str):
-                path = f
-            else:
-                continue
-            if path:
-                file_changes[path] += 1
-                if is_bug_fix:
-                    file_bug_fixes[path] += 1
-
-    # Upsert into heatmap table
-    updated = 0
-    for path, count in file_changes.most_common(500):
-        existing = await db.execute(
-            select(CodeMetricsFileHeatmap).where(
-                CodeMetricsFileHeatmap.repo == "vllm-ascend",
-                CodeMetricsFileHeatmap.file_path == path,
-            )
+    client = GitHubClient(token=settings.GITHUB_TOKEN)
+    try:
+        result = await _sync_heatmap_from_github(
+            db, client, settings.GITHUB_OWNER, settings.GITHUB_REPO, days
         )
-        record = existing.scalar_one_or_none()
-        if record:
-            record.change_count = count
-            record.bug_fix_count = file_bug_fixes.get(path, 0)
-            record.last_changed = datetime.now(timezone.utc)
-        else:
-            db.add(
-                CodeMetricsFileHeatmap(
-                    repo="vllm-ascend",
-                    file_path=path,
-                    change_count=count,
-                    bug_fix_count=file_bug_fixes.get(path, 0),
-                    last_changed=datetime.now(timezone.utc),
-                )
-            )
-        updated += 1
-
-    await db.commit()
-    return {"updated": updated, "total_files": len(file_changes)}
+    finally:
+        await client.close()
+    return result
 
 
 @router.get("/trends", summary="趋势数据")
@@ -911,4 +937,114 @@ async def get_ci_correlation(
             "ci_days": len(ci_by_date),
             "matched_days": len(correlation_data),
         }
+    }
+
+
+@router.get("/snapshot/{snapshot_id}", summary="快照详情（下钻）")
+async def get_snapshot_detail(
+    snapshot_id: int,
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """获取指定快照的完整详情"""
+    stmt = select(CodeMetricsSnapshot).where(CodeMetricsSnapshot.id == snapshot_id)
+    result = await db.execute(stmt)
+    snap = result.scalar_one_or_none()
+    if not snap:
+        return {"error": "Snapshot not found"}
+    return {
+        "id": snap.id,
+        "snapshot_date": snap.snapshot_date.isoformat() if snap.snapshot_date else None,
+        "collection_status": snap.collection_status,
+        "health_score": snap.health_score,
+        "health_scores": {
+            "complexity": snap.health_score_complexity,
+            "security": snap.health_score_security,
+            "duplication": snap.health_score_duplication,
+            "method_size": snap.health_score_method_size,
+            "tech_debt": snap.health_score_tech_debt,
+            "lint": snap.health_score_lint,
+        },
+        "metrics": {
+            "total_loc": snap.total_loc,
+            "total_functions": snap.total_functions,
+            "total_files": snap.total_files,
+            "cc_per_method": snap.cc_per_method,
+            "cc_maximum": snap.cc_maximum,
+            "cc_huge_count": snap.cc_huge_count,
+            "dup_ratio": snap.dup_ratio,
+            "dup_blocks": snap.dup_blocks,
+            "unsafe_functions_count": snap.unsafe_functions_count,
+            "lint_errors": snap.lint_errors,
+            "todo_count": snap.todo_count,
+            "fixme_count": snap.fixme_count,
+            "hack_count": snap.hack_count,
+        },
+        "language_loc": snap.language_loc or {},
+        "module_loc": snap.module_loc or {},
+    }
+
+
+@router.get("/complexity/file", summary="文件级复杂度详情（下钻）")
+async def get_file_complexity(
+    current_user: CurrentUser,
+    db: DbSession,
+    file_path: str = Query(..., description="文件路径"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """获取指定文件的所有函数复杂度"""
+    latest = await db.execute(
+        select(CodeMetricsSnapshot.id).order_by(
+            CodeMetricsSnapshot.snapshot_date.desc()
+        ).limit(1)
+    )
+    snapshot_id = latest.scalar_one_or_none()
+    if not snapshot_id:
+        return {"items": []}
+
+    stmt = (
+        select(CodeComplexityDetail)
+        .where(
+            CodeComplexityDetail.snapshot_id == snapshot_id,
+            CodeComplexityDetail.file_path == file_path,
+        )
+        .order_by(CodeComplexityDetail.cyclomatic_complexity.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return {
+        "file_path": file_path,
+        "items": [
+            {
+                "function_name": r.function_name,
+                "cyclomatic_complexity": r.cyclomatic_complexity,
+                "max_nesting_depth": r.max_nesting_depth,
+                "function_lines": r.function_lines,
+                "start_line": r.start_line,
+            }
+            for r in result.scalars().all()
+        ],
+    }
+
+
+@router.get("/heatmap/file", summary="文件变更历史（下钻）")
+async def get_file_heatmap_detail(
+    current_user: CurrentUser,
+    db: DbSession,
+    file_path: str = Query(..., description="文件路径"),
+):
+    """获取指定文件的变更历史"""
+    stmt = select(CodeMetricsFileHeatmap).where(
+        CodeMetricsFileHeatmap.file_path == file_path,
+    )
+    result = await db.execute(stmt)
+    record = result.scalar_one_or_none()
+    if not record:
+        return {"error": "File not found in heatmap"}
+    return {
+        "file_path": record.file_path,
+        "change_count": record.change_count,
+        "bug_fix_count": record.bug_fix_count,
+        "last_changed": record.last_changed.isoformat() if record.last_changed else None,
+        "last_commit_sha": record.last_commit_sha,
     }

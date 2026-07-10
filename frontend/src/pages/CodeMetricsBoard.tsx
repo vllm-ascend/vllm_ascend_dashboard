@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Card, Tabs, Table, Statistic, Row, Col, Tag, Empty, Typography, Select, Spin, message, Button, Input, Space, Alert } from 'antd'
+import { useState, useEffect, type ReactNode } from 'react'
+import { Card, Tabs, Table, Statistic, Row, Col, Tag, Empty, Typography, Select, Spin, message, Button, Input, Space, Alert, Modal } from 'antd'
 import { CodeOutlined, DownloadOutlined, SyncOutlined, ArrowRightOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -10,6 +10,7 @@ import {
   getOverview, getComplexity, getDuplication, getHeatmap, getTrends,
   getSecurity, syncHeatmap, compareVersions, exportMetrics,
   getDerivedMetrics, getAlerts, getCICorrelation, triggerCollection,
+  getFileComplexity, getFileHeatmapDetail,
   type CodeMetricsOverview, type ComplexityItem, type DuplicationItem,
   type HeatmapItem, type TrendItem, type SecurityItem, type CompareResult,
   type DerivedMetrics, type CodeMetricsAlert, type CICorrelationItem,
@@ -42,6 +43,29 @@ function CodeMetricsBoard() {
   const [alerts, setAlerts] = useState<CodeMetricsAlert[]>([])
   const [ciCorrelation, setCICorrelation] = useState<CICorrelationItem[]>([])
   const [triggering, setTriggering] = useState(false)
+
+  const [detailModal, setDetailModal] = useState<{ visible: boolean; title: string; content: ReactNode }>({ visible: false, title: '', content: null })
+  const [expandedFile, setExpandedFile] = useState<string | null>(null)
+  const [fileFunctions, setFileFunctions] = useState<any[]>([])
+
+  const ensureComplexity = async () => {
+    if (complexity.length === 0) {
+      try { const r = await getComplexity(100); setComplexity(r.items) } catch { /* ignore */ }
+    }
+    return complexity
+  }
+  const ensureDuplication = async () => {
+    if (duplication.length === 0) {
+      try { const r = await getDuplication(100); setDuplication(r.items) } catch { /* ignore */ }
+    }
+    return duplication
+  }
+  const ensureSecurity = async () => {
+    if (security.length === 0) {
+      try { const r = await getSecurity(100); setSecurity(r.items) } catch { /* ignore */ }
+    }
+    return security
+  }
 
   const loadOverview = async (d: number) => {
     setLoading(true)
@@ -117,8 +141,53 @@ function CodeMetricsBoard() {
                 <Col span={4}><Card><Statistic title="代码行数" value={overview.metrics?.total_loc || 0} /></Card></Col>
                 <Col span={4}><Card><Statistic title="函数总数" value={overview.metrics?.total_functions || 0} /></Card></Col>
                 <Col span={4}><Card><Statistic title="文件总数" value={overview.metrics?.total_files || 0} /></Card></Col>
-                <Col span={4}><Card><Statistic title="超大复杂度函数" value={overview.metrics?.cc_huge_count || 0} valueStyle={{ color: (overview.metrics?.cc_huge_count || 0) > 0 ? '#ff4d4f' : '#52c41a' }} /></Card></Col>
-                <Col span={4}><Card><Statistic title="重复率" value={overview.metrics?.dup_ratio || 0} precision={2} suffix="%" valueStyle={{ color: (overview.metrics?.dup_ratio || 0) > 10 ? '#ff4d4f' : '#52c41a' }} /></Card></Col>
+                <Col span={4}>
+                  <Card hoverable onClick={async () => {
+                    const items = await ensureComplexity()
+                    setDetailModal({
+                      visible: true,
+                      title: '超大复杂度函数列表',
+                      content: (
+                        <Table
+                          dataSource={items}
+                          rowKey={(r) => `${r.file_path}:${r.function_name}`}
+                          columns={[
+                            { title: '函数', dataIndex: 'function_name', width: 200 },
+                            { title: '文件', dataIndex: 'file_path', ellipsis: true },
+                            { title: '复杂度', dataIndex: 'cyclomatic_complexity', width: 80, render: (v: number) => <Tag color={(v || 0) > 20 ? 'red' : 'orange'}>{v}</Tag> },
+                          ]}
+                          pagination={{ pageSize: 10 }}
+                        />
+                      ),
+                    })
+                  }}>
+                    <Statistic title="超大复杂度函数" value={overview.metrics?.cc_huge_count || 0} valueStyle={{ color: (overview.metrics?.cc_huge_count || 0) > 0 ? '#ff4d4f' : '#52c41a' }} />
+                  </Card>
+                </Col>
+                <Col span={4}>
+                  <Card hoverable onClick={async () => {
+                    const items = await ensureDuplication()
+                    setDetailModal({
+                      visible: true,
+                      title: '重复代码块列表',
+                      content: (
+                        <Table
+                          dataSource={items}
+                          rowKey={(r) => `${r.file_a}:${r.file_b}`}
+                          columns={[
+                            { title: '文件 A', dataIndex: 'file_a', ellipsis: true },
+                            { title: '文件 B', dataIndex: 'file_b', ellipsis: true },
+                            { title: '重复行数', dataIndex: 'lines', width: 100 },
+                            { title: '代码片段', dataIndex: 'fragment', ellipsis: true, width: 300 },
+                          ]}
+                          pagination={{ pageSize: 10 }}
+                        />
+                      ),
+                    })
+                  }}>
+                    <Statistic title="重复率" value={overview.metrics?.dup_ratio || 0} precision={2} suffix="%" valueStyle={{ color: (overview.metrics?.dup_ratio || 0) > 10 ? '#ff4d4f' : '#52c41a' }} />
+                  </Card>
+                </Col>
               </Row>
 
               <Row gutter={16}>
@@ -165,9 +234,49 @@ function CodeMetricsBoard() {
                   <Col span={4}><Statistic title="平均复杂度" value={overview.metrics?.cc_per_method || 0} precision={1} /></Col>
                   <Col span={4}><Statistic title="最大复杂度" value={overview.metrics?.cc_maximum || 0} /></Col>
                   <Col span={4}><Statistic title="重复块数" value={overview.metrics?.dup_blocks || 0} /></Col>
-                  <Col span={4}><Statistic title="不安全函数" value={overview.metrics?.unsafe_functions_count || 0} valueStyle={{ color: (overview.metrics?.unsafe_functions_count || 0) > 0 ? '#ff4d4f' : '#52c41a' }} /></Col>
+                  <Col span={4}>
+                    <div style={{ cursor: 'pointer' }} onClick={async () => {
+                      const items = await ensureSecurity()
+                      setDetailModal({
+                        visible: true,
+                        title: '不安全函数列表',
+                        content: (
+                          <Table
+                            dataSource={items}
+                            rowKey={(r, i) => String(i)}
+                            columns={[
+                              { title: '严重级别', dataIndex: 'severity', width: 100, render: (v: string) => <Tag color={v === 'error' ? 'red' : v === 'warning' ? 'orange' : 'blue'}>{v || '-'}</Tag> },
+                              { title: '工具', dataIndex: 'tool', width: 100 },
+                              { title: '规则', dataIndex: 'rule_id', width: 150 },
+                              { title: '文件', dataIndex: 'file_path', ellipsis: true },
+                              { title: '行号', dataIndex: 'line_number', width: 80 },
+                              { title: '消息', dataIndex: 'message', ellipsis: true },
+                            ]}
+                            pagination={{ pageSize: 10 }}
+                          />
+                        ),
+                      })
+                    }}>
+                      <Statistic title="不安全函数" value={overview.metrics?.unsafe_functions_count || 0} valueStyle={{ color: (overview.metrics?.unsafe_functions_count || 0) > 0 ? '#ff4d4f' : '#52c41a' }} />
+                    </div>
+                  </Col>
                   <Col span={4}><Statistic title="Lint 错误" value={overview.metrics?.lint_errors || 0} /></Col>
-                  <Col span={4}><Statistic title="TODO/FIXME" value={(overview.metrics?.todo_count || 0) + (overview.metrics?.fixme_count || 0)} /></Col>
+                  <Col span={4}>
+                    <div style={{ cursor: 'pointer' }} onClick={() => {
+                      setDetailModal({
+                        visible: true,
+                        title: 'TODO / FIXME 统计',
+                        content: (
+                          <Row gutter={16}>
+                            <Col span={12}><Statistic title="TODO" value={overview.metrics?.todo_count || 0} /></Col>
+                            <Col span={12}><Statistic title="FIXME" value={overview.metrics?.fixme_count || 0} /></Col>
+                          </Row>
+                        ),
+                      })
+                    }}>
+                      <Statistic title="TODO/FIXME" value={(overview.metrics?.todo_count || 0) + (overview.metrics?.fixme_count || 0)} />
+                    </div>
+                  </Col>
                 </Row>
                 <Row gutter={16} style={{ marginTop: 16 }}>
                   <Col span={6}><Statistic title="TODO" value={overview.metrics?.todo_count || 0} /></Col>
@@ -229,6 +338,35 @@ function CodeMetricsBoard() {
           <Table
             dataSource={complexity}
             rowKey={(r) => `${r.file_path}:${r.function_name}`}
+            expandable={{
+              expandedRowKeys: expandedFile ? [expandedFile] : [],
+              onExpand: async (expanded: boolean, record: ComplexityItem) => {
+                if (expanded) {
+                  setExpandedFile(`${record.file_path}:${record.function_name}`)
+                  try {
+                    const r = await getFileComplexity(record.file_path)
+                    setFileFunctions(r.items)
+                  } catch { setFileFunctions([]) }
+                } else {
+                  setExpandedFile(null)
+                }
+              },
+              expandedRowRender: () => (
+                <Table
+                  dataSource={fileFunctions}
+                  rowKey="function_name"
+                  size="small"
+                  columns={[
+                    { title: '函数', dataIndex: 'function_name', width: 250 },
+                    { title: '复杂度', dataIndex: 'cyclomatic_complexity', width: 80 },
+                    { title: '嵌套深度', dataIndex: 'max_nesting_depth', width: 80 },
+                    { title: '行数', dataIndex: 'function_lines', width: 80 },
+                    { title: '起始行', dataIndex: 'start_line', width: 80 },
+                  ]}
+                  pagination={false}
+                />
+              ),
+            }}
             columns={[
               { title: '函数', dataIndex: 'function_name', width: 200 },
               { title: '文件', dataIndex: 'file_path', width: 300, ellipsis: true },
@@ -306,6 +444,26 @@ function CodeMetricsBoard() {
               { title: 'Bug 修复次数', dataIndex: 'bug_fix_count', width: 120 },
               { title: '最后变更', dataIndex: 'last_changed', width: 180 },
             ]}
+            onRow={(record: HeatmapItem) => ({
+              onClick: async () => {
+                try {
+                  const detail = await getFileHeatmapDetail(record.file_path)
+                  setDetailModal({
+                    visible: true,
+                    title: `文件变更详情: ${record.file_path}`,
+                    content: (
+                      <div>
+                        <Row gutter={16}>
+                          <Col span={8}><Statistic title="变更次数" value={detail.change_count || 0} /></Col>
+                          <Col span={8}><Statistic title="Bug修复次数" value={detail.bug_fix_count || 0} /></Col>
+                          <Col span={8}><Statistic title="最后变更" value={detail.last_changed || 'N/A'} /></Col>
+                        </Row>
+                      </div>
+                    ),
+                  })
+                } catch { message.error('加载详情失败') }
+              }
+            })}
             pagination={{ pageSize: 20 }}
           />
         </Spin>
@@ -324,7 +482,26 @@ function CodeMetricsBoard() {
           ]} style={{ marginBottom: 16 }} />
           <Card title="代码规模趋势" size="small" style={{ marginBottom: 16 }}>
             <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={trends}>
+              <LineChart data={trends} onClick={(e: any) => {
+                if (e && e.activePayload && e.activePayload[0]) {
+                  const data = e.activePayload[0].payload
+                  setDetailModal({
+                    visible: true,
+                    title: `快照详情: ${data.date}`,
+                    content: (
+                      <Row gutter={16}>
+                        <Col span={6}><Statistic title="代码行数" value={data.total_loc} /></Col>
+                        <Col span={6}><Statistic title="函数总数" value={data.total_functions} /></Col>
+                        <Col span={6}><Statistic title="健康度" value={data.health_score} /></Col>
+                        <Col span={6}><Statistic title="超大复杂度" value={data.cc_huge_count} /></Col>
+                        <Col span={6}><Statistic title="重复率" value={data.dup_ratio} suffix="%" /></Col>
+                        <Col span={6}><Statistic title="Lint错误" value={data.lint_errors} /></Col>
+                        <Col span={6}><Statistic title="TODO/FIXME" value={data.todo_count} /></Col>
+                      </Row>
+                    ),
+                  })
+                }
+              }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis />
@@ -337,7 +514,26 @@ function CodeMetricsBoard() {
           </Card>
           <Card title="质量趋势" size="small">
             <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={trends}>
+              <LineChart data={trends} onClick={(e: any) => {
+                if (e && e.activePayload && e.activePayload[0]) {
+                  const data = e.activePayload[0].payload
+                  setDetailModal({
+                    visible: true,
+                    title: `快照详情: ${data.date}`,
+                    content: (
+                      <Row gutter={16}>
+                        <Col span={6}><Statistic title="代码行数" value={data.total_loc} /></Col>
+                        <Col span={6}><Statistic title="函数总数" value={data.total_functions} /></Col>
+                        <Col span={6}><Statistic title="健康度" value={data.health_score} /></Col>
+                        <Col span={6}><Statistic title="超大复杂度" value={data.cc_huge_count} /></Col>
+                        <Col span={6}><Statistic title="重复率" value={data.dup_ratio} suffix="%" /></Col>
+                        <Col span={6}><Statistic title="Lint错误" value={data.lint_errors} /></Col>
+                        <Col span={6}><Statistic title="TODO/FIXME" value={data.todo_count} /></Col>
+                      </Row>
+                    ),
+                  })
+                }
+              }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis />
@@ -489,6 +685,15 @@ function CodeMetricsBoard() {
         />
       )}
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
+      <Modal
+        open={detailModal.visible}
+        title={detailModal.title}
+        onCancel={() => setDetailModal({ ...detailModal, visible: false })}
+        footer={null}
+        width={800}
+      >
+        {detailModal.content}
+      </Modal>
     </div>
   )
 }
