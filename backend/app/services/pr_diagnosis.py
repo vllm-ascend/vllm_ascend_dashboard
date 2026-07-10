@@ -73,6 +73,7 @@ class PRDiagnosisService:
 
         return {
             "pr_number": pr_number,
+            "pr_title": pr_info.get("title", ""),
             "report": result_content,
             "model": model_used or llm_config.default_model,
             "provider": llm_config.provider,
@@ -89,7 +90,7 @@ class PRDiagnosisService:
                 prompt=prompt,
                 provider_config={
                     "provider": llm_config.provider,
-                    "api_key": llm_config.api_key,
+                    "api_key": llm_config.decrypted_api_key,
                     "api_base_url": llm_config.api_base_url,
                     "default_model": llm_config.default_model,
                 },
@@ -108,7 +109,7 @@ class PRDiagnosisService:
             client.generate(
                 provider=llm_config.provider,
                 model=llm_config.default_model,
-                api_key=llm_config.api_key,
+                api_key=llm_config.decrypted_api_key,
                 api_base=llm_config.api_base_url,
                 system_prompt=system_prompt,
                 user_prompt=prompt,
@@ -398,9 +399,11 @@ class PRDiagnosisService:
                     if job.get("failed_steps"):
                         lines.append(f"- 失败步骤: {', '.join(job['failed_steps'])}")
                     if job.get("log_excerpt"):
+                        # 转义日志中的代码围栏，防止 prompt injection
+                        safe_excerpt = job["log_excerpt"].replace("```", "ˋˋˋ")
                         lines.append("- 关键日志:")
                         lines.append("```")
-                        lines.append(job["log_excerpt"])
+                        lines.append(safe_excerpt)
                         lines.append("```")
 
         # 跨 PR 数据

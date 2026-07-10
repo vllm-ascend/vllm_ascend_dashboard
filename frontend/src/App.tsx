@@ -29,6 +29,7 @@ import DailyReportConfigPage from './pages/DailyReportConfig'
 import SmtpConfig from './pages/SmtpConfig'
 import AlertRulesManagement from './pages/AlertRulesManagement'
 import IssueDiagnosis from './pages/IssueDiagnosis'
+import CodeMetricsBoard from './pages/CodeMetricsBoard'
 import Register from './pages/Register'
 import UserStats from './pages/UserStats'
 import TestObservabilityDashboard from './pages/TestObservabilityDashboard'
@@ -150,14 +151,15 @@ function App() {
               <Route path="models/reports/:date" element={<ModelDailyReport />} />
               {/* 告警规则 */}
               <Route path="alert-rules" element={<AlertRulesManagement />} />
-              {/* 问题定位（管理员） */}
+              {/* 问题定位（所有用户） */}
               <Route
                 path="issue-diagnosis"
-                element={
-                  <AdminRoute>
-                    <IssueDiagnosis />
-                  </AdminRoute>
-                }
+                element={<IssueDiagnosis />}
+              />
+              {/* 代码度量（所有用户） */}
+              <Route
+                path="code-metrics"
+                element={<CodeMetricsBoard />}
               />
               {/* 用户统计（管理员） */}
               <Route

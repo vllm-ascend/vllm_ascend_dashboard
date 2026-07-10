@@ -20,6 +20,7 @@ import {
   SearchOutlined,
   BarChartOutlined,
   ReadOutlined,
+  CodeOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { logout } from '../services/auth'
@@ -72,6 +73,16 @@ const menuItems: MenuProps['items'] = [
     icon: <DashboardOutlined />,
     label: '测试看板',
   },
+  {
+    key: '/issue-diagnosis',
+    icon: <SearchOutlined />,
+    label: '问题定位',
+  },
+  {
+    key: '/code-metrics',
+    icon: <CodeOutlined />,
+    label: '代码度量',
+  },
   ...(import.meta.env.DEV
     ? [{ key: '/logs', icon: <ReadOutlined />, label: '日志中心' }]
     : []),
@@ -79,11 +90,6 @@ const menuItems: MenuProps['items'] = [
 
 // 仅管理员可见的菜单项
 const adminMenuItems: MenuProps['items'] = [
-  {
-    key: '/issue-diagnosis',
-    icon: <SearchOutlined />,
-    label: '问题定位',
-  },
   {
     key: '/user-stats',
     icon: <BarChartOutlined />,
@@ -183,9 +189,10 @@ function Layout() {
     { key: '/models', icon: <ExperimentOutlined />, label: '模型看板' },
     { key: '/resources', icon: <CloudServerOutlined />, label: '资源看板' },
     { key: '/test-board', icon: <DashboardOutlined />, label: '测试看板' },
+    { key: '/issue-diagnosis', icon: <SearchOutlined />, label: '问题定位' },
+    { key: '/code-metrics', icon: <CodeOutlined />, label: '代码度量' },
     ...(import.meta.env.DEV ? [{ key: '/logs', icon: <ReadOutlined />, label: '日志中心' }] : []),
     ...(hasAdminRole ? [
-      { key: '/issue-diagnosis', icon: <SearchOutlined />, label: '问题定位' },
       { key: '/user-stats', icon: <BarChartOutlined />, label: '用户统计' },
       { key: '/admin', icon: <SettingOutlined />, label: '系统管理' },
       { key: '/admin/daily-report', icon: <MailOutlined />, label: '每日报告' },

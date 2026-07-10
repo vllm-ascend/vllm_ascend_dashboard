@@ -5,6 +5,8 @@ import {
   CIJobOption,
   getFailedCIJobs,
   streamDiagnosis,
+  saveDiagnosisRecord,
+  toggleDiagnosisLike,
 } from '../services/issueDiagnosis'
 import { diagnosePR } from '../services/prPipeline'
 import type { DiagnosisSummary } from '../components/StreamMarkdownRenderer'
@@ -20,6 +22,8 @@ export function useIssueDiagnosis() {
   const [meta, setMeta] = useState<{ provider: string; model: string } | null>(null)
   const [summary, setSummary] = useState<DiagnosisSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [historyId, setHistoryId] = useState<number | null>(null)
+  const [isLiked, setIsLiked] = useState(false)
 
   const [ciJobOptions, setCiJobOptions] = useState<CIJobOption[]>([])
   const [loadingJobs, setLoadingJobs] = useState(false)
@@ -69,6 +73,8 @@ export function useIssueDiagnosis() {
     setMeta(null)
     setSummary(null)
     setError(null)
+    setHistoryId(null)
+    setIsLiked(false)
 
     if (dataSourceType === 'pr_pipeline' && prNumber) {
       try {
@@ -80,6 +86,7 @@ export function useIssueDiagnosis() {
           duration_seconds: result.duration_seconds,
           chunk_count: 1,
         })
+        if (result.history_id) setHistoryId(result.history_id)
       } catch (e: any) {
         const errBody = e?.response?.data?.detail
         setError(errBody || e.message || 'PR 诊断请求失败')
@@ -108,12 +115,40 @@ export function useIssueDiagnosis() {
     }
     if (prompt) request.user_prompt = prompt
 
+    const targetId = effectiveDataSourceType === 'ci_job' && selectedJobId
+      ? String(selectedJobId)
+      : `manual_${Date.now()}`
+    let targetLabel: string | undefined
+    if (effectiveDataSourceType === 'ci_job' && selectedJobId) {
+      const job = ciJobOptions.find(j => j.job_id === selectedJobId)
+      targetLabel = job ? `${job.workflow_name} - ${job.job_name}` : undefined
+    }
+
+    let accumulated = ''
+    let localMeta: { provider: string; model: string } | null = null
+
     try {
       await streamDiagnosis(
         request,
-        (chunk) => setStreamContent(prev => prev + chunk),
-        (m) => setMeta(m),
-        (s) => { setSummary(s); setIsStreaming(false) },
+        (chunk) => { accumulated += chunk; setStreamContent(prev => prev + chunk) },
+        (m) => { localMeta = m; setMeta(m) },
+        (s) => {
+          setSummary(s)
+          setIsStreaming(false)
+          if (accumulated.trim()) {
+            saveDiagnosisRecord({
+            diagnosis_type: effectiveDataSourceType,
+            target_id: targetId,
+            target_label: targetLabel,
+            report_content: accumulated,
+            model_used: localMeta?.model,
+            duration_seconds: s.duration_seconds,
+            status: 'success',
+          }).then((res) => {
+            if (res.id) setHistoryId(res.id)
+          }).catch((err) => console.warn('保存诊断记录失败:', err))
+          }
+        },
         (errMsg) => { setError(errMsg); setIsStreaming(false) },
       )
     } catch (e: any) {
@@ -121,7 +156,7 @@ export function useIssueDiagnosis() {
     } finally {
       setIsStreaming(false)
     }
-  }, [dataSourceType, prNumber, selectedJobId, userPrompt, logContent])
+  }, [dataSourceType, prNumber, selectedJobId, userPrompt, logContent, ciJobOptions])
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(streamContent)
@@ -144,9 +179,22 @@ export function useIssueDiagnosis() {
     setMeta(null)
     setSummary(null)
     setError(null)
+    setHistoryId(null)
+    setIsLiked(false)
     setUserPrompt('')
     setLogContent('')
   }, [])
+
+  const handleLike = useCallback(async () => {
+    if (!historyId) return
+    try {
+      const res = await toggleDiagnosisLike(historyId)
+      setIsLiked(res.is_liked)
+      message.success(res.is_liked ? '已点赞' : '已取消点赞')
+    } catch {
+      message.error('点赞失败')
+    }
+  }, [historyId])
 
   const handleLogFileUpload = useCallback((file: File) => {
     const reader = new FileReader()
@@ -170,7 +218,10 @@ export function useIssueDiagnosis() {
     meta,
     summary,
     error,
+    historyId,
+    isLiked,
     clearError: () => setError(null),
+    handleLike,
     ciJobOptions,
     loadingJobs,
     handleDataSourceTypeChange,

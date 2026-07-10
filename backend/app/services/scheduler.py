@@ -4,7 +4,7 @@
 """
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, date, timedelta, timezone
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -315,6 +315,48 @@ class DataSyncScheduler:
                 logger.info(f"Support matrix sync scheduled at {sync_hour}:{sync_minute:02d} {self._timezone}")
             except Exception as e:
                 logger.error(f"Failed to add support matrix sync job: {e}", exc_info=True)
+
+        # 代码度量定时清理
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+            self.scheduler.add_job(
+                self._cleanup_code_metrics_job,
+                trigger=CronTrigger(hour=3, minute=0, timezone=self._timezone),
+                id="code_metrics_cleanup",
+                name="Code Metrics Cleanup",
+                replace_existing=True,
+            )
+            logger.info(f"Code metrics cleanup scheduled at 03:00 daily")
+        except Exception as e:
+            logger.error(f"Failed to add code metrics cleanup job: {e}")
+
+        # 代码度量热力图同步
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+            self.scheduler.add_job(
+                self._sync_heatmap_job,
+                trigger=CronTrigger(hour=4, minute=0, timezone=self._timezone),
+                id="code_metrics_heatmap_sync",
+                name="Code Metrics Heatmap Sync",
+                replace_existing=True,
+            )
+            logger.info(f"Code metrics heatmap sync scheduled at 04:00 daily")
+        except Exception as e:
+            logger.error(f"Failed to add heatmap sync job: {e}")
+
+        # 代码度量本地采集
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+            self.scheduler.add_job(
+                self._collect_code_metrics_job,
+                trigger=CronTrigger(hour=5, minute=0, timezone=self._timezone),
+                id="code_metrics_collect",
+                name="Code Metrics Collection",
+                replace_existing=True,
+            )
+            logger.info(f"Code metrics collection scheduled at 05:00 daily")
+        except Exception as e:
+            logger.error(f"Failed to add code metrics collection job: {e}")
 
     async def apply_db_config_overrides(self) -> None:
         """从数据库读取调度配置，覆盖默认值（异步，仅在事件循环内调用）。
@@ -1070,6 +1112,84 @@ class DataSyncScheduler:
                     logger.error(f"Support matrix sync failed: {result.get('error')}")
         except Exception as e:
             logger.error(f"Support matrix sync job error: {e}", exc_info=True)
+
+    async def _cleanup_code_metrics_job(self):
+        """定时清理过期代码度量明细数据（365天保留）"""
+        try:
+            from app.models import CodeMetricsSnapshot, CodeComplexityDetail, CodeDuplicationDetail, CodeSecurityDetail
+            from sqlalchemy import delete, select
+            cutoff_date = date.today() - timedelta(days=365)
+            async with SessionLocal() as db:
+                old_ids = [row[0] for row in (await db.execute(
+                    select(CodeMetricsSnapshot.id).where(CodeMetricsSnapshot.snapshot_date < cutoff_date)
+                ))]
+                if old_ids:
+                    await db.execute(delete(CodeComplexityDetail).where(CodeComplexityDetail.snapshot_id.in_(old_ids)))
+                    await db.execute(delete(CodeDuplicationDetail).where(CodeDuplicationDetail.snapshot_id.in_(old_ids)))
+                    await db.execute(delete(CodeSecurityDetail).where(CodeSecurityDetail.snapshot_id.in_(old_ids)))
+                    await db.execute(delete(CodeMetricsSnapshot).where(CodeMetricsSnapshot.id.in_(old_ids)))
+                    await db.commit()
+                    logger.info(f"Code metrics cleanup: deleted {len(old_ids)} expired snapshots")
+        except Exception as e:
+            logger.error(f"Code metrics cleanup failed: {e}")
+
+    async def _sync_heatmap_job(self):
+        """定时同步文件热力图数据"""
+        try:
+            from app.models import PullRequest, CodeMetricsFileHeatmap
+            from collections import Counter
+            cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+            async with SessionLocal() as db:
+                stmt = select(PullRequest.data, PullRequest.title).where(
+                    PullRequest.owner == "vllm-project",
+                    PullRequest.repo == "vllm-ascend",
+                    PullRequest.created_at >= cutoff,
+                )
+                result = await db.execute(stmt)
+                file_changes: Counter = Counter()
+                file_bug_fixes: Counter = Counter()
+                bug_keywords = ["fix", "bug", "error", "crash", "fail", "issue", "patch"]
+                for row in result:
+                    data = row[0] or {}
+                    title = (row[1] or "").lower()
+                    is_bug_fix = any(kw in title for kw in bug_keywords)
+                    files = data.get("files", [])
+                    if not isinstance(files, list):
+                        continue
+                    for f in files:
+                        path = f.get("filename", f.get("path", "")) if isinstance(f, dict) else (f if isinstance(f, str) else "")
+                        if path:
+                            file_changes[path] += 1
+                            if is_bug_fix:
+                                file_bug_fixes[path] += 1
+                for path, count in file_changes.most_common(500):
+                    existing = await db.execute(
+                        select(CodeMetricsFileHeatmap).where(
+                            CodeMetricsFileHeatmap.repo == "vllm-ascend",
+                            CodeMetricsFileHeatmap.file_path == path,
+                        )
+                    )
+                    record = existing.scalar_one_or_none()
+                    if record:
+                        record.change_count = count
+                        record.bug_fix_count = file_bug_fixes.get(path, 0)
+                    else:
+                        db.add(CodeMetricsFileHeatmap(repo="vllm-ascend", file_path=path, change_count=count, bug_fix_count=file_bug_fixes.get(path, 0)))
+                await db.commit()
+                logger.info(f"Heatmap sync: updated {len(file_changes)} files")
+        except Exception as e:
+            logger.error(f"Heatmap sync failed: {e}")
+
+    async def _collect_code_metrics_job(self):
+        """定时本地采集代码度量"""
+        try:
+            from app.services.code_metrics_collector import CodeMetricsCollector
+            async with SessionLocal() as db:
+                collector = CodeMetricsCollector(db)
+                result = await collector.collect("main")
+                logger.info(f"Code metrics collection: {result}")
+        except Exception as e:
+            logger.error(f"Code metrics collection failed: {e}")
 
 
 # 全局调度器实例

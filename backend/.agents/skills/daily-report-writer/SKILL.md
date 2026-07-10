@@ -93,6 +93,9 @@ scope: daily_report
 - {{highlights}}
 {{/if}}
 
+## 🔍 问题定位
+昨日新增定位 {{yesterday_count}} 个问题，累计定位 {{total_count}} 个问题（其中 {{liked_count}} 个获点赞）
+
 ## ⚠️ 需关注事项
 {{#if risks}}
 {{risk_items}}

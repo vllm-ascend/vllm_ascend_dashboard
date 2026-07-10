@@ -201,6 +201,25 @@ async def diagnose_pr(
         from app.services.pr_diagnosis import PRDiagnosisService
         diag_service = PRDiagnosisService(db)
         result = await diag_service.diagnose(pr_number)
+        # Save to history
+        try:
+            from app.models import IssueDiagnosisHistory
+            history = IssueDiagnosisHistory(
+                user_id=current_user.id,
+                diagnosis_type="pr_pipeline",
+                target_id=str(pr_number),
+                target_label=result.get("pr_title", f"PR #{pr_number}"),
+                report_content=result.get("report", ""),
+                model_used=result.get("model", ""),
+                duration_seconds=result.get("duration_seconds", 0),
+                status="success",
+            )
+            db.add(history)
+            await db.commit()
+            await db.refresh(history)
+            result["history_id"] = history.id
+        except Exception as e:
+            logger.warning(f"Failed to save diagnosis history: {e}")
         return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

@@ -58,6 +58,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY --from=dependencies /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Install lizard for code complexity analysis
+RUN /opt/venv/bin/pip install lizard
+
 # Copy application code
 COPY app/ ./app/
 
