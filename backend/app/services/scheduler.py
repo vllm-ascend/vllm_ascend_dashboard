@@ -344,6 +344,20 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add heatmap sync job: {e}")
 
+        # 代码度量本地采集
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+            self.scheduler.add_job(
+                self._collect_code_metrics_job,
+                trigger=CronTrigger(hour=5, minute=0, timezone=self._timezone),
+                id="code_metrics_collect",
+                name="Code Metrics Collection",
+                replace_existing=True,
+            )
+            logger.info(f"Code metrics collection scheduled at 05:00 daily")
+        except Exception as e:
+            logger.error(f"Failed to add code metrics collection job: {e}")
+
     async def apply_db_config_overrides(self) -> None:
         """从数据库读取调度配置，覆盖默认值（异步，仅在事件循环内调用）。
 
@@ -1165,6 +1179,17 @@ class DataSyncScheduler:
                 logger.info(f"Heatmap sync: updated {len(file_changes)} files")
         except Exception as e:
             logger.error(f"Heatmap sync failed: {e}")
+
+    async def _collect_code_metrics_job(self):
+        """定时本地采集代码度量"""
+        try:
+            from app.services.code_metrics_collector import CodeMetricsCollector
+            async with SessionLocal() as db:
+                collector = CodeMetricsCollector(db)
+                result = await collector.collect("main")
+                logger.info(f"Code metrics collection: {result}")
+        except Exception as e:
+            logger.error(f"Code metrics collection failed: {e}")
 
 
 # 全局调度器实例

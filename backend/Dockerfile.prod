@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     procps \
+    cloc \
     libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi-dev shared-mime-info fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/bash appuser
@@ -36,12 +37,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Node.js 20.x LTS + Claude Code CLI (for AI-powered log analysis)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g @anthropic-ai/claude-code \
+    && npm install -g @anthropic-ai/claude-code jscpd \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment
 COPY --from=dependencies /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+
+# Install lizard for code complexity analysis
+RUN /opt/venv/bin/pip install lizard
 
 # Copy application code
 COPY app/ ./app/
