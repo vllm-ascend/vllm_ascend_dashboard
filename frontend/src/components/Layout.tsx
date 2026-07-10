@@ -20,6 +20,7 @@ import {
   SearchOutlined,
   BarChartOutlined,
   ReadOutlined,
+  CodeOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { logout } from '../services/auth'
@@ -76,6 +77,11 @@ const menuItems: MenuProps['items'] = [
     key: '/issue-diagnosis',
     icon: <SearchOutlined />,
     label: '问题定位',
+  },
+  {
+    key: '/code-metrics',
+    icon: <CodeOutlined />,
+    label: '代码度量',
   },
   ...(import.meta.env.DEV
     ? [{ key: '/logs', icon: <ReadOutlined />, label: '日志中心' }]
@@ -184,6 +190,7 @@ function Layout() {
     { key: '/resources', icon: <CloudServerOutlined />, label: '资源看板' },
     { key: '/test-board', icon: <DashboardOutlined />, label: '测试看板' },
     { key: '/issue-diagnosis', icon: <SearchOutlined />, label: '问题定位' },
+    { key: '/code-metrics', icon: <CodeOutlined />, label: '代码度量' },
     ...(import.meta.env.DEV ? [{ key: '/logs', icon: <ReadOutlined />, label: '日志中心' }] : []),
     ...(hasAdminRole ? [
       { key: '/user-stats', icon: <BarChartOutlined />, label: '用户统计' },

@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -621,4 +622,150 @@ class FeatureCompatibility(Base):
 
     __table_args__ = (
         UniqueConstraint("feature_a", "feature_b", name="uq_feature_pair"),
+    )
+
+
+class CodeMetricsSnapshot(Base):
+    """代码度量快照 — 每日采集的主表"""
+    __tablename__ = "code_metrics_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo = Column(String(200), nullable=False, default="vllm-ascend")
+    branch = Column(String(100), nullable=False, default="main")
+    tag = Column(String(100))  # git tag for version comparison (e.g., v0.18.0)
+    snapshot_date = Column(Date, nullable=False)
+    collection_status = Column(String(20), default="complete")  # complete/partial/failed
+    collection_duration_seconds = Column(Integer, default=0)
+
+    # 代码规模
+    total_loc = Column(Integer, default=0)
+    total_raw_lines = Column(Integer, default=0)
+    loc_python = Column(Integer, default=0)
+    loc_cpp = Column(Integer, default=0)
+    loc_c = Column(Integer, default=0)
+    loc_cmake = Column(Integer, default=0)
+    loc_shell = Column(Integer, default=0)
+    total_functions = Column(Integer, default=0)
+    total_files = Column(Integer, default=0)
+
+    # 圈复杂度
+    cc_total = Column(Integer, default=0)
+    cc_per_method = Column(Float, default=0)
+    cc_maximum = Column(Integer, default=0)
+    cc_huge_count = Column(Integer, default=0)
+    cc_huge_ratio = Column(Float, default=0)
+    cc_adequacy = Column(Float, default=0)
+
+    # 嵌套深度
+    max_depth = Column(Integer, default=0)
+    depth_huge_count = Column(Integer, default=0)
+    depth_huge_ratio = Column(Float, default=0)
+
+    # 函数体量
+    method_lines_total = Column(Integer, default=0)
+    lines_per_method = Column(Float, default=0)
+    huge_method_count = Column(Integer, default=0)
+    huge_method_ratio = Column(Float, default=0)
+    huge_file_count = Column(Integer, default=0)
+    huge_headerfile_count = Column(Integer, default=0)
+
+    # 重复率
+    dup_blocks = Column(Integer, default=0)
+    dup_lines = Column(Integer, default=0)
+    dup_ratio = Column(Float, default=0)
+
+    # 安全规范
+    unsafe_functions_count = Column(Integer, default=0)
+    warning_suppression_count = Column(Integer, default=0)
+    lint_errors = Column(Integer, default=0)
+    lint_warnings = Column(Integer, default=0)
+
+    # 技术债务
+    todo_count = Column(Integer, default=0)
+    fixme_count = Column(Integer, default=0)
+    hack_count = Column(Integer, default=0)
+
+    # 健康度评分
+    health_score = Column(Float, default=0)
+    health_score_complexity = Column(Float, default=0)
+    health_score_security = Column(Float, default=0)
+    health_score_duplication = Column(Float, default=0)
+    health_score_method_size = Column(Float, default=0)
+    health_score_tech_debt = Column(Float, default=0)
+    health_score_lint = Column(Float, default=0)
+
+    # 模块级数据 (JSON)
+    module_loc = Column(JSON)  # {"vllm_ascend": 12345, "csrc": 67890, ...}
+    language_loc = Column(JSON)  # {"Python": 12345, "C++": 67890, ...}
+
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", "repo", "branch", name="uq_snapshot_date_repo_branch"),
+    )
+
+
+class CodeComplexityDetail(Base):
+    """圈复杂度明细 — 超大复杂度函数列表"""
+    __tablename__ = "code_metrics_complexity_details"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    function_name = Column(String(200), nullable=False)
+    language = Column(String(20))  # Python/C++
+    cyclomatic_complexity = Column(Integer)
+    max_nesting_depth = Column(Integer)
+    function_lines = Column(Integer)
+    start_line = Column(Integer)
+
+    snapshot = relationship("CodeMetricsSnapshot", backref="complexity_details")
+
+
+class CodeDuplicationDetail(Base):
+    """重复代码块明细"""
+    __tablename__ = "code_metrics_duplication_details"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False)
+    file_a = Column(String(500), nullable=False)
+    file_b = Column(String(500), nullable=False)
+    lines = Column(Integer, default=0)
+    token_count = Column(Integer, default=0)
+    fragment = Column(Text)
+
+    snapshot = relationship("CodeMetricsSnapshot", backref="duplication_details")
+
+
+class CodeSecurityDetail(Base):
+    """安全规范明细"""
+    __tablename__ = "code_metrics_security_details"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    line_number = Column(Integer)
+    severity = Column(String(20))  # error/warning/info
+    tool = Column(String(50))  # cppcheck/clang-tidy/ruff/mypy
+    rule_id = Column(String(100))
+    message = Column(Text)
+
+    snapshot = relationship("CodeMetricsSnapshot", backref="security_details")
+
+
+class CodeMetricsFileHeatmap(Base):
+    """文件变更热力图"""
+    __tablename__ = "code_metrics_file_heatmap"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo = Column(String(200), nullable=False, default="vllm-ascend")
+    file_path = Column(String(500), nullable=False)
+    change_count = Column(Integer, default=0)
+    bug_fix_count = Column(Integer, default=0)
+    last_changed = Column(TIMESTAMP)
+    last_commit_sha = Column(String(40))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint("repo", "file_path", name="uq_heatmap_repo_file"),
     )
