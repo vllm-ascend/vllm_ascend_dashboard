@@ -244,33 +244,73 @@ class CodeMetricsCollector:
     async def _run_jscpd(self, repo_path: str) -> dict | None:
         """运行 jscpd 检测重复代码"""
         try:
+            import shutil
+
             output_dir = "/tmp/jscpd_output"
             os.makedirs(output_dir, exist_ok=True)
+
+            # Find jscpd binary — try PATH, then common install locations, then npx
+            jscpd_bin = shutil.which("jscpd") or "/usr/bin/jscpd" or "/usr/local/bin/jscpd"
+            if not os.path.exists(jscpd_bin):
+                # Fall back to npx
+                args = ["npx", "jscpd", "--output", output_dir, "--format", "json", repo_path]
+            else:
+                args = [jscpd_bin, "--output", output_dir, "--format", "json", repo_path]
+
+            env = {**os.environ, "PATH": os.environ.get("PATH", "") + ":/usr/bin:/usr/local/bin"}
             proc = await asyncio.create_subprocess_exec(
-                "jscpd", "--output", output_dir, "--format", "json", repo_path,
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
-            # jscpd outputs to file, not stdout
-            report_file = os.path.join(output_dir, "jscpd-report.json")
-            if not os.path.exists(report_file):
-                # Try reading from stdout
+            # jscpd outputs to a JSON report file; fall back to stdout for some versions
+            data = None
+            for candidate in [
+                os.path.join(output_dir, "jscpd-report.json"),
+                os.path.join(output_dir, "json", "jscpd-report.json"),
+                os.path.join(output_dir, "jscpd.json"),
+            ]:
+                if os.path.exists(candidate):
+                    try:
+                        with open(candidate) as f:
+                            data = json.load(f)
+                        break
+                    except Exception as e:
+                        logger.warning(f"Failed to read jscpd report {candidate}: {e}")
+
+            if data is None:
+                # Try parsing stdout (some jscpd versions print JSON to stdout)
                 try:
                     data = json.loads(stdout.decode())
                 except Exception:
+                    logger.warning(
+                        f"jscpd produced no parseable JSON output. stderr: {stderr.decode()[:500]}"
+                    )
                     return None
-            else:
-                with open(report_file) as f:
-                    data = json.load(f)
 
+            # jscpd 4.x/5.x — duplicates and statistics may be at top-level or nested under "report"
             duplicates = data.get("duplicates", data.get("report", {}).get("duplicates", []))
             statistics = data.get("statistics", data.get("report", {}).get("statistics", {}))
 
-            dup_blocks = len(duplicates)
+            # jscpd 5.x may nest statistics differently
+            if isinstance(statistics, dict):
+                total_lines = statistics.get(
+                    "total",
+                    statistics.get(
+                        "totalLines",
+                        statistics.get("clones", {}).get("totalLines", 0)
+                        if isinstance(statistics.get("clones"), dict)
+                        else 0,
+                    ),
+                )
+            else:
+                total_lines = 0
+
+            dup_blocks = len(duplicates) if isinstance(duplicates, list) else 0
             dup_lines = sum(d.get("lines", 0) for d in duplicates) if isinstance(duplicates, list) else 0
-            total_lines = statistics.get("total", statistics.get("totalLines", 0))
             dup_ratio = (dup_lines / total_lines * 100) if total_lines > 0 else 0
 
             details = []

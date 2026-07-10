@@ -171,3 +171,18 @@ export async function triggerCollection(branch?: string, tag?: string): Promise<
   const { data } = await api.post('/code-metrics/trigger', null, { params: { branch, tag } })
   return data
 }
+
+export async function getSnapshotDetail(snapshotId: number): Promise<Record<string, any>> {
+  const { data } = await api.get(`/code-metrics/snapshot/${snapshotId}`)
+  return data
+}
+
+export async function getFileComplexity(filePath: string): Promise<{ file_path: string; items: Array<{ function_name: string; cyclomatic_complexity: number | null; max_nesting_depth: number | null; function_lines: number | null; start_line: number | null }> }> {
+  const { data } = await api.get('/code-metrics/complexity/file', { params: { file_path: filePath } })
+  return data
+}
+
+export async function getFileHeatmapDetail(filePath: string): Promise<Record<string, any>> {
+  const { data } = await api.get('/code-metrics/heatmap/file', { params: { file_path: filePath } })
+  return data
+}

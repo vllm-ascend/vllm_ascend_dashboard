@@ -1134,49 +1134,25 @@ class DataSyncScheduler:
             logger.error(f"Code metrics cleanup failed: {e}")
 
     async def _sync_heatmap_job(self):
-        """定时同步文件热力图数据"""
+        """定时同步文件热力图数据（通过 GitHub API 获取 PR 文件列表）"""
         try:
-            from app.models import PullRequest, CodeMetricsFileHeatmap
-            from collections import Counter
-            cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+            if not self.github_client:
+                self._initialize_github_client()
+
+            from app.api.v1.code_metrics import _sync_heatmap_from_github
+
             async with SessionLocal() as db:
-                stmt = select(PullRequest.data, PullRequest.title).where(
-                    PullRequest.owner == "vllm-project",
-                    PullRequest.repo == "vllm-ascend",
-                    PullRequest.created_at >= cutoff,
+                result = await _sync_heatmap_from_github(
+                    db,
+                    self.github_client,
+                    settings.GITHUB_OWNER,
+                    settings.GITHUB_REPO,
+                    days=30,
                 )
-                result = await db.execute(stmt)
-                file_changes: Counter = Counter()
-                file_bug_fixes: Counter = Counter()
-                bug_keywords = ["fix", "bug", "error", "crash", "fail", "issue", "patch"]
-                for row in result:
-                    data = row[0] or {}
-                    title = (row[1] or "").lower()
-                    is_bug_fix = any(kw in title for kw in bug_keywords)
-                    files = data.get("files", [])
-                    if not isinstance(files, list):
-                        continue
-                    for f in files:
-                        path = f.get("filename", f.get("path", "")) if isinstance(f, dict) else (f if isinstance(f, str) else "")
-                        if path:
-                            file_changes[path] += 1
-                            if is_bug_fix:
-                                file_bug_fixes[path] += 1
-                for path, count in file_changes.most_common(500):
-                    existing = await db.execute(
-                        select(CodeMetricsFileHeatmap).where(
-                            CodeMetricsFileHeatmap.repo == "vllm-ascend",
-                            CodeMetricsFileHeatmap.file_path == path,
-                        )
-                    )
-                    record = existing.scalar_one_or_none()
-                    if record:
-                        record.change_count = count
-                        record.bug_fix_count = file_bug_fixes.get(path, 0)
-                    else:
-                        db.add(CodeMetricsFileHeatmap(repo="vllm-ascend", file_path=path, change_count=count, bug_fix_count=file_bug_fixes.get(path, 0)))
-                await db.commit()
-                logger.info(f"Heatmap sync: updated {len(file_changes)} files")
+                logger.info(
+                    f"Heatmap sync: updated {result.get('updated', 0)} files "
+                    f"({result.get('total_files', 0)} total)"
+                )
         except Exception as e:
             logger.error(f"Heatmap sync failed: {e}")
 
