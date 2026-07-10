@@ -8,11 +8,11 @@ import {
 } from 'recharts'
 import {
   getOverview, getComplexity, getDuplication, getHeatmap, getTrends,
-  getSecurity, syncHeatmap, compareVersions, exportMetrics,
+  syncHeatmap, compareVersions, exportMetrics,
   getDerivedMetrics, getAlerts, getCICorrelation, triggerCollection,
   getFileComplexity, getFileHeatmapDetail,
   type CodeMetricsOverview, type ComplexityItem, type DuplicationItem,
-  type HeatmapItem, type TrendItem, type SecurityItem, type CompareResult,
+  type HeatmapItem, type TrendItem, type CompareResult,
   type DerivedMetrics, type CodeMetricsAlert, type CICorrelationItem,
 } from '../services/codeMetrics'
 
@@ -31,7 +31,6 @@ function CodeMetricsBoard() {
   const [heatmap, setHeatmap] = useState<HeatmapItem[]>([])
   const [trends, setTrends] = useState<TrendItem[]>([])
 
-  const [security, setSecurity] = useState<SecurityItem[]>([])
   const [compareResult, setCompareResult] = useState<CompareResult | null>(null)
   const [tagA, setTagA] = useState('')
   const [tagB, setTagB] = useState('')
@@ -59,12 +58,6 @@ function CodeMetricsBoard() {
       try { const r = await getDuplication(100); setDuplication(r.items) } catch { /* ignore */ }
     }
     return duplication
-  }
-  const ensureSecurity = async () => {
-    if (security.length === 0) {
-      try { const r = await getSecurity(100); setSecurity(r.items) } catch { /* ignore */ }
-    }
-    return security
   }
 
   const loadOverview = async (d: number) => {
@@ -96,10 +89,6 @@ function CodeMetricsBoard() {
       setTabLoading(true)
       getTrends(period).then(r => setTrends(r.items)).catch(e => { console.error(e); message.error('加载数据失败') }).finally(() => setTabLoading(false))
     }
-    else if (activeTab === 'security') {
-      setTabLoading(true)
-      getSecurity(100).then(r => setSecurity(r.items)).catch(e => { console.error(e); message.error('加载失败') }).finally(() => setTabLoading(false))
-    }
     else if (activeTab === 'compare') {
       // no auto-load, wait for user input
     }
@@ -111,7 +100,6 @@ function CodeMetricsBoard() {
 
   const radarData = overview?.health_scores ? [
     { dimension: '复杂度', score: overview.health_scores.complexity || 0 },
-    { dimension: '安全', score: overview.health_scores.security || 0 },
     { dimension: '重复率', score: overview.health_scores.duplication || 0 },
     { dimension: '函数体量', score: overview.health_scores.method_size || 0 },
     { dimension: '技术债务', score: overview.health_scores.tech_debt || 0 },
@@ -234,32 +222,6 @@ function CodeMetricsBoard() {
                   <Col span={4}><Statistic title="平均复杂度" value={overview.metrics?.cc_per_method || 0} precision={1} /></Col>
                   <Col span={4}><Statistic title="最大复杂度" value={overview.metrics?.cc_maximum || 0} /></Col>
                   <Col span={4}><Statistic title="重复块数" value={overview.metrics?.dup_blocks || 0} /></Col>
-                  <Col span={4}>
-                    <div style={{ cursor: 'pointer' }} onClick={async () => {
-                      const items = await ensureSecurity()
-                      setDetailModal({
-                        visible: true,
-                        title: '不安全函数列表',
-                        content: (
-                          <Table
-                            dataSource={items}
-                            rowKey={(r, i) => String(i)}
-                            columns={[
-                              { title: '严重级别', dataIndex: 'severity', width: 100, render: (v: string) => <Tag color={v === 'error' ? 'red' : v === 'warning' ? 'orange' : 'blue'}>{v || '-'}</Tag> },
-                              { title: '工具', dataIndex: 'tool', width: 100 },
-                              { title: '规则', dataIndex: 'rule_id', width: 150 },
-                              { title: '文件', dataIndex: 'file_path', ellipsis: true },
-                              { title: '行号', dataIndex: 'line_number', width: 80 },
-                              { title: '消息', dataIndex: 'message', ellipsis: true },
-                            ]}
-                            pagination={{ pageSize: 10 }}
-                          />
-                        ),
-                      })
-                    }}>
-                      <Statistic title="不安全函数" value={overview.metrics?.unsafe_functions_count || 0} valueStyle={{ color: (overview.metrics?.unsafe_functions_count || 0) > 0 ? '#ff4d4f' : '#52c41a' }} />
-                    </div>
-                  </Col>
                   <Col span={4}><Statistic title="Lint 错误" value={overview.metrics?.lint_errors || 0} /></Col>
                   <Col span={4}>
                     <div style={{ cursor: 'pointer' }} onClick={() => {
@@ -279,10 +241,9 @@ function CodeMetricsBoard() {
                   </Col>
                 </Row>
                 <Row gutter={16} style={{ marginTop: 16 }}>
-                  <Col span={6}><Statistic title="TODO" value={overview.metrics?.todo_count || 0} /></Col>
-                  <Col span={6}><Statistic title="FIXME" value={overview.metrics?.fixme_count || 0} /></Col>
-                  <Col span={6}><Statistic title="不安全函数" value={overview.metrics?.unsafe_functions_count || 0} valueStyle={{ color: (overview.metrics?.unsafe_functions_count || 0) > 0 ? '#ff4d4f' : '#52c41a' }} /></Col>
-                  <Col span={6}><Statistic title="Lint 错误" value={overview.metrics?.lint_errors || 0} /></Col>
+                  <Col span={8}><Statistic title="TODO" value={overview.metrics?.todo_count || 0} /></Col>
+                  <Col span={8}><Statistic title="FIXME" value={overview.metrics?.fixme_count || 0} /></Col>
+                  <Col span={8}><Statistic title="Lint 错误" value={overview.metrics?.lint_errors || 0} /></Col>
                 </Row>
               </Card>
 
@@ -393,27 +354,6 @@ function CodeMetricsBoard() {
               { title: '文件 B', dataIndex: 'file_b', ellipsis: true },
               { title: '重复行数', dataIndex: 'lines', width: 100, sorter: (a: DuplicationItem, b: DuplicationItem) => a.lines - b.lines },
               { title: '代码片段', dataIndex: 'fragment', ellipsis: true, width: 300 },
-            ]}
-            pagination={{ pageSize: 20 }}
-          />
-        </Spin>
-      ),
-    },
-    {
-      key: 'security',
-      label: '安全规范',
-      children: (
-        <Spin spinning={tabLoading}>
-          <Table
-            dataSource={security}
-            rowKey={(r, i) => String(i)}
-            columns={[
-              { title: '严重级别', dataIndex: 'severity', width: 100, render: (v: string) => <Tag color={v === 'error' ? 'red' : v === 'warning' ? 'orange' : 'blue'}>{v || '-'}</Tag> },
-              { title: '工具', dataIndex: 'tool', width: 100 },
-              { title: '规则', dataIndex: 'rule_id', width: 150 },
-              { title: '文件', dataIndex: 'file_path', ellipsis: true },
-              { title: '行号', dataIndex: 'line_number', width: 80 },
-              { title: '消息', dataIndex: 'message', ellipsis: true },
             ]}
             pagination={{ pageSize: 20 }}
           />
@@ -640,7 +580,7 @@ function CodeMetricsBoard() {
             <CodeOutlined style={{ marginRight: 8 }} />
             代码度量看板
           </Title>
-          <Text type="secondary">vllm-ascend 仓库代码质量量化度量 — 圈复杂度 / 重复率 / 安全规范</Text>
+          <Text type="secondary">vllm-ascend 仓库代码质量量化度量 — 圈复杂度 / 重复率 / 技术债务</Text>
         </div>
         <Space>
           <Button icon={<ThunderboltOutlined />} loading={triggering} onClick={async () => {
