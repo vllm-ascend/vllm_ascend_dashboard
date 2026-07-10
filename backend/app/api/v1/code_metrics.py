@@ -881,12 +881,12 @@ async def get_ci_correlation(
 
     # 获取 CI 数据（按天聚合）
     ci_stmt = select(
-        sql_func.date(CIResult.run_started_at).label("day"),
+        sql_func.date(CIResult.started_at).label("day"),
         sql_func.count(CIResult.id).label("total"),
         sql_func.sum(sql_func.case((CIResult.conclusion == "success", 1), else_=0)).label("success"),
     ).where(
-        CIResult.run_started_at >= cutoff
-    ).group_by(sql_func.date(CIResult.run_started_at)).order_by(sql_func.date(CIResult.run_started_at).asc())
+        CIResult.started_at >= cutoff
+    ).group_by(sql_func.date(CIResult.started_at)).order_by(sql_func.date(CIResult.started_at).asc())
     ci_result = await db.execute(ci_stmt)
     ci_by_date = {str(row.day): {"total": row.total, "success": row.success, "rate": (row.success / row.total * 100) if row.total > 0 else 0} for row in ci_result}
 

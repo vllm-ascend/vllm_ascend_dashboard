@@ -150,21 +150,32 @@ class CodeMetricsCollector:
             return None
 
     async def _run_lizard(self, repo_path: str) -> dict | None:
-        """运行 lizard 分析圈复杂度"""
+        """运行 lizard 分析圈复杂度（使用 Python API，不依赖 CLI --json）"""
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "lizard", "--json", repo_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300)
-            data = json.loads(stdout.decode())
+            import lizard as lizard_lib
 
-            # lizard JSON format: list of function objects
-            functions = data if isinstance(data, list) else data.get("warnings", [])
+            def _analyze():
+                analyzer = lizard_lib.Lizard()
+                results = []
+                for file_info in analyzer.analyze_path(repo_path):
+                    for func in file_info.function_list:
+                        results.append({
+                            "file_path": file_info.filename,
+                            "function_name": func.name,
+                            "cyclomatic_complexity": func.cyclomatic_complexity,
+                            "max_nesting_depth": getattr(func, "max_nesting_depth", 0),
+                            "nloc": func.nloc,
+                            "start_line": func.start_line,
+                        })
+                return results
+
+            functions = await asyncio.to_thread(_analyze)
 
             total_functions = len(functions)
-            cc_values = [f.get("cyclomatic_complexity", 0) for f in functions]
+            if total_functions == 0:
+                return None
+
+            cc_values = [f["cyclomatic_complexity"] for f in functions]
             cc_total = sum(cc_values)
             cc_maximum = max(cc_values) if cc_values else 0
             cc_per_method = cc_total / total_functions if total_functions > 0 else 0
@@ -172,12 +183,12 @@ class CodeMetricsCollector:
             cc_huge_ratio = (cc_huge_count / total_functions * 100) if total_functions > 0 else 0
             cc_adequacy = ((total_functions - cc_huge_count) / total_functions * 100) if total_functions > 0 else 0
 
-            depths = [f.get("max_nesting_depth", 0) for f in functions]
+            depths = [f["max_nesting_depth"] for f in functions]
             max_depth = max(depths) if depths else 0
             depth_huge_count = sum(1 for d in depths if d > 5)
             depth_huge_ratio = (depth_huge_count / total_functions * 100) if total_functions > 0 else 0
 
-            method_lines = [f.get("nloc", 0) for f in functions]
+            method_lines = [f["nloc"] for f in functions]
             method_lines_total = sum(method_lines)
             lines_per_method = method_lines_total / total_functions if total_functions > 0 else 0
             huge_method_count = sum(1 for l in method_lines if l > 80)
@@ -185,15 +196,15 @@ class CodeMetricsCollector:
 
             # Detail: top 500 by complexity
             details = []
-            for f in sorted(functions, key=lambda x: x.get("cyclomatic_complexity", 0), reverse=True)[:500]:
+            for f in sorted(functions, key=lambda x: x["cyclomatic_complexity"], reverse=True)[:500]:
                 details.append({
-                    "file_path": f.get("file", ""),
-                    "function_name": f.get("name", ""),
-                    "language": "Python" if f.get("file", "").endswith(".py") else "C++",
-                    "cyclomatic_complexity": f.get("cyclomatic_complexity"),
-                    "max_nesting_depth": f.get("max_nesting_depth"),
-                    "function_lines": f.get("nloc"),
-                    "start_line": f.get("start_line", f.get("line", 0)),
+                    "file_path": f["file_path"],
+                    "function_name": f["function_name"],
+                    "language": "Python" if f["file_path"].endswith(".py") else "C++",
+                    "cyclomatic_complexity": f["cyclomatic_complexity"],
+                    "max_nesting_depth": f["max_nesting_depth"],
+                    "function_lines": f["nloc"],
+                    "start_line": f["start_line"],
                 })
 
             return {
@@ -215,7 +226,7 @@ class CodeMetricsCollector:
                 },
                 "details": details,
             }
-        except FileNotFoundError:
+        except ImportError:
             logger.warning("lizard not installed, skipping complexity metrics")
             return None
         except Exception as e:
