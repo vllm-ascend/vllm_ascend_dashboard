@@ -782,6 +782,19 @@ async def trigger_collection(
         }
 
 
+@router.post("/collect", summary="本地采集代码度量（管理员）")
+async def collect_locally(
+    current_user: CurrentAdminUser,
+    db: DbSession,
+    branch: str = Query("main", description="目标分支"),
+):
+    """在 Dashboard 服务器上直接运行 cloc/lizard/jscpd 采集代码度量"""
+    from app.services.code_metrics_collector import CodeMetricsCollector
+    collector = CodeMetricsCollector(db)
+    result = await collector.collect(branch)
+    return result
+
+
 @router.get("/alerts", summary="代码度量告警检查")
 async def check_alerts(
     current_user: CurrentUser,
