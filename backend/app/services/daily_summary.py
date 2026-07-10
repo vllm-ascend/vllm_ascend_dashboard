@@ -3,6 +3,7 @@
 """
 import asyncio
 import logging
+import os
 from datetime import datetime, date, time, timezone
 from zoneinfo import ZoneInfo
 from typing import Optional, Tuple
@@ -591,32 +592,53 @@ class DailySummaryService:
             # 3. 构建提示词
             prompt = self._build_prompt(project, daily_data, summary_date)
 
-            # 4. 调用 Claude Code CLI（自动降级到直接 API）
+            # 4. 调用 LLM（Agent Service 或 Claude Code CLI）
             llm_config = await self._get_llm_config(llm_provider)
             system_prompt = await self._get_system_prompt(project)
 
-            summary_result = await run_with_fallback(
-                prompt=prompt,
-                provider_config={
-                    "provider": llm_config.provider,
-                    "api_key": llm_config.decrypted_api_key,
-                    "api_base_url": llm_config.api_base_url,
-                    "default_model": llm_config.default_model,
-                },
-                system_prompt=system_prompt,
-                max_turns=8,
-            )
+            provider_config = {
+                "provider": llm_config.provider,
+                "api_key": llm_config.api_key,
+                "api_base_url": llm_config.api_base_url,
+                "default_model": llm_config.default_model,
+            }
+
+            if os.environ.get("AGENT_SERVICE_ENABLED", "").lower() in ("1", "true", "yes"):
+                from app.services.agent_service import AgentService, AgentTask
+
+                agent_svc = AgentService(self.db)
+                agent_result = await agent_svc.run(AgentTask(
+                    prompt=prompt,
+                    provider_config=provider_config,
+                    system_prompt=system_prompt,
+                    max_steps=8,
+                    memory_type="daily_summary",
+                    memory_filters={"project": project},
+                ))
+                summary_markdown = agent_result.content
+                model_used = agent_result.model_used
+                generation_time = int(agent_result.duration_seconds)
+            else:
+                summary_result = await run_with_fallback(
+                    prompt=prompt,
+                    provider_config=provider_config,
+                    system_prompt=system_prompt,
+                    max_turns=8,
+                )
+                summary_markdown = summary_result.content
+                model_used = summary_result.model_used or llm_config.default_model
+                generation_time = int(summary_result.duration_seconds)
 
             # 5. 保存总结到数据库
             summary = await self._save_summary(
                 project=project,
                 summary_date=summary_date,
-                summary_markdown=summary_result.content,
+                summary_markdown=summary_markdown,
                 llm_provider=llm_config.provider,
-                llm_model=summary_result.model_used or llm_config.default_model,
+                llm_model=model_used,
                 prompt_tokens=None,  # CLI 模式下不可用
                 completion_tokens=None,
-                generation_time_seconds=int(summary_result.duration_seconds),
+                generation_time_seconds=generation_time,
                 has_data=daily_data.has_data,
                 pr_count=len(daily_data.prs),
                 issue_count=len(daily_data.issues),

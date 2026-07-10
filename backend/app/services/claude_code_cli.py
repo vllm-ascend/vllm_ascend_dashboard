@@ -194,7 +194,7 @@ class ClaudeCodeCLI:
             proxy.set_log_file(str(debug_file).replace("_debug.log", "_conversation.json"))
 
             env = self._build_env_direct(
-                api_key="PROXY_MANAGED",
+                api_key=api_key,
                 api_base=proxy.listen_url,
                 model=model,
             )
@@ -221,7 +221,7 @@ class ClaudeCodeCLI:
             proxy.set_log_file(str(debug_file).replace("_debug.log", "_conversation.json"))
 
             env = self._build_env_direct(
-                api_key="PROXY_MANAGED",
+                api_key=api_key,
                 api_base=proxy.listen_url,
                 model=model,
             )
@@ -230,9 +230,18 @@ class ClaudeCodeCLI:
                 proxy.port, provider, model,
             )
 
+        logger.info("CLI env: ANTHROPIC_API_KEY=%s..., ANTHROPIC_BASE_URL=%s, model=%s, args=%s",
+                     str(env.get("ANTHROPIC_API_KEY",""))[:20], env.get("ANTHROPIC_BASE_URL"), model, " ".join(args))
+
         # ── 执行 CLI ──
         # root 用户不允许 --dangerously-skip-permissions，通过 su 切到 appuser
-        if os.geteuid() == 0:
+        is_root = False
+        try:
+            is_root = os.geteuid() == 0  # Unix only; Windows raises AttributeError
+        except AttributeError:
+            pass  # Windows: not root, run directly
+
+        if is_root:
             cmd_str = " ".join(
                 [shlex.quote(cli_path)] + [shlex.quote(a) for a in args]
             )
@@ -417,10 +426,26 @@ class ClaudeCodeCLI:
         """
         env = os.environ.copy()
 
+        # ── 清除宿主机泄漏的用户凭据，防止 CLI 使用个人账号 ──
+        # ANTHROPIC_AUTH_TOKEN 优先级高于 ANTHROPIC_API_KEY，必须清除
+        for key in (
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_MODEL",
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+        ):
+            env.pop(key, None)
+
         if api_key:
             env["ANTHROPIC_API_KEY"] = api_key
         if api_base:
             env["ANTHROPIC_BASE_URL"] = api_base
+        logger.info("_build_env_direct: api_key=%s..., api_base=%s, model=%s", api_key[:20] if api_key else '(none)', api_base, model)
 
         env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
         env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = model
@@ -430,14 +455,12 @@ class ClaudeCodeCLI:
         env["CLAUDE_CODE_NO_INTERACTIVE"] = "1"
         env["CLAUDE_CODE_HEADLESS"] = "1"
 
+        # 不隔离 HOME/USERPROFILE —— 改用 --setting-sources 排除用户配置
+
         # 传递 GITHUB_TOKEN，CLI 可以用 curl 拉 CI 日志
         from app.core.config import settings
         if settings.GITHUB_TOKEN:
             env["GITHUB_TOKEN"] = settings.GITHUB_TOKEN
-
-        # 确保 HOME 正确设置，CLI 会用它找配置目录
-        if "HOME" not in env or not env["HOME"]:
-            env["HOME"] = "/home/appuser"
 
         return env
 
@@ -454,7 +477,11 @@ class ClaudeCodeCLI:
         from pathlib import Path
 
         self._stdin_prompt = prompt  # 通过 stdin 传入
-        args = ["--print", "--max-turns", str(max_turns)]
+        args = [
+            "--print", "--max-turns", str(max_turns),
+            # 排除用户级 settings.json，防止使用 ~/.claude/settings.json 中的个人凭据
+            "--setting-sources", "project,local",
+        ]
 
         if debug_file:
             args.extend(["--debug", "--debug-file", debug_file])
@@ -463,16 +490,18 @@ class ClaudeCodeCLI:
             args.extend(["--output-format", "json"])
 
         if system_prompt:
-            # 写到 appuser 可读的目录（/tmp 对 su 用户不可见）
-            sp_dir = Path("/home/appuser/.claude/tmp")
+            sp_dir = Path(tempfile.gettempdir()) / "claude_tmp"
             sp_dir.mkdir(parents=True, exist_ok=True)
             sys_file = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".txt", delete=False, encoding="utf-8", dir=str(sp_dir)
             )
             sys_file.write(system_prompt)
             sys_file.close()
-            import shutil
-            shutil.chown(sys_file.name, user="appuser")
+            # 裸机 Linux root 部署：su appuser 需要能读取此文件
+            try:
+                os.chown(sys_file.name, uid=1000, gid=1000)  # appuser typical uid/gid
+            except (AttributeError, PermissionError, OSError):
+                pass  # Windows / non-root / Docker: no-op
             args.extend(["--system-prompt-file", sys_file.name])
             self._sys_prompt_file = sys_file.name
 

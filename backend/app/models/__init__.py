@@ -34,7 +34,7 @@ __all__ = [
     "UserLoginLog", "FeatureUsageLog", "TokenBlacklist",
     "IssueDiagnosisHistory",
     "TestCase", "TestRun", "TestSuiteSnapshot", "FailureAnnotation",
-    "AppLog",
+    "AppLog", "AnalysisMemory", "AnalysisEmbedding",
 ]
 
 
@@ -483,6 +483,7 @@ class TokenBlacklist(Base):
 from .daily_summary import DailyPR, DailyIssue, DailyCommit, DailySummary, LLMProviderConfig
 
 from .test_board import TestCase, TestRun, TestSuiteSnapshot, FailureAnnotation
+from .memory import AnalysisMemory, AnalysisEmbedding
 
 
 class PullRequest(Base):

@@ -142,3 +142,10 @@ docs/AI-assisted-CI-issue-localization-report.md
 docs/superpowers/specs/2026-07-01-analysis-accuracy-eval.md
 docs/user-manual.md
 screenshots/
+
+# Agent temp / output files
+backend/eval_result.xlsx
+backend/job_log.txt
+backend/threshold
+nul
+summary_response.json

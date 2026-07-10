@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import date, datetime
 from typing import Any
 
@@ -37,29 +38,50 @@ class CommitAnalysisSummaryService:
             llm_config = await self._get_llm_config(llm_provider)
             system_prompt = await self._get_system_prompt(project)
 
-            result = await run_with_fallback(
-                prompt=prompt,
-                provider_config={
-                    "provider": llm_config.provider,
-                    "api_key": llm_config.decrypted_api_key,
-                    "api_base_url": llm_config.api_base_url,
-                    "default_model": llm_config.default_model,
-                },
-                system_prompt=system_prompt,
-                max_turns=5,
-            )
+            provider_config = {
+                "provider": llm_config.provider,
+                "api_key": llm_config.api_key,
+                "api_base_url": llm_config.api_base_url,
+                "default_model": llm_config.default_model,
+            }
+
+            if os.environ.get("AGENT_SERVICE_ENABLED", "").lower() in ("1", "true", "yes"):
+                from app.services.agent_service import AgentService, AgentTask
+
+                agent_svc = AgentService(self.db)
+                agent_result = await agent_svc.run(AgentTask(
+                    prompt=prompt,
+                    provider_config=provider_config,
+                    system_prompt=system_prompt,
+                    max_steps=5,
+                    memory_type="commit_analysis",
+                    memory_filters={"project": project},
+                ))
+                ai_summary_markdown = agent_result.content
+                ai_model_used = agent_result.model_used or llm_config.default_model
+                ai_generation_time = int(agent_result.duration_seconds)
+            else:
+                result = await run_with_fallback(
+                    prompt=prompt,
+                    provider_config=provider_config,
+                    system_prompt=system_prompt,
+                    max_turns=5,
+                )
+                ai_summary_markdown = result.content
+                ai_model_used = result.model_used or llm_config.default_model
+                ai_generation_time = int(result.duration_seconds)
 
             now = self.analysis_store.now()
             analysis.update({
-                "ai_summary_markdown": result.content,
+                "ai_summary_markdown": ai_summary_markdown,
                 "ai_summary_status": "success",
                 "ai_summary_generated_at": now,
                 "ai_summary_generated_by": username,
                 "ai_summary_llm_provider": llm_config.provider,
-                "ai_summary_llm_model": result.model_used or llm_config.default_model,
+                "ai_summary_llm_model": ai_model_used,
                 "ai_summary_prompt_tokens": None,  # CLI 模式下不可用
                 "ai_summary_completion_tokens": None,
-                "ai_summary_generation_time_seconds": int(result.duration_seconds),
+                "ai_summary_generation_time_seconds": ai_generation_time,
                 "ai_summary_error_message": None,
                 "updated_at": now,
                 "updated_by": username,
