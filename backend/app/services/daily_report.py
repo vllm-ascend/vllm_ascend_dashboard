@@ -436,7 +436,7 @@ class DailyReportService:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 temperature=0.3,
-                max_tokens=4096,
+                max_tokens=16384,
             )
 
             logger.info(f"AI report generated: tokens={result.prompt_tokens + result.completion_tokens}")
