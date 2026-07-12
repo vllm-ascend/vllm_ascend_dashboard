@@ -47,15 +47,28 @@ def hash_ip(ip_address: str) -> str:
     return hashlib.sha256(ip_address.encode()).hexdigest()
 
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+def create_access_token(
+    data: dict,
+    expires_delta: timedelta | None = None,
+    token_type: str = "access",
+) -> str:
     to_encode = data.copy()
     expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire, "iat": datetime.now(UTC), "jti": str(uuid.uuid4())})
+    to_encode.update({
+        "exp": expire,
+        "iat": datetime.now(UTC),
+        "jti": str(uuid.uuid4()),
+        "token_type": token_type,
+    })
     return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
 def create_refresh_token(data: dict) -> str:
-    return create_access_token(data, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+    return create_access_token(
+        data,
+        timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        token_type="refresh",
+    )
 
 
 def decode_token(token: str) -> dict | None:

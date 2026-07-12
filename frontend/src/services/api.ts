@@ -43,16 +43,27 @@ longTimeoutApiClient.interceptors.request.use(
 // 是否正在刷新 token 的标志
 let isRefreshing = false
 // 刷新 token 后需要重试的请求队列
-let refreshSubscribers: ((token: string) => void)[] = []
+let refreshSubscribers: Array<{
+  resolve: (token: string) => void
+  reject: (error: unknown) => void
+}> = []
 
 // 添加到重试队列
-const subscribeTokenRefresh = (cb: (token: string) => void) => {
-  refreshSubscribers.push(cb)
+const subscribeTokenRefresh = (
+  resolve: (token: string) => void,
+  reject: (error: unknown) => void,
+) => {
+  refreshSubscribers.push({ resolve, reject })
 }
 
 // 执行重试队列
 const onTokenRefreshed = (token: string) => {
-  refreshSubscribers.forEach(cb => cb(token))
+  refreshSubscribers.forEach(subscriber => subscriber.resolve(token))
+  refreshSubscribers = []
+}
+
+const onTokenRefreshFailed = (error: unknown) => {
+  refreshSubscribers.forEach(subscriber => subscriber.reject(error))
   refreshSubscribers = []
 }
 
@@ -99,14 +110,13 @@ apiClient.interceptors.response.use(
       // 如果正在刷新 token，将请求加入队列
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
-          subscribeTokenRefresh((token: string) => {
-            originalRequest.headers.Authorization = `Bearer ${token}`
-            resolve(apiClient(originalRequest))
-          })
-          // 同时添加错误处理，防止刷新失败时队列中的请求永远无法完成
-          subscribeTokenRefresh(() => {
-            reject(error)
-          })
+          subscribeTokenRefresh(
+            (token: string) => {
+              originalRequest.headers.Authorization = `Bearer ${token}`
+              resolve(apiClient(originalRequest))
+            },
+            reject,
+          )
         })
       }
 
@@ -137,6 +147,7 @@ apiClient.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${access_token}`
         return apiClient(originalRequest)
       } catch (refreshError) {
+        onTokenRefreshFailed(refreshError)
         // 刷新失败，清除 token 并跳转登录页
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
@@ -146,7 +157,6 @@ apiClient.interceptors.response.use(
         return Promise.reject(refreshError)
       } finally {
         isRefreshing = false
-        refreshSubscribers = [] // 清空队列，防止内存泄漏
       }
     }
 

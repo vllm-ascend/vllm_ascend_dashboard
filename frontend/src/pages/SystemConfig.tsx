@@ -230,6 +230,17 @@ function SystemConfig() {
   const [forceMergeRecords, setForceMergeRecords] = useState<any[]>([])
 
   const { data: config, isLoading: configLoading } = useSystemConfig()
+  const { data: ciSyncConfig, isLoading: ciSyncConfigLoading } = useQuery({
+    queryKey: ['ci-sync-config'],
+    queryFn: async () => {
+      const response = await api.get('/system/config')
+      return response.data
+    },
+  })
+  const { data: modelSyncConfigs = [], isLoading: modelSyncConfigsLoading } = useQuery({
+    queryKey: ['model-sync-configs'],
+    queryFn: () => getModelSyncConfigs(),
+  })
   const { data: status } = useSystemStatus()
   const updateAppMutation = useUpdateAppConfig()
   const updateGitHubMutation = useUpdateGitHubConfig()
@@ -591,6 +602,51 @@ function SystemConfig() {
       setGitCacheStatusLoading(false)
     }
   }
+
+  useEffect(() => {
+    loadGitHubCacheDir()
+    loadGitCacheStatus()
+  }, [])
+
+  useEffect(() => {
+    const fetchSystemStatus = async () => {
+      try {
+        const response = await api.get('/system/config/status')
+        setSystemStatus(response.data)
+      } catch (error) {
+        console.error('Failed to fetch system status:', error)
+      }
+    }
+    fetchSystemStatus()
+    const interval = setInterval(fetchSystemStatus, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    if (progress?.status === 'completed' && isSyncing) {
+      message.success(`同步完成！共采集 ${progress.total_collected} 条记录`)
+      setIsSyncing(false)
+      setIsSyncModalOpen(false)
+      syncConfigForm.resetFields()
+      setElapsedTime(0)
+      queryClient.invalidateQueries({ queryKey: ['ci-workflows'] })
+      queryClient.invalidateQueries({ queryKey: ['ci-runs'] })
+      queryClient.invalidateQueries({ queryKey: ['ci-stats'] })
+    } else if (progress?.status === 'failed' && isSyncing) {
+      message.error(`同步失败：${progress.error_message}`)
+      setIsSyncing(false)
+      setElapsedTime(0)
+    }
+  }, [progress, isSyncing, queryClient, syncConfigForm])
+
+  useEffect(() => {
+    if (config?.sync_config?.model_sync_config) {
+      setGlobalModelSyncConfig({
+        sync_interval_minutes: config.sync_config.model_sync_config.sync_interval_minutes,
+        days_back: config.sync_config.model_sync_config.days_back,
+      })
+    }
+  }, [config])
 
   // 更新应用配置
   const handleUpdateAppConfig = (values: Record<string, string | boolean | null | undefined>) => {
@@ -1523,34 +1579,6 @@ function SystemConfig() {
 
   // 1. 项目看板 Git 缓存管理
   const renderProjectCacheTab = () => {
-    const loadGitHubCacheDir = async () => {
-      try {
-        const { getSystemConfig } = await import('../services/systemConfig')
-        const data = await getSystemConfig()
-        setGithubCacheDir(data.sync_config.github_cache_dir || '')
-        setProjectDashboardCacheInterval(data.sync_config.project_dashboard_cache_interval_minutes || 60)
-      } catch (error: any) {
-        console.error('Failed to load GitHub cache dir:', error)
-      }
-    }
-
-    const loadGitCacheStatus = async () => {
-      setGitCacheStatusLoading(true)
-      try {
-        const data = await getGitCacheStatus()
-        setGitCacheStatus(data)
-      } catch (error: any) {
-        console.error('Failed to load git cache status:', error)
-      } finally {
-        setGitCacheStatusLoading(false)
-      }
-    }
-
-    useEffect(() => {
-      loadGitHubCacheDir()
-      loadGitCacheStatus()
-    }, [])
-
     return (
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         {/* Git 缓存状态 */}
@@ -1677,45 +1705,6 @@ function SystemConfig() {
 
   // 2. CI 看板同步配置
   const renderCISyncTab = () => {
-    const { data: ciSyncConfig, isLoading: ciSyncConfigLoading } = useQuery({
-      queryKey: ['ci-sync-config'],
-      queryFn: async () => {
-        const response = await api.get('/system/config')
-        return response.data
-      },
-    })
-
-    useEffect(() => {
-      const fetchSystemStatus = async () => {
-        try {
-          const response = await api.get('/system/config/status')
-          setSystemStatus(response.data)
-        } catch (error) {
-          console.error('Failed to fetch system status:', error)
-        }
-      }
-      fetchSystemStatus()
-      const interval = setInterval(fetchSystemStatus, 30000)
-      return () => clearInterval(interval)
-    }, [])
-
-    useEffect(() => {
-      if (progress?.status === 'completed' && isSyncing) {
-        message.success(`同步完成！共采集 ${progress.total_collected} 条记录`)
-        setIsSyncing(false)
-        setIsSyncModalOpen(false)
-        syncConfigForm.resetFields()
-        setElapsedTime(0)
-        queryClient.invalidateQueries({ queryKey: ['ci-workflows'] })
-        queryClient.invalidateQueries({ queryKey: ['ci-runs'] })
-        queryClient.invalidateQueries({ queryKey: ['ci-stats'] })
-      } else if (progress?.status === 'failed' && isSyncing) {
-        message.error(`同步失败：${progress.error_message}`)
-        setIsSyncing(false)
-        setElapsedTime(0)
-      }
-    }, [progress, isSyncing, queryClient])
-
     const handleOpenCISyncConfig = () => {
       syncConfigForm.setFieldsValue({
         ci_sync_interval_minutes: ciSyncConfig?.sync_config.ci_sync_config.sync_interval_minutes,
@@ -1793,26 +1782,6 @@ function SystemConfig() {
 
   // 3. 模型看板模型同步配置
   const renderModelSyncTab = () => {
-    const { data: modelSyncConfigs = [], isLoading: modelSyncConfigsLoading } = useQuery({
-      queryKey: ['model-sync-configs'],
-      queryFn: () => getModelSyncConfigs(),
-    })
-
-    const { data: systemConfig } = useSystemConfig()
-    const [globalModelSyncConfig, setGlobalModelSyncConfig] = useState<{
-      sync_interval_minutes: number
-      days_back: number
-    } | null>(null)
-
-    useEffect(() => {
-      if (systemConfig?.sync_config?.model_sync_config) {
-        setGlobalModelSyncConfig({
-          sync_interval_minutes: systemConfig.sync_config.model_sync_config.sync_interval_minutes,
-          days_back: systemConfig.sync_config.model_sync_config.days_back,
-        })
-      }
-    }, [systemConfig])
-
     const openModelSyncModal = (config?: ModelSyncConfig) => {
       if (config) {
         setEditingModelSyncConfig(config)
