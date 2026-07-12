@@ -250,12 +250,11 @@ class CodeMetricsCollector:
             os.makedirs(output_dir, exist_ok=True)
 
             # Find jscpd binary — try PATH, then common install locations, then npx
-            jscpd_bin = shutil.which("jscpd") or "/usr/bin/jscpd" or "/usr/local/bin/jscpd"
+            jscpd_bin = shutil.which("jscpd") or "/usr/bin/jscpd"
             if not os.path.exists(jscpd_bin):
-                # Fall back to npx
-                args = ["npx", "jscpd", "--output", output_dir, "--format", "json", repo_path]
+                args = ["npx", "jscpd", "--reporters", "json", "--output", output_dir, repo_path]
             else:
-                args = [jscpd_bin, "--output", output_dir, "--format", "json", repo_path]
+                args = [jscpd_bin, "--reporters", "json", "--output", output_dir, repo_path]
 
             env = {**os.environ, "PATH": os.environ.get("PATH", "") + ":/usr/bin:/usr/local/bin"}
             proc = await asyncio.create_subprocess_exec(
