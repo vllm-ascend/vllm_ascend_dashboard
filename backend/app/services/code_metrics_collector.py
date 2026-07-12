@@ -294,32 +294,44 @@ class CodeMetricsCollector:
             duplicates = data.get("duplicates", data.get("report", {}).get("duplicates", []))
             statistics = data.get("statistics", data.get("report", {}).get("statistics", {}))
 
-            # jscpd 5.x may nest statistics differently
+            # jscpd 5.x: statistics.total is a dict with {lines, duplicatedLines, ...}
             if isinstance(statistics, dict):
-                total_lines = statistics.get(
-                    "total",
-                    statistics.get(
-                        "totalLines",
-                        statistics.get("clones", {}).get("totalLines", 0)
-                        if isinstance(statistics.get("clones"), dict)
-                        else 0,
-                    ),
-                )
+                total = statistics.get("total", {})
+                if isinstance(total, dict):
+                    total_lines = total.get("lines", 0)
+                    dup_lines_stat = total.get("duplicatedLines", 0)
+                    dup_percentage = total.get("percentageDuplicatedLines", 0)
+                else:
+                    total_lines = total
+                    dup_lines_stat = 0
+                    dup_percentage = 0
             else:
                 total_lines = 0
+                dup_lines_stat = 0
+                dup_percentage = 0
 
             dup_blocks = len(duplicates) if isinstance(duplicates, list) else 0
             dup_lines = sum(d.get("lines", 0) for d in duplicates) if isinstance(duplicates, list) else 0
-            dup_ratio = (dup_lines / total_lines * 100) if total_lines > 0 else 0
+            if dup_percentage:
+                dup_ratio = dup_percentage
+            else:
+                dup_ratio = (dup_lines / total_lines * 100) if total_lines and isinstance(total_lines, (int, float)) and total_lines > 0 else 0
 
             details = []
             if isinstance(duplicates, list):
-                for d in sorted(duplicates, key=lambda x: x.get("lines", 0), reverse=True)[:200]:
+                for d in sorted(duplicates, key=lambda x: x.get("lines", 0) if isinstance(x.get("lines", 0), (int, float)) else 0, reverse=True)[:200]:
+                    # jscpd 5.x: firstFile/secondFile are dicts with "name" field
+                    file_a = d.get("firstFile", "")
+                    file_b = d.get("secondFile", "")
+                    if isinstance(file_a, dict):
+                        file_a = file_a.get("name", "")
+                    if isinstance(file_b, dict):
+                        file_b = file_b.get("name", "")
                     details.append({
-                        "file_a": d.get("firstFile", d.get("file_a", "")),
-                        "file_b": d.get("secondFile", d.get("file_b", "")),
+                        "file_a": file_a,
+                        "file_b": file_b,
                         "lines": d.get("lines", 0),
-                        "fragment": d.get("fragment", "")[:500],
+                        "fragment": (d.get("fragment", "") or "")[:500],
                     })
 
             return {
