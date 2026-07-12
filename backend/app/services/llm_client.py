@@ -84,8 +84,15 @@ class OpenAIClient(BaseLLMClient):
             )
             generation_time = int(time.time() - start_time)
 
+            # glm-5.2 等推理模型：content 可能为空，实际内容在 reasoning_content
+            msg = response.choices[0].message
+            content = msg.content or ""
+            if not content and hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                content = msg.reasoning_content
+                logger.info("LLM content empty, using reasoning_content as fallback")
+
             return LLMResult(
-                content=response.choices[0].message.content or "",
+                content=content,
                 prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
                 completion_tokens=response.usage.completion_tokens if response.usage else 0,
                 generation_time=generation_time,
