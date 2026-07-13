@@ -1,13 +1,17 @@
 import { useState } from 'react'
-import { Form, Input, Button, Card, message, Typography } from 'antd'
-import { UserOutlined, LockOutlined } from '@ant-design/icons'
+import { Button, Card, Form, Input, message } from 'antd'
+import {
+  ArrowRightOutlined,
+  CheckCircleFilled,
+  LockOutlined,
+  SafetyCertificateOutlined,
+  UserOutlined,
+} from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { login } from '../services/auth'
-import './Login.css'
 import vllmAscendLogo from '../assets/vllm-ascend-logo.png'
-
-const { Title, Paragraph } = Typography
+import './Login.css'
 
 interface LoginFormValues {
   username: string
@@ -23,125 +27,114 @@ function Login() {
     setLoading(true)
     try {
       const response = await login(values)
-
-      // 保存 Token
       localStorage.setItem('access_token', response.access_token)
       localStorage.setItem('refresh_token', response.refresh_token)
-
-      // 清除用户信息缓存，确保重新获取最新角色
       queryClient.invalidateQueries({ queryKey: ['current-user'] })
 
-      // 获取用户信息并保存（用于路由权限判断）
       try {
         const { getCurrentUser } = await import('../services/auth')
         const userInfo = await getCurrentUser()
         localStorage.setItem('user_info', JSON.stringify(userInfo))
-      } catch (e) {
-        console.error('Failed to fetch user info:', e)
+      } catch (error) {
+        console.error('Failed to fetch user info:', error)
       }
 
-      message.success('登录成功')
-
-      // 跳转到首页
+      message.success('欢迎回来')
       navigate('/')
     } catch (error: any) {
-      message.error((error as any).response?.data?.detail || '登录失败，请检查用户名和密码')
+      message.error(error.response?.data?.detail || '登录失败，请检查用户名和密码')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="stripe-login-page">
-      {/* Decorative Background Elements */}
-      <div className="stripe-login-background">
-        <div className="stripe-login-gradient-orb stripe-login-orb-1" />
-        <div className="stripe-login-gradient-orb stripe-login-orb-2" />
-      </div>
-      
-      <div className="stripe-login-container">
-        {/* Logo Section */}
-        <div className="stripe-login-header">
-          <div className="stripe-login-logo">
-            <img src={vllmAscendLogo} alt="vLLM Ascend" className="stripe-login-logo-img" />
+    <main className="login-page">
+      <section className="login-story" aria-label="产品介绍">
+        <div className="login-story-inner">
+          <div className="login-brand">
+            <img src={vllmAscendLogo} alt="vLLM Ascend" />
+            <div>
+              <strong>vLLM Ascend</strong>
+              <span>Community Operations</span>
+            </div>
           </div>
-          <Title level={2} className="stripe-login-title">
-            vLLM Ascend Dashboard
-          </Title>
-          <Paragraph className="stripe-login-subtitle">
-            社区看板管理系统
-          </Paragraph>
-        </div>
 
-        {/* Login Card */}
-        <Card className="stripe-login-card">
+          <div className="login-story-copy">
+            <span className="login-kicker">COMMUNITY INTELLIGENCE</span>
+            <h1>把社区运行状态，<br />变成清晰的下一步行动。</h1>
+            <p>统一掌握 CI、PR、模型验证、测试质量与算力资源，让维护者更快发现风险、更稳推进交付。</p>
+          </div>
+
+          <div className="login-value-list">
+            <div><CheckCircleFilled /><span><strong>交付健康</strong>实时聚合 CI 与 PR 风险</span></div>
+            <div><CheckCircleFilled /><span><strong>模型质量</strong>跟踪精度、性能与回归</span></div>
+            <div><CheckCircleFilled /><span><strong>智能诊断</strong>从告警直接进入根因分析</span></div>
+          </div>
+
+          <div className="login-system-status">
+            <span className="login-status-dot" />
+            社区基础设施运行中
+          </div>
+        </div>
+      </section>
+
+      <section className="login-access" aria-label="账号登录">
+        <Card className="login-card" bordered={false}>
+          <div className="login-card-header">
+            <div className="login-security-icon"><SafetyCertificateOutlined /></div>
+            <span>安全访问</span>
+          </div>
+          <h2>登录工作台</h2>
+          <p className="login-card-subtitle">使用你的社区看板账号继续</p>
+
           <Form
             name="login"
             onFinish={onFinish}
             autoComplete="off"
             size="large"
             layout="vertical"
+            requiredMark={false}
           >
             <Form.Item
               name="username"
               label="用户名"
-              className="stripe-form-item"
               rules={[
                 { required: true, message: '请输入用户名' },
                 { min: 3, message: '用户名至少 3 个字符' },
               ]}
             >
-              <Input
-                prefix={<UserOutlined className="stripe-input-icon" />}
-                placeholder="请输入用户名"
-                autoComplete="username"
-                className="stripe-input"
-              />
+              <Input prefix={<UserOutlined />} placeholder="请输入用户名" autoComplete="username" />
             </Form.Item>
 
             <Form.Item
               name="password"
               label="密码"
-              className="stripe-form-item"
               rules={[
                 { required: true, message: '请输入密码' },
                 { min: 6, message: '密码至少 6 个字符' },
               ]}
             >
-              <Input.Password
-                prefix={<LockOutlined className="stripe-input-icon" />}
-                placeholder="请输入密码"
-                autoComplete="current-password"
-                className="stripe-input"
-              />
+              <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
             </Form.Item>
 
-            <Form.Item className="stripe-form-item-submit" style={{ marginBottom: 0 }}>
-              <Button
-                type="primary"
-                htmlType="submit"
-                loading={loading}
-                block
-                size="large"
-                className="stripe-btn-primary stripe-login-btn"
-              >
-                {loading ? '登录中...' : '登录'}
+            <Form.Item className="login-submit-item">
+              <Button type="primary" htmlType="submit" loading={loading} block className="login-submit-button">
+                {loading ? '正在验证…' : '进入工作台'}
+                {!loading && <ArrowRightOutlined />}
               </Button>
             </Form.Item>
-
-            <div style={{ textAlign: 'center', marginTop: 16 }}>
-              <Button
-                type="link"
-                onClick={() => navigate('/register')}
-                style={{ color: 'var(--stripe-purple)' }}
-              >
-                还没有账号？点击注册
-              </Button>
-            </div>
           </Form>
+
+          <div className="login-register-row">
+            <span>还没有账号？</span>
+            <Button type="link" onClick={() => navigate('/register')}>申请社区账号</Button>
+          </div>
+
+          <p className="login-help-text">访问遇到问题，请联系社区管理员。</p>
         </Card>
-      </div>
-    </div>
+      </section>
+    </main>
   )
 }
 
