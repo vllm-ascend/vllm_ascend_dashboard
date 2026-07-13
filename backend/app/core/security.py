@@ -77,7 +77,9 @@ def decode_token(token: str) -> dict | None:
     except ExpiredSignatureError:
         return None
     except JWTError as e:
-        _logger.warning(f"JWT decode error: {e}, token: {token[:20]}...")
+        # Tokens are credentials.  Never include even a prefix in logs because
+        # logs are commonly exported to third-party observability systems.
+        _logger.warning("JWT decode error: %s", e)
         return None
     except Exception as e:
         _logger.error(f"Unexpected error during token decoding: {e}")
