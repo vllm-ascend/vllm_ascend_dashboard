@@ -134,6 +134,17 @@ CODE_REVIEW.md
 # LiteLLM runtime config (generated, contains API keys)
 deploy/config/litellm_runtime.yaml
 
+# Temp data
+.tmpdata/
+
+# CI artifacts
+backend/_ci_files/
+backend/_ci_logs/
+
+# DB recovery / temp files
+backend/app.db.*
+backend/app_recovered.sql
+
 # Temp / analysis (not for commit)
 analysis_eval/
 backend/matches_v5.xlsx

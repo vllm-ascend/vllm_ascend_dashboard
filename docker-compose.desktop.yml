@@ -1,0 +1,69 @@
+# Docker Desktop deployment that reuses the existing vllm-litellm-dev gateway.
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    image: vllm-dashboard-backend:local
+    container_name: vllm-backend-dev
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////app/data/app.db
+      ENVIRONMENT: production
+      DEBUG: "false"
+      LITELLM_PROXY_URL: http://vllm-litellm-dev:4000
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
+      LITELLM_CONFIG_FILE: /app/litellm_config.yaml
+      LITELLM_CONTAINER_NAME: vllm-litellm-dev
+      AGENT_SERVICE_ENABLED: "true"
+      AGENT_PROXY_ONLY: "true"
+      AGENT_PROXY_ALLOWED_HOSTS: vllm-litellm-dev
+    volumes:
+      - vllm_backend_data:/app/data
+      - ./deploy/config/litellm_runtime.yaml:/app/litellm_config.yaml
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8000:8000"
+    networks:
+      vllm-dev-net:
+        aliases:
+          - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_BASE_URL: /api/v1
+    image: vllm-dashboard-frontend:local
+    container_name: vllm-dashboard-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - vllm-dev-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+
+volumes:
+  vllm_backend_data:
+    external: true
+
+networks:
+  vllm-dev-net:
+    external: true
