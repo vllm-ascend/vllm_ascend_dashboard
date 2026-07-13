@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ConfigProvider } from 'antd'
+import { ConfigProvider, Spin } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 
 import Login from './pages/Login'
@@ -61,8 +61,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   // 加载中，显示加载状态
   if (isLoading) {
     return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
-        <div>加载中...</div>
+      <div className="route-loading-state">
+        <Spin size="large" />
+        <span>正在进入社区工作台…</span>
       </div>
     )
   }
@@ -91,8 +92,9 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   // 加载中，显示加载状态
   if (isLoading) {
     return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
-        <div>加载中...</div>
+      <div className="route-loading-state">
+        <Spin size="large" />
+        <span>正在验证管理权限…</span>
       </div>
     )
   }
@@ -115,7 +117,31 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ConfigProvider locale={zhCN}>
+      <ConfigProvider
+        locale={zhCN}
+        theme={{
+          token: {
+            colorPrimary: '#5b46f5',
+            colorInfo: '#5b46f5',
+            colorSuccess: '#16a34a',
+            colorWarning: '#d97706',
+            colorError: '#dc2626',
+            colorText: '#10213a',
+            colorTextSecondary: '#52627a',
+            colorBorder: '#dfe6ef',
+            colorBgLayout: '#f6f8fc',
+            borderRadius: 10,
+            controlHeight: 38,
+            fontFamily: "'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+          },
+          components: {
+            Button: { fontWeight: 600, primaryShadow: '0 8px 20px rgba(91, 70, 245, 0.2)' },
+            Card: { headerBg: '#ffffff' },
+            Table: { headerBg: '#f7f9fc', headerColor: '#52627a' },
+            Menu: { itemBorderRadius: 9 },
+          },
+        }}
+      >
         <BrowserRouter>
           <Routes>
             {/* 公开分享页面 */}

@@ -13,13 +13,174 @@ body {
   font-family: var(--font-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #ffffff;
+  color: var(--text-secondary);
+  background:
+    radial-gradient(circle at 92% -8%, rgba(91, 70, 245, 0.055), transparent 26rem),
+    var(--surface-canvas);
   overflow-x: hidden;
   font-feature-settings: "ss01" on;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* Product-wide component finish */
+.ant-typography {
+  color: var(--text-primary);
+}
+
+.ant-card {
+  border-color: var(--border-subtle);
+  box-shadow: var(--shadow-card);
+}
+
+.ant-card .ant-card-head {
+  min-height: 54px;
+  padding-inline: 20px;
+  border-bottom-color: var(--border-subtle);
+}
+
+.ant-card .ant-card-head-title {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ant-card .ant-card-body {
+  padding: 20px;
+}
+
+.ant-table-wrapper .ant-table {
+  color: var(--text-secondary);
+  border-radius: 12px;
+}
+
+.ant-table-wrapper .ant-table-container {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th {
+  height: 46px;
+  color: #66758c;
+  background: #f8fafc;
+  border-bottom-color: var(--border-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  height: 52px;
+  border-bottom-color: #edf1f6;
+  font-size: 13px;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr:hover > td {
+  background: #fafbff !important;
+}
+
+.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.ant-btn-primary:not(:disabled) {
+  background: linear-gradient(135deg, var(--brand-600), var(--brand-700));
+  border-color: transparent;
+  box-shadow: 0 6px 16px rgba(91, 70, 245, 0.18);
+}
+
+.ant-btn-primary:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(91, 70, 245, 0.24);
+}
+
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-input-number,
+.ant-select-selector,
+.ant-picker {
+  border-color: var(--border-strong) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.ant-input:hover,
+.ant-input-affix-wrapper:hover,
+.ant-input-number:hover,
+.ant-select:hover .ant-select-selector,
+.ant-picker:hover {
+  border-color: var(--brand-500) !important;
+}
+
+.ant-modal .ant-modal-content,
+.ant-drawer .ant-drawer-content {
+  border: 1px solid rgba(223, 230, 239, 0.8);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.18);
+}
+
+.ant-modal .ant-modal-title {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.ant-tabs .ant-tabs-tab {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.ant-tag {
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.ant-empty-description {
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 640px) {
+  .ant-card .ant-card-head,
+  .ant-card .ant-card-body {
+    padding-inline: 16px;
+  }
+
+  .ant-table-wrapper {
+    overflow-x: auto;
+  }
+}
+
+.route-loading-state {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-secondary);
+  background: var(--surface-canvas);
+  font-size: 14px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(91, 70, 245, 0.28);
+  outline-offset: 2px;
+}
+
+::selection {
+  color: var(--brand-700);
+  background: var(--brand-100);
 }
 
 /* 滚动条样式 - Stripe 风格 */
