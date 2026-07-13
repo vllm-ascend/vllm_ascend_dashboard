@@ -1,7 +1,6 @@
 import hashlib
 import json
 import logging
-import os
 import re
 from datetime import datetime, timedelta, UTC
 from typing import Optional
@@ -11,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CIJob, CIResult, ProjectDashboardConfig, JobFailureAnalysis
 from app.models.daily_summary import LLMProviderConfig
-from app.services.claude_code_cli import run_with_fallback
 from app.services.failure_analysis_file_store import FailureAnalysisFileStore
 from app.core.config import settings
 
@@ -43,10 +41,10 @@ class FailureAnalysisService:
             raise ValueError(f"API Key not configured for provider: {config.provider}")
         return config
 
-    async def _get_cli_config(self, db: AsyncSession) -> dict:
-        """从数据库读取 Claude Code CLI 配置"""
+    async def _get_agent_config(self, db: AsyncSession) -> dict:
+        """Read failure-analysis Agent runtime limits."""
         stmt = select(ProjectDashboardConfig).where(
-            ProjectDashboardConfig.config_key == "claude_code_cli_config"
+            ProjectDashboardConfig.config_key == "failure_analysis_agent_config"
         )
         result = await db.execute(stmt)
         row = result.scalar_one_or_none()
@@ -144,9 +142,9 @@ class FailureAnalysisService:
                 return target
 
         # 从数据库读取 CLI 配置（默认值兜底）
-        cli_config = await self._get_cli_config(db)
-        max_turns_val = cli_config.get("max_turns", 80)
-        timeout_val = cli_config.get("timeout_seconds", 1800)
+        agent_config = await self._get_agent_config(db)
+        max_turns_val = agent_config.get("max_turns", 80)
+        timeout_val = agent_config.get("timeout_seconds", 1800)
         system_prompt = await self._get_system_prompt(db)
         user_prompt = await self._build_job_context(job, db, max_turns=max_turns_val, timeout_seconds=timeout_val)
 
@@ -173,51 +171,30 @@ class FailureAnalysisService:
         await db.refresh(analysis)
 
         try:
-            # ── 路由：Agent Service（新） vs Claude Code CLI（旧）──
-            if os.environ.get("AGENT_SERVICE_ENABLED", "").lower() in ("1", "true", "yes"):
-                from app.services.agent_service import AgentService, AgentTask
+            # Failure analysis is Agent-only. AgentService enforces the Docker
+            # LiteLLM proxy and fails closed; there is no local CLI fallback.
+            from app.services.agent_service import AgentService, AgentTask
 
-                agent_svc = AgentService(db)
-                agent_result = await agent_svc.run(AgentTask(
-                    prompt=user_prompt,
-                    provider_config={
-                        "provider": llm_config.provider,
-                        "api_key": llm_config.api_key,
-                        "api_base_url": llm_config.api_base_url,
-                        "default_model": llm_config.default_model,
-                    },
-                    system_prompt=system_prompt,
-                    skill_scope="ci_failure_analysis",
-                    max_steps=min(max_turns_val, 20),
-                    memory_type="failure_analysis",
-                    memory_filters={"workflow_name": job.workflow_name},
-                    source_id=analysis.id,
-                ))
+            agent_result = await AgentService(db).run(AgentTask(
+                prompt=user_prompt,
+                provider_config={
+                    "provider": llm_config.provider,
+                    "api_key": llm_config.decrypted_api_key,
+                    "api_base_url": llm_config.api_base_url,
+                    "default_model": llm_config.default_model,
+                },
+                system_prompt=system_prompt,
+                skill_scope="ci_failure_analysis",
+                max_steps=min(max_turns_val, 20),
+                timeout_seconds=timeout_val,
+                memory_type="failure_analysis",
+                memory_filters={"workflow_name": job.workflow_name},
+                source_id=analysis.id,
+            ))
+            if agent_result.exit_code != 0:
+                raise RuntimeError(agent_result.error_message or "Agent analysis failed")
 
-                # 适配 AgentResult → ClaudeCodeResult（后续代码期望此类型）
-                from app.services.claude_code_cli import ClaudeCodeResult
-                llm_result = ClaudeCodeResult(
-                    content=agent_result.content,
-                    turns=agent_result.steps if agent_result.steps > 0 else 1,
-                    duration_seconds=agent_result.duration_seconds,
-                    model_used=agent_result.model_used,
-                    exit_code=agent_result.exit_code,
-                    stderr=agent_result.error_message,
-                )
-            else:
-                llm_result = await run_with_fallback(
-                    prompt=user_prompt,
-                    provider_config={
-                        "provider": llm_config.provider,
-                        "api_key": llm_config.api_key,
-                        "api_base_url": llm_config.api_base_url,
-                        "default_model": llm_config.default_model,
-                    },
-                    system_prompt=system_prompt,
-                    max_turns=max_turns_val,
-                    timeout_seconds=timeout_val,
-                    output_format="json",
-                )
+            llm_result = agent_result
             # 清洗 GLM-5.1 的 <think> 和 tool call 噪音
             raw = llm_result.content
             raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
@@ -226,10 +203,10 @@ class FailureAnalysisService:
             raw = re.sub(r'LOGS=\$.*?(?=\n\n|\n#|\Z)', '', raw, flags=re.DOTALL)
 
             # CLI 没有实际运行（turns=0 或输出太短）
-            if llm_result.turns == 0 and len(raw.strip()) < 50:
+            if llm_result.steps == 0 and len(raw.strip()) < 50:
                 raise RuntimeError(
-                    f"Claude Code CLI did not run properly: turns={llm_result.turns}, "
-                    f"content_len={len(raw)}, stderr={llm_result.stderr[:200] if llm_result.stderr else 'none'}"
+                    "Agent did not produce a valid analysis: "
+                    f"steps={llm_result.steps}, content_len={len(raw)}"
                 )
 
             # 检测 LLM/API 层错误：CLI 会把上游 API 错误（如 400 Invalid model name）

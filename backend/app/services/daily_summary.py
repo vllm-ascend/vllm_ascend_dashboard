@@ -598,7 +598,7 @@ class DailySummaryService:
 
             provider_config = {
                 "provider": llm_config.provider,
-                "api_key": llm_config.api_key,
+                "api_key": llm_config.decrypted_api_key,
                 "api_base_url": llm_config.api_base_url,
                 "default_model": llm_config.default_model,
             }
@@ -615,6 +615,8 @@ class DailySummaryService:
                     memory_type="daily_summary",
                     memory_filters={"project": project},
                 ))
+                if agent_result.exit_code != 0:
+                    raise RuntimeError(f"Agent generation failed: {agent_result.error_message}")
                 summary_markdown = agent_result.content
                 model_used = agent_result.model_used
                 generation_time = int(agent_result.duration_seconds)

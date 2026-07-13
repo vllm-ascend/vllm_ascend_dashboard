@@ -179,15 +179,27 @@ class ClaudeCodeCLI:
 
         proxy: "FormatProxy | None" = None
         litellm_url = os.environ.get("LITELLM_PROXY_URL", "")
+        proxy_only = os.environ.get("AGENT_PROXY_ONLY", "").lower() in ("1", "true", "yes")
+        litellm_master_key = os.environ.get("LITELLM_MASTER_KEY", "")
+
+        if proxy_only and (not litellm_url or not litellm_master_key):
+            return ClaudeCodeResult(
+                content="",
+                turns=0,
+                duration_seconds=0,
+                model_used=model,
+                exit_code=2,
+                stderr="Proxy-only mode requires LITELLM_PROXY_URL and LITELLM_MASTER_KEY",
+            )
 
         # ── 路由决策 ──
-        if litellm_url and provider != "anthropic":
+        if litellm_url:
             # FormatProxy (Anthropic→OpenAI) → LiteLLM → upstream
             from app.services.format_proxy import FormatProxy
 
             proxy = FormatProxy(
                 upstream_base_url=litellm_url,
-                upstream_api_key="sk-litellm-master-key-change-me",
+                upstream_api_key=litellm_master_key,
                 upstream_model=model,
             )
             await proxy.start()
@@ -230,8 +242,13 @@ class ClaudeCodeCLI:
                 proxy.port, provider, model,
             )
 
-        logger.info("CLI env: ANTHROPIC_API_KEY=%s..., ANTHROPIC_BASE_URL=%s, model=%s, args=%s",
-                     str(env.get("ANTHROPIC_API_KEY",""))[:20], env.get("ANTHROPIC_BASE_URL"), model, " ".join(args))
+        logger.info(
+            "CLI env: credentials_configured=%s, ANTHROPIC_BASE_URL=%s, model=%s, args=%s",
+            bool(env.get("ANTHROPIC_API_KEY")),
+            env.get("ANTHROPIC_BASE_URL"),
+            model,
+            " ".join(args),
+        )
 
         # ── 执行 CLI ──
         # root 用户不允许 --dangerously-skip-permissions，通过 su 切到 appuser
@@ -393,7 +410,21 @@ class ClaudeCodeCLI:
 
         # auto-detect
         resolved = shutil.which("claude")
-        if resolved:
+        if resolved and os.path.isfile(resolved):
+            # 如果解析到 .CMD 文件，找对应的 VSCode 扩展 exe
+            if resolved.lower().endswith(".cmd"):
+                # 尝试 VSCode 扩展目录下的原生 exe
+                import glob as _glob
+                vscode_pattern = os.path.expanduser(
+                    "~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude.exe"
+                )
+                matches = sorted(_glob.glob(vscode_pattern), reverse=True)
+                if matches:
+                    exe_path = os.path.normpath(matches[0])
+                    logger.info("Using VSCode claude.exe: %s", exe_path)
+                    return exe_path
+                # fallback: 通过 cmd.exe 启动
+                return resolved  # CLI 会在 subprocess 中自然调用 cmd
             return resolved
 
         # 尝试常见的全局 npm 安装路径
@@ -427,7 +458,6 @@ class ClaudeCodeCLI:
         env = os.environ.copy()
 
         # ── 清除宿主机泄漏的用户凭据，防止 CLI 使用个人账号 ──
-        # ANTHROPIC_AUTH_TOKEN 优先级高于 ANTHROPIC_API_KEY，必须清除
         for key in (
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_API_KEY",
@@ -443,9 +473,15 @@ class ClaudeCodeCLI:
 
         if api_key:
             env["ANTHROPIC_API_KEY"] = api_key
+            env["ANTHROPIC_AUTH_TOKEN"] = api_key  # CLI 要求此字段存在，否则报 Not logged in
         if api_base:
             env["ANTHROPIC_BASE_URL"] = api_base
-        logger.info("_build_env_direct: api_key=%s..., api_base=%s, model=%s", api_key[:20] if api_key else '(none)', api_base, model)
+        logger.info(
+            "_build_env_direct: credentials_configured=%s, api_base=%s, model=%s",
+            bool(api_key),
+            api_base,
+            model,
+        )
 
         env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
         env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = model
@@ -477,11 +513,7 @@ class ClaudeCodeCLI:
         from pathlib import Path
 
         self._stdin_prompt = prompt  # 通过 stdin 传入
-        args = [
-            "--print", "--max-turns", str(max_turns),
-            # 排除用户级 settings.json，防止使用 ~/.claude/settings.json 中的个人凭据
-            "--setting-sources", "project,local",
-        ]
+        args = ["--print", "--max-turns", str(max_turns)]
 
         if debug_file:
             args.extend(["--debug", "--debug-file", debug_file])

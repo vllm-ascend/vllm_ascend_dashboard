@@ -8,7 +8,7 @@
 # 后端服务在启动时自动同步数据库中的 provider 配置。
 
 general_settings:
-  master_key: sk-litellm-master-key-change-me
+  master_key: os.environ/LITELLM_MASTER_KEY
 
 model_list: []
 
