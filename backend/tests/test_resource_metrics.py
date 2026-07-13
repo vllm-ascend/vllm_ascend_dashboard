@@ -212,6 +212,9 @@ async def test_query_node_metrics_aggregation(db_session: AsyncSession):
     await db_session.flush()
 
     base = (datetime.now(UTC) - timedelta(minutes=10)).replace(second=0, microsecond=0)
+    # Keep both samples in one deterministic 5-minute bucket. Without alignment,
+    # a run at minute xx:x4 crosses a bucket boundary and makes this test flaky.
+    base = base - timedelta(minutes=base.minute % 5)
     db_session.add_all([
         _make_node_metric(c1.id, "A2 资源池", "node-a2-01", 40.0, npu_total=8, collected_at=base),
         _make_node_metric(c1.id, "A2 资源池", "node-a2-01", 60.0, npu_total=10, collected_at=base + timedelta(minutes=1)),
