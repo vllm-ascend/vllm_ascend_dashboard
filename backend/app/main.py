@@ -1,7 +1,6 @@
 """
 vLLM Ascend Dashboard - Backend Application
 """
-import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -74,7 +73,6 @@ async def init_db():
         await _sync_litellm_providers()
 
         # Claude Code CLI 预热检查 —— 后台执行，不阻塞启动
-        asyncio.create_task(_warmup_claude_code_cli())
 
         # 清理启动前遗留的僵尸分析记录（>1h 还在 analyzing 的标记为 failed）
         await _cleanup_stale_analyses()
@@ -115,8 +113,17 @@ async def _migrate_login_log_columns():
 
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
-            def _get_columns(conn):
-                return [c['name'] for c in inspect(conn).get_columns('user_login_logs')]
+            def _get_columns(sync_session):
+                # AsyncSession.run_sync passes a synchronous ORM Session, not a
+                # Connection.  Inspect its bound connection so this works with
+                # both SQLite and server databases.
+                return [
+                    c["name"]
+                    for c in inspect(sync_session.connection()).get_columns(
+                        "user_login_logs"
+                    )
+                ]
+
             existing_cols = await db.run_sync(_get_columns)
 
             migrations = [
@@ -147,8 +154,12 @@ async def _migrate_avatar_base64_column():
 
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
-            def _get_columns(conn):
-                return [c['name'] for c in inspect(conn).get_columns('pull_requests')]
+            def _get_columns(sync_session):
+                return [
+                    c["name"]
+                    for c in inspect(sync_session.connection()).get_columns("pull_requests")
+                ]
+
             existing_cols = await db.run_sync(_get_columns)
 
             if 'author_avatar_base64' not in existing_cols:

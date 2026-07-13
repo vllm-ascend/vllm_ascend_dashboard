@@ -80,19 +80,19 @@ class SkillRegistry:
 
     @staticmethod
     def _parse_frontmatter(content: str) -> tuple[dict[str, str], str]:
-        if not content.startswith("---"):
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
             return {}, content
-        end = content.find("---", 3)
-        if end == -1:
+        try:
+            end = next(i for i, line in enumerate(lines[1:], 1) if line.strip() == "---")
+        except StopIteration:
             return {}, content
-        meta_block = content[3:end].strip()
-        body = content[end + 3:].strip()
         metadata: dict[str, str] = {}
-        for line in meta_block.splitlines():
+        for line in lines[1:end]:
             if ":" in line:
                 key, value = line.split(":", 1)
                 metadata[key.strip()] = value.strip().strip('"').strip("'")
-        return metadata, body
+        return metadata, "\n".join(lines[end + 1:]).strip()
 
     @staticmethod
     def _timestamp() -> str:
