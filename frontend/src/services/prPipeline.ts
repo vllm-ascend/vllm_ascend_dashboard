@@ -99,6 +99,8 @@ export interface PRPipelineMetrics {
 export interface PRPipelineContributor {
   username: string
   avatar_url: string | null
+  emails: string[]
+  primary_email: string | null
   avatar_base64: string | null
   type: string
   company: string | null
@@ -209,7 +211,7 @@ export const getTrends = async (days?: number): Promise<PRPipelineTrendsResponse
 }
 
 export const syncPRPipeline = async (daysBack?: number): Promise<{ message: string; running?: boolean }> => {
-  const response = await api.post<{ message: string; running?: boolean }>('/pr-pipeline/sync', {
+  const response = await longTimeoutApiClient.post<{ message: string; running?: boolean }>('/pr-pipeline/sync', {
     days_back: daysBack,
   })
   return response.data
@@ -224,7 +226,7 @@ export const historicalSyncPRPipeline = async (
   phases?: string[],
   monthsBack?: number
 ): Promise<{ message: string }> => {
-  const response = await api.post<{ message: string }>('/pr-pipeline/historical-sync', {
+  const response = await longTimeoutApiClient.post<{ message: string }>('/pr-pipeline/historical-sync', {
     phases,
     months_back: monthsBack,
   })

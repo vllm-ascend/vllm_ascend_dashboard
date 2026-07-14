@@ -139,7 +139,7 @@ async def _migrate_login_log_columns():
 
 
 async def _migrate_avatar_base64_column():
-    """Ensure pull_requests table has author_avatar_base64 column (for local avatar caching)"""
+    """Ensure pull_requests has author email/avatar cache columns for PR pipeline."""
     try:
         from sqlalchemy import text, inspect
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -151,15 +151,23 @@ async def _migrate_avatar_base64_column():
                 return [c['name'] for c in inspect(conn).get_columns('pull_requests')]
             existing_cols = await db.run_sync(_get_columns)
 
+            pending_columns = []
+            if 'author_email' not in existing_cols:
+                pending_columns.append(("author_email", "VARCHAR(200)"))
             if 'author_avatar_base64' not in existing_cols:
-                logger.info("Adding missing column 'author_avatar_base64' to pull_requests")
-                col_type = "TEXT" if _is_sqlite else "LONGTEXT"
-                await db.execute(text(f"ALTER TABLE pull_requests ADD COLUMN author_avatar_base64 {col_type}"))
+                avatar_col_type = "TEXT" if _is_sqlite else "LONGTEXT"
+                pending_columns.append(("author_avatar_base64", avatar_col_type))
+
+            for col_name, col_type in pending_columns:
+                logger.info("Adding missing column '%s' to pull_requests", col_name)
+                await db.execute(text(f"ALTER TABLE pull_requests ADD COLUMN {col_name} {col_type}"))
+
+            if pending_columns:
                 await db.commit()
-                logger.info("Column 'author_avatar_base64' added successfully")
+                logger.info("Added missing pull_requests columns: %s", ", ".join(name for name, _ in pending_columns))
 
     except Exception as e:
-        logger.warning(f"Avatar base64 column migration skipped (non-fatal): {e}")
+        logger.warning(f"PR pipeline author column migration skipped (non-fatal): {e}")
 
 
 async def _warmup_claude_code_cli():

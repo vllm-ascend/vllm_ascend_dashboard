@@ -153,14 +153,26 @@ const renderCIStatusTag = (status: string | null) => {
   return <Tag color={CI_STATUS_COLORS[status] || 'default'}>{CI_STATUS_LABELS[status] || status}</Tag>
 }
 
-const renderAvatar = (author: string, avatarUrl: string | null, avatarBase64?: string | null) => (
-  <Space size={4}>
-    <Avatar size={20} src={avatarBase64 || avatarUrl} style={{ backgroundColor: '#1677ff' }}>
-      {author?.[0]?.toUpperCase()}
-    </Avatar>
-    <Text>{author}</Text>
-  </Space>
-)
+const renderAvatar = (
+  author: string,
+  avatarUrl: string | null,
+  avatarBase64?: string | null,
+  email?: string | null,
+) => {
+  const identity = email ? `${author} <${email}>` : author
+  const maxTextWidth = email ? 200 : 140
+
+  return (
+    <Space size={4} style={{ maxWidth: '100%' }}>
+      <Avatar size={20} src={avatarBase64 || avatarUrl} style={{ backgroundColor: '#1677ff', flex: 'none' }}>
+        {author?.[0]?.toUpperCase()}
+      </Avatar>
+      <Tooltip title={identity}>
+        <Text ellipsis style={{ maxWidth: maxTextWidth }}>{identity}</Text>
+      </Tooltip>
+    </Space>
+  )
+}
 
 const formatHours = (hours: number | null) => {
   if (hours === null || hours === undefined) return '—'
@@ -801,8 +813,8 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
     {
       title: '作者',
       key: 'username',
-      width: 180,
-      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url, record.avatar_base64),
+      width: 260,
+      render: (_: unknown, record: PRPipelineContributor) => renderAvatar(record.username, record.avatar_url, record.avatar_base64, record.primary_email),
     },
     {
       title: '公司',
@@ -952,7 +964,7 @@ const ContributorsTab = ({ period, onDrillDown }: { period: number; onDrillDown:
   )
 }
 
-const SyncButton = () => {
+const SyncButton = ({ daysBack }: { daysBack: number }) => {
   const syncMutation = hooks.usePRPipelineSync()
   const { data: syncStatus } = hooks.usePRPipelineSyncStatus()
   const isSyncing = syncStatus?.running || syncMutation.isPending
@@ -962,7 +974,7 @@ const SyncButton = () => {
       message.warning('同步正在进行中，请稍候')
       return
     }
-    syncMutation.mutate(undefined, {
+    syncMutation.mutate(daysBack, {
       onSuccess: (data) => {
         if (data?.running) {
           message.warning('同步正在进行中，请稍候')
@@ -1107,7 +1119,7 @@ const PRPipelineBoard = () => {
           <Title level={3} style={{ margin: 0 }}>PR 流水线看板</Title>
           <Text type="secondary">跟踪 Pull Requests 的 Review 和 CI 流水线</Text>
         </div>
-        <SyncButton />
+        <SyncButton daysBack={Math.max(overviewPeriod, metricsPeriod, contributorsPeriod)} />
       </div>
 
       <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />

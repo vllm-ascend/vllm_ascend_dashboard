@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -300,9 +301,9 @@ class PRPipelineService:
         if type is None or type == "author":
             base_stmt = select(
                 PullRequest.author,
-                PullRequest.author_avatar_url,
-                PullRequest.author_avatar_base64,
-                PullRequest.author_email,
+                func.max(PullRequest.author_avatar_url).label("author_avatar_url"),
+                func.max(PullRequest.author_avatar_base64).label("author_avatar_base64"),
+                func.max(PullRequest.author_email).label("author_email"),
             ).where(
                 PullRequest.owner == owner,
                 PullRequest.repo == repo,
@@ -318,9 +319,7 @@ class PRPipelineService:
                     (PullRequest.author_email.not_like("%@huawei.com"))
                 )
 
-            base_stmt = base_stmt.group_by(
-                PullRequest.author, PullRequest.author_avatar_url, PullRequest.author_avatar_base64, PullRequest.author_email
-            )
+            base_stmt = base_stmt.group_by(PullRequest.author)
 
             # COUNT query for total (wrap GROUP BY in subquery to count groups)
             count_subq = base_stmt.with_only_columns(literal_column("1")).order_by(None).subquery()
@@ -341,13 +340,29 @@ class PRPipelineService:
                 data_stmt = data_stmt.limit(limit * 5)  # both types: reasonable cap
 
             result = await db.execute(data_stmt)
-            for row in result.all():
+            author_rows = result.all()
+            author_names = [row[0] for row in author_rows]
+            fallback_emails = {row[0]: row[3] for row in author_rows}
+            author_emails = await self._get_authors_emails(
+                db,
+                owner,
+                repo,
+                author_names,
+                since,
+                fallback_emails,
+            )
+
+            for row in author_rows:
+                emails = author_emails.get(row[0], [])
+                primary_email = emails[0] if emails else None
                 contributors.append(PRPipelineContributor(
                     username=row[0],
                     avatar_url=row[1],
+                    emails=emails,
+                    primary_email=primary_email,
                     avatar_base64=row[2],
                     type="author",
-                    company=detect_company(row[3]),
+                    company=detect_company(primary_email),
                     pr_count=row[4],
                     merged_count=row[5] or 0,
                     lines_added=row[6] or 0,
@@ -444,6 +459,54 @@ class PRPipelineService:
             total=author_total + reviewer_total,
             items=contributors,
         )
+
+    async def _get_authors_emails(
+        self,
+        db: AsyncSession,
+        owner: str,
+        repo: str,
+        authors: list[str],
+        since: datetime,
+        fallback_emails: dict[str, str | None],
+    ) -> dict[str, list[str]]:
+        if not authors:
+            return {}
+
+        stmt = select(PullRequest.author, PullRequest.data).where(
+            PullRequest.owner == owner,
+            PullRequest.repo == repo,
+            PullRequest.author.in_(authors),
+            PullRequest.created_at >= since,
+        )
+        result = await db.execute(stmt)
+        counts_by_author = {author: Counter() for author in authors}
+
+        for author, fallback_email in fallback_emails.items():
+            if fallback_email:
+                counts_by_author[author][fallback_email] += 1
+
+        for author, data in result.all():
+            commits = (data or {}).get("commits") or []
+            if not isinstance(commits, list):
+                continue
+            for commit in commits:
+                if not isinstance(commit, dict):
+                    continue
+                commit_author = commit.get("author") or {}
+                login = commit_author.get("login") if isinstance(commit_author, dict) else None
+                if login and login != author:
+                    continue
+
+                commit_data = commit.get("commit") or {}
+                author_data = commit_data.get("author") if isinstance(commit_data, dict) else {}
+                email = author_data.get("email") if isinstance(author_data, dict) else None
+                if email:
+                    counts_by_author[author][email] += 1
+
+        return {
+            author: [email for email, _ in counts.most_common()]
+            for author, counts in counts_by_author.items()
+        }
 
     async def get_trends(
         self,
