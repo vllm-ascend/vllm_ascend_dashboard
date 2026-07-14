@@ -1,19 +1,20 @@
 """
 vLLM Ascend Dashboard - Backend Application
 """
-import io
 import logging
 import os
 import sys
 from contextlib import asynccontextmanager
 
 # 修复 Windows 控制台 GBK 编码问题（如 ⚠ 等 Unicode 字符无法输出）
-# 必须同时设置 PYTHONIOENCODING 环境变量 + reconfigure stdout/stderr
-# 因为 smolagents 等第三方库内部可能使用 subprocess 或 print 输出 emoji
 if sys.platform == 'win32':
     os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    for s in (sys.stdout, sys.stderr):
+        try:
+            if hasattr(s, 'reconfigure'):
+                s.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -98,14 +99,19 @@ async def _migrate_email_column():
         async with async_session() as db:
             null_count = (await db.execute(text("SELECT COUNT(*) FROM users WHERE email IS NULL OR email = ''"))).scalar()
             if null_count:
-                await db.execute(text("UPDATE users SET email = username || '@placeholder.local' WHERE email IS NULL OR email = ''"))
+                await db.execute(text("UPDATE users SET email = CONCAT(username, '@placeholder.local') WHERE email IS NULL OR email = ''"))
                 await db.commit()
             try:
                 await db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
                 await db.commit()
             except Exception as idx_err:
                 if "duplicate" in str(idx_err).lower() or "unique" in str(idx_err).lower():
-                    await db.execute(text("UPDATE users SET email = email || '_' || id WHERE id NOT IN (SELECT MIN(id) FROM users WHERE email IS NOT NULL GROUP BY email) AND email IS NOT NULL"))
+                    await db.execute(text(
+                        "UPDATE users SET email = CONCAT(email, '_', id) "
+                        "WHERE id NOT IN ("
+                        "  SELECT * FROM (SELECT MIN(id) FROM users WHERE email IS NOT NULL GROUP BY email) AS t"
+                        ") AND email IS NOT NULL"
+                    ))
                     await db.commit()
                     await db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
                     await db.commit()

@@ -267,13 +267,13 @@ class MemoryManager:
         filters: dict | None,
         limit: int,
     ) -> list[MemorySearchResult]:
-        """通过标签匹配检索记忆（metadata 过滤在 Python 层，兼容 SQLite）"""
+        """通过标签匹配检索记忆（metadata 过滤在 Python 层）"""
         conditions = [
             AnalysisMemory.memory_type == memory_type,
             AnalysisMemory.status == "active",
         ]
 
-        # 取最近记录（不在此层做 metadata 过滤，避免 SQLite JSON path 兼容问题）
+        # 取最近记录（metadata 过滤在 Python 层处理）
         stmt = (
             select(AnalysisMemory)
             .where(and_(*conditions))
@@ -323,7 +323,7 @@ class MemoryManager:
         filters: dict | None,
         limit: int,
     ) -> list[MemorySearchResult]:
-        """按时间返回最近的记忆（metadata 过滤在 Python 层，兼容 SQLite）"""
+        """按时间返回最近的记忆（metadata 过滤在 Python 层）"""
         conditions = [
             AnalysisMemory.memory_type == memory_type,
             AnalysisMemory.status == "active",
