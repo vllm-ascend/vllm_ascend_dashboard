@@ -1,9 +1,19 @@
 """
 vLLM Ascend Dashboard - Backend Application
 """
+import io
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
+
+# 修复 Windows 控制台 GBK 编码问题（如 ⚠ 等 Unicode 字符无法输出）
+# 必须同时设置 PYTHONIOENCODING 环境变量 + reconfigure stdout/stderr
+# 因为 smolagents 等第三方库内部可能使用 subprocess 或 print 输出 emoji
+if sys.platform == 'win32':
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,7 +58,6 @@ logging.basicConfig(
 
 # 降低第三方库日志级别，避免打印无用信息
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 # 注意：apscheduler.scheduler 保持默认级别，以便记录调度器执行日志
 # 如果 LOG_LEVEL=WARNING，调度器的 INFO 日志会被过滤，这是正常的
 
@@ -109,14 +118,10 @@ async def _migrate_login_log_columns():
     try:
         from sqlalchemy import text, inspect
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-        from app.db.base import _is_sqlite
 
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
             def _get_columns(sync_session):
-                # AsyncSession.run_sync passes a synchronous ORM Session, not a
-                # Connection.  Inspect its bound connection so this works with
-                # both SQLite and server databases.
                 return [
                     c["name"]
                     for c in inspect(sync_session.connection()).get_columns(
@@ -127,16 +132,15 @@ async def _migrate_login_log_columns():
             existing_cols = await db.run_sync(_get_columns)
 
             migrations = [
-                ("ip_address_hashed", "VARCHAR(64)", "VARCHAR(64)"),
-                ("login_method", "VARCHAR(20) DEFAULT 'password'", "VARCHAR(20)"),
-                ("user_agent", "VARCHAR(500)", "VARCHAR(500)"),
-                ("created_at", "TIMESTAMP", "TIMESTAMP"),
+                ("ip_address_hashed", "VARCHAR(64)"),
+                ("login_method", "VARCHAR(20)"),
+                ("user_agent", "VARCHAR(500)"),
+                ("created_at", "TIMESTAMP"),
             ]
 
-            for col_name, sqlite_def, mysql_def in migrations:
+            for col_name, col_type in migrations:
                 if col_name not in existing_cols:
                     logger.info(f"Adding missing column '{col_name}' to user_login_logs")
-                    col_type = sqlite_def if _is_sqlite else mysql_def
                     await db.execute(text(f"ALTER TABLE user_login_logs ADD COLUMN {col_name} {col_type}"))
                     await db.commit()
                     logger.info(f"Column '{col_name}' added successfully")
@@ -150,7 +154,6 @@ async def _migrate_avatar_base64_column():
     try:
         from sqlalchemy import text, inspect
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-        from app.db.base import _is_sqlite
 
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
@@ -166,8 +169,7 @@ async def _migrate_avatar_base64_column():
             if 'author_email' not in existing_cols:
                 pending_columns.append(("author_email", "VARCHAR(200)"))
             if 'author_avatar_base64' not in existing_cols:
-                avatar_col_type = "TEXT" if _is_sqlite else "LONGTEXT"
-                pending_columns.append(("author_avatar_base64", avatar_col_type))
+            pending_columns.append(("author_avatar_base64", "LONGTEXT"))
 
             for col_name, col_type in pending_columns:
                 logger.info("Adding missing column '%s' to pull_requests", col_name)
