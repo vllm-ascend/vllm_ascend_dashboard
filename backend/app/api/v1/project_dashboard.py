@@ -3,26 +3,20 @@ Project Dashboard API 路由
 提供项目看板相关的数据和功能
 """
 import logging
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_active_admin_user, get_current_user, get_db as get_db_session
+from app.api.deps import get_current_active_admin_user, get_current_user
+from app.api.deps import get_db as get_db_session
 from app.db.base import get_db
 from app.models import User
 from app.schemas import (
-    CommitInfo,
-    ModelSupportEntry,
-    ModelSupportMatrix,
     PRActionRequest,
-    ProjectDashboardConfigResponse,
     ProjectDashboardConfigUpdate,
-    ReleaseInfo,
-    StaleIssue,
     TagComparisonRequest,
-    TagComparisonResult,
-    VllmVersionInfo,
+    VersionQualityReportRequest,
 )
 from app.services.github_api import get_github_api_service
 from app.services.github_cache import ensure_repo_cloned, get_github_cache, update_repo
@@ -126,6 +120,7 @@ async def get_model_support_matrix(
     从数据库配置中读取
     """
     from sqlalchemy import select
+
     from app.models import ProjectDashboardConfig
 
     # 从数据库读取配置
@@ -154,7 +149,7 @@ async def get_model_support_matrix(
 
 @router.put("/model-support-matrix")
 async def update_model_support_matrix(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     db: Annotated[Any, Depends(get_db_session)],
     current_user: Annotated[User, Depends(get_current_active_admin_user)]
 ):
@@ -288,14 +283,14 @@ async def get_pr_ci_status(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"PR #{pr_number} not found",
         )
-    
+
     logger.info(f"PR #{pr_number} info: title={pr_info.get('title')}, state={pr_info.get('state')}, head_ref={pr_info.get('head', {}).get('ref')}")
 
     # Get workflow runs for this PR
     logger.info(f"Fetching workflow runs for PR #{pr_number}...")
     workflow_runs = await github_api.get_workflow_runs_for_pr(pr_number)
     logger.info(f"Found {len(workflow_runs)} workflow runs for PR #{pr_number}")
-    
+
     # Log workflow run details for debugging
     for i, run in enumerate(workflow_runs[:5]):
         logger.info(f"Workflow run {i}: id={run.get('id')}, name={run.get('name')}, "
@@ -311,7 +306,7 @@ async def get_pr_ci_status(
     failed_runs = [run for run in completed_runs if run.get("conclusion") == "failure"]
     success_runs = [run for run in completed_runs if run.get("conclusion") == "success"]
     skipped_runs = [run for run in completed_runs if run.get("conclusion") == "skipped"]
-    
+
     logger.info(f"Categorized: in_progress={len(in_progress_runs)}, queued={len(queued_runs)}, "
                f"completed={len(completed_runs)}, failed={len(failed_runs)}, "
                f"success={len(success_runs)}, skipped={len(skipped_runs)}")
@@ -393,7 +388,7 @@ async def rerun_pr_ci(
     workflow_run_id = first_failed.get("id")
 
     if not workflow_run_id:
-        logger.error(f"Could not get workflow run ID for failed run")
+        logger.error("Could not get workflow run ID for failed run")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Could not get workflow run ID",
@@ -430,10 +425,11 @@ async def force_merge_pr(
     仅管理员权限，会记录合入操作到系统配置
     注意：vllm-ascend 仓库只支持 squash 方式合入
     """
+    from datetime import UTC, datetime
+
     from sqlalchemy import select
 
     from app.models import ProjectDashboardConfig
-    from datetime import UTC, datetime
 
     github_api = get_github_api_service()
 
@@ -556,10 +552,10 @@ async def get_force_merge_records(
         return {"records": []}
 
     records = config.config_value.get("records", [])
-    
+
     # 按时间倒序排列（最新的在前）
     records.sort(key=lambda x: x.get("merged_at", ""), reverse=True)
-    
+
     return {"records": records}
 
 
@@ -624,6 +620,168 @@ async def compare_tags(
         "ci_changes": ci,
         "misc": misc,
     }
+
+
+@router.post("/version-quality-report/generate")
+async def generate_version_quality_report(
+    request: VersionQualityReportRequest,
+    db: Annotated[Any, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
+):
+    """
+    生成版本质量评估报告
+
+    基于对比 Tag 数据、GitHub Issues/PRs、CI 通过率、模型支持矩阵等多维度数据，
+    调用大模型并使用 version-quality-assessment 技能生成 HTML 格式的质量评估报告。
+
+    仅管理员可操作。
+    """
+    from app.services.version_quality_service import VersionQualityService
+
+    # 确保 git 仓库缓存就绪
+    if not ensure_repo_cloned():
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to clone repository, please update git cache first",
+        )
+
+    service = VersionQualityService(db)
+    try:
+        report = await service.generate_report(
+            base_tag=request.base_tag,
+            head_tag=request.head_tag,
+            force_regenerate=request.force_regenerate,
+        )
+        return {"success": True, "report": report}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except Exception as e:
+        logger.error("Failed to generate version quality report: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="报告生成失败，请检查 LLM 配置和数据采集状态后重试",
+        ) from e
+
+
+@router.get("/version-quality-report/list")
+async def list_version_quality_reports(
+    db: Annotated[Any, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """
+    获取所有版本质量评估报告列表
+
+    需要登录。
+    """
+    from app.services.version_quality_service import VersionQualityService
+
+    service = VersionQualityService(db)
+    reports = await service.list_reports()
+    return {"reports": reports}
+
+
+@router.get("/version-quality-report/{report_id}")
+async def get_version_quality_report(
+    report_id: str,
+    db: Annotated[Any, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """
+    获取单个报告元数据
+
+    需要登录。
+    """
+    from app.services.version_quality_service import VersionQualityService
+
+    service = VersionQualityService(db)
+    meta = await service.get_report_meta(report_id)
+    if not meta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告不存在")
+    return meta
+
+
+@router.get("/version-quality-report/{report_id}/download")
+async def download_version_quality_report(
+    report_id: str,
+    db: Annotated[Any, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """
+    下载版本质量评估报告 HTML 文件
+
+    需要登录。
+    """
+    from fastapi.responses import FileResponse
+
+    from app.services.version_quality_service import VersionQualityService
+
+    service = VersionQualityService(db)
+    meta = await service.get_report_meta(report_id)
+    if not meta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告不存在")
+
+    html_path = await service.get_html_path(report_id)
+    if not html_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告 HTML 文件不存在")
+
+    from app.services.version_quality_file_store import _sanitize_component
+
+    raw_base = meta.get('base_tag', 'base')
+    raw_head = meta.get('head_tag', 'head')
+    filename = f"version_quality_{_sanitize_component(raw_base)}_to_{_sanitize_component(raw_head)}.html"
+    return FileResponse(
+        path=str(html_path),
+        media_type="text/html; charset=utf-8",
+        filename=filename,
+    )
+
+
+@router.get("/version-quality-report/{report_id}/html")
+async def get_version_quality_report_html(
+    report_id: str,
+    db: Annotated[Any, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """
+    获取报告 HTML 内容（JSON 返回，前端预览用）
+
+    需要登录。
+    """
+    from app.services.version_quality_service import VersionQualityService
+
+    service = VersionQualityService(db)
+    meta = await service.get_report_meta(report_id)
+    if not meta:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告不存在")
+
+    html = await service.get_report_html(report_id)
+    if html is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告 HTML 文件不存在")
+
+    return {"html": html, "meta": meta}
+
+
+@router.delete("/version-quality-report/{report_id}")
+async def delete_version_quality_report(
+    report_id: str,
+    db: Annotated[Any, Depends(get_db_session)],
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
+):
+    """
+    删除版本质量评估报告
+
+    仅管理员可操作。
+    """
+    from app.services.version_quality_service import VersionQualityService
+
+    service = VersionQualityService(db)
+    deleted = await service.delete_report(report_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报告不存在或已删除")
+    return {"success": True, "message": f"报告 {report_id} 已删除"}
 
 
 @router.get("/config")

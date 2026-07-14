@@ -450,6 +450,33 @@ class GitHubClient:
         await self.client.aclose()
         logger.info("GitHubClient closed")
 
+    async def search_issues(self, query: str, per_page: int = 100, sort: str | None = None, order: str = "desc") -> dict[str, Any]:
+        """
+        通过 GitHub Search API 搜索 issues/PRs
+
+        Args:
+            query: 搜索查询语句（如 "repo:vllm-project/vllm-ascend is:issue is:open label:bug"）
+            per_page: 每页数量
+            sort: 排序字段（如 "updated"）
+            order: 排序方向
+
+        Returns:
+            搜索结果（含 total_count 和 items）
+        """
+        params: dict[str, Any] = {"q": query, "per_page": per_page, "order": order}
+        if sort:
+            params["sort"] = sort
+        return await self._request("GET", "/search/issues", params=params)
+
+    async def get_repo_info(self) -> dict[str, Any]:
+        """
+        获取当前仓库的基本信息（stars, forks, open issues 等）
+
+        Returns:
+            仓库信息字典
+        """
+        return await self._request("GET", f"/repos/{self.owner}/{self.repo}")
+
     async def __aenter__(self) -> "GitHubClient":
         """异步上下文管理器入口"""
         return self

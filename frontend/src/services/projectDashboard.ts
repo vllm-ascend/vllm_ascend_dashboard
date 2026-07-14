@@ -282,3 +282,92 @@ export const getForceMergeRecords = async () => {
   }> }>('/project-dashboard/force-merge-records')
   return response.data
 }
+
+// ==================== 版本质量评估报告 ====================
+
+export interface VersionQualityReportMeta {
+  report_id: string
+  base_tag: string
+  head_tag: string
+  generated_at: string
+  html_length: number
+  llm_provider?: string | null
+  llm_model?: string | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  generation_time_seconds?: number | null
+  total_commits: number
+  open_bugs: number
+  merged_prs: number
+  ci_success_rate?: number | null
+  stars?: number | null
+  forks?: number | null
+  data_sources: string[]
+}
+
+export interface VersionQualityReportHtml {
+  html: string
+  meta: VersionQualityReportMeta
+}
+
+/**
+ * 生成版本质量评估报告（管理员）
+ */
+export const generateVersionQualityReport = async (
+  baseTag: string,
+  headTag: string,
+  forceRegenerate: boolean = false
+) => {
+  const response = await api.post<{ success: boolean; report: VersionQualityReportMeta }>(
+    '/project-dashboard/version-quality-report/generate',
+    { base_tag: baseTag, head_tag: headTag, force_regenerate: forceRegenerate }
+  )
+  return response.data
+}
+
+/**
+ * 获取版本质量评估报告列表
+ */
+export const listVersionQualityReports = async () => {
+  const response = await api.get<{ reports: VersionQualityReportMeta[] }>(
+    '/project-dashboard/version-quality-report/list'
+  )
+  return response.data
+}
+
+/**
+ * 获取单个报告元数据
+ */
+export const getVersionQualityReport = async (reportId: string) => {
+  const response = await api.get<VersionQualityReportMeta>(
+    `/project-dashboard/version-quality-report/${reportId}`
+  )
+  return response.data
+}
+
+/**
+ * 获取报告 HTML 内容（用于前端预览）
+ */
+export const getVersionQualityReportHtml = async (reportId: string) => {
+  const response = await api.get<VersionQualityReportHtml>(
+    `/project-dashboard/version-quality-report/${reportId}/html`
+  )
+  return response.data
+}
+
+/**
+ * 获取报告下载 URL
+ */
+export const getVersionQualityReportDownloadUrl = (reportId: string) => {
+  return `/api/v1/project-dashboard/version-quality-report/${reportId}/download`
+}
+
+/**
+ * 删除版本质量评估报告（管理员）
+ */
+export const deleteVersionQualityReport = async (reportId: string) => {
+  const response = await api.delete<{ success: boolean; message: string }>(
+    `/project-dashboard/version-quality-report/${reportId}`
+  )
+  return response.data
+}

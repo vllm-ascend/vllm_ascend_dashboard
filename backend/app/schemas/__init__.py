@@ -804,6 +804,33 @@ class TagComparisonResult(BaseModel):
     performance_improvements: List[CommitInfo]
 
 
+class VersionQualityReportRequest(BaseModel):
+    """版本质量评估报告生成请求"""
+    base_tag: str
+    head_tag: str
+    force_regenerate: bool = False
+
+
+class VersionQualityReportMeta(BaseModel):
+    """版本质量评估报告元数据"""
+    report_id: str
+    base_tag: str
+    head_tag: str
+    generated_at: str
+    llm_provider: Optional[str] = None
+    llm_model: Optional[str] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    generation_time_seconds: Optional[float] = None
+    total_commits: int = 0
+    open_bugs: int = 0
+    merged_prs: int = 0
+    ci_success_rate: Optional[float] = None
+    stars: Optional[int] = None
+    forks: Optional[int] = None
+    data_sources: List[str] = Field(default_factory=list)
+
+
 class ProjectDashboardConfigBase(BaseModel):
     """项目看板配置基础 Schema"""
     config_key: str = Field(..., max_length=100)
