@@ -69,10 +69,9 @@ async def init_db():
     """初始化数据库表"""
     try:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(Base.metadata.create_all, checkfirst=True)
         logger.info("Database tables created successfully")
 
-        await _migrate_email_column()
         await _migrate_login_log_columns()
         await _migrate_avatar_base64_column()
 
@@ -91,32 +90,8 @@ async def init_db():
         raise
 
 
-async def _migrate_email_column():
-    try:
-        from sqlalchemy import text
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as db:
-            null_count = (await db.execute(text("SELECT COUNT(*) FROM users WHERE email IS NULL OR email = ''"))).scalar()
-            if null_count:
-                await db.execute(text("UPDATE users SET email = CONCAT(username, '@placeholder.local') WHERE email IS NULL OR email = ''"))
-                await db.commit()
-            try:
-                await db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
-                await db.commit()
-            except Exception as idx_err:
-                if "duplicate" in str(idx_err).lower() or "unique" in str(idx_err).lower():
-                    await db.execute(text(
-                        "UPDATE users SET email = CONCAT(email, '_', id) "
-                        "WHERE id NOT IN ("
-                        "  SELECT * FROM (SELECT MIN(id) FROM users WHERE email IS NOT NULL GROUP BY email) AS t"
-                        ") AND email IS NOT NULL"
-                    ))
-                    await db.commit()
-                    await db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
-                    await db.commit()
-    except Exception as e:
-        logger.warning(f"Email migration skipped (non-fatal): {e}")
+# _migrate_email_column 已移除：MySQL 唯一索引由 SQLAlchemy 模型 unique=True 管理，
+# create_all(checkfirst=True) 已处理表级幂等，不再需要手动迁移。
 
 
 async def _migrate_login_log_columns():
