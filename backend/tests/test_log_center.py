@@ -25,7 +25,6 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 # Ensure settings validation passes before any app imports
 os.environ.setdefault(
@@ -109,10 +108,9 @@ def _make_failure_report(
 
 @pytest_asyncio.fixture
 async def db_with_app_logs():
-    """In-memory SQLite DB with app_logs table."""
+    """MySQL test DB with app_logs table."""
     engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
+        "mysql+aiomysql://dashboard:dashboard123@localhost:3306/vllm_dashboard_test",
         echo=False,
     )
     async with engine.begin() as conn:

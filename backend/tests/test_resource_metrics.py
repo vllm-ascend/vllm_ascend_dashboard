@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
 
 backend_dir = str(Path(__file__).resolve().parent.parent)
 if backend_dir not in sys.path:
@@ -27,10 +26,9 @@ from app.services.resource_metrics import ResourceMetricsService  # noqa: E402
 
 @pytest_asyncio.fixture
 async def db_session():
-    """Create an in-memory SQLite database with resource metrics tables."""
+    """Create test database with resource metrics tables (MySQL)."""
     engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
+        "mysql+aiomysql://dashboard:dashboard123@localhost:3306/vllm_dashboard_test",
         echo=False,
     )
     async with engine.begin() as conn:
