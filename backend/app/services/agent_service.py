@@ -230,6 +230,11 @@ class AgentService:
         if api_base:
             lite_kwargs["api_base"] = api_base
 
+        logger.info(
+            "AgentService: creating LiteLLMModel model_id=%s api_base=%s api_key_prefix=%s...",
+            model_id, api_base, api_key[:15] if api_key else "EMPTY",
+        )
+
         # 如果设置了 LITELLM_PROXY_URL，通过它路由
         if litellm_proxy:
             lite_kwargs["api_base"] = litellm_proxy
