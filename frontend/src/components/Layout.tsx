@@ -102,12 +102,22 @@ const routeMeta = [
   { prefix: '/ci', title: 'CI 运行', section: '研发交付' },
   { prefix: '/logs', title: '日志中心', section: '资源与响应' },
   { prefix: '/user-stats', title: '用户统计', section: '管理中心' },
+  { prefix: '/admin/smtp-config', title: '邮件服务', section: '管理中心' },
+  { prefix: '/admin/daily-report', title: '每日运行报告', section: '管理中心' },
+  { prefix: '/admin/ci-board-config', title: 'CI 看板配置', section: '管理中心' },
+  { prefix: '/admin/model-board-config', title: '模型看板配置', section: '管理中心' },
+  { prefix: '/admin/project-board-config', title: '项目看板配置', section: '管理中心' },
+  { prefix: '/admin/resource-dashboard-config', title: '资源看板配置', section: '管理中心' },
   { prefix: '/admin', title: '系统配置', section: '管理中心' },
 ]
 
 function getSelectedNavigation(pathname: string) {
   if (pathname === '/') return '/'
-  return routeMeta.find((item) => pathname.startsWith(item.prefix))?.prefix || pathname
+  // 匹配最长前缀，避免 /admin 吞掉所有 /admin/xxx 子路由
+  const match = routeMeta
+    .filter((item) => pathname.startsWith(item.prefix))
+    .sort((a, b) => b.prefix.length - a.prefix.length)[0]
+  return match?.prefix || pathname
 }
 
 function Layout() {
