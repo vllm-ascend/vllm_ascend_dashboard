@@ -23,6 +23,7 @@ import {
   Alert,
   Spin,
   Empty,
+  Popconfirm,
 } from 'antd'
 import {
   GithubOutlined,
@@ -33,6 +34,11 @@ import {
   MergeOutlined,
   SwapOutlined,
   FileTextOutlined,
+  SafetyCertificateOutlined,
+  DownloadOutlined,
+  EyeOutlined,
+  DeleteOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import {
@@ -43,12 +49,18 @@ import {
   rerunPRCI,
   forceMergePR,
   getPRCIStatus,
+  generateVersionQualityReport,
+  listVersionQualityReports,
+  getVersionQualityReportHtml,
+  deleteVersionQualityReport,
+  getVersionQualityReportDownloadUrl,
   type ReleaseInfo,
   type WorkflowRun,
   type VllmVersionInfo,
   type ModelSupportEntry,
   type CommitInfo,
   type TagComparisonResult,
+  type VersionQualityReportMeta,
 } from '../services/projectDashboard'
 import PROperations from '../components/PROperations'
 import { useCurrentUser } from '../hooks/useCurrentUser'
@@ -89,6 +101,17 @@ function ProjectBoard() {
   const [compareLoading, setCompareLoading] = useState(false)
   const [compareResult, setCompareResult] = useState<TagComparisonResult | null>(null)
   const [availableTags, setAvailableTags] = useState<string[]>([])
+
+  // 版本质量评估报告状态
+  const [reportGenerating, setReportGenerating] = useState(false)
+  const [reportListVisible, setReportListVisible] = useState(false)
+  const [reportList, setReportList] = useState<VersionQualityReportMeta[]>([])
+  const [reportListLoading, setReportListLoading] = useState(false)
+  const [reportPreviewVisible, setReportPreviewVisible] = useState(false)
+  const [reportPreviewHtml, setReportPreviewHtml] = useState<string>('')
+  const [reportPreviewMeta, setReportPreviewMeta] = useState<VersionQualityReportMeta | null>(null)
+  const [reportPreviewLoading, setReportPreviewLoading] = useState(false)
+  const [reportDeleting, setReportDeleting] = useState<string | null>(null)
 
   // 加载发布版本
   useEffect(() => {
@@ -183,6 +206,100 @@ function ProjectBoard() {
     } finally {
       setCompareLoading(false)
     }
+  }
+
+  // 生成版本质量评估报告
+  const handleGenerateReport = async (forceRegenerate: boolean = false) => {
+    if (!compareResult) {
+      message.warning('请先进行 Tag 对比')
+      return
+    }
+    setReportGenerating(true)
+    try {
+      const result = await generateVersionQualityReport(
+        compareResult.base_tag,
+        compareResult.head_tag,
+        forceRegenerate
+      )
+      message.success('版本质量评估报告生成成功！')
+      // 自动打开预览
+      await handlePreviewReport(result.report.report_id)
+    } catch (error: any) {
+      message.error('生成报告失败：' + (error.response?.data?.detail || error.message))
+    } finally {
+      setReportGenerating(false)
+    }
+  }
+
+  // 加载报告列表
+  const handleLoadReportList = async () => {
+    setReportListLoading(true)
+    try {
+      const data = await listVersionQualityReports()
+      setReportList(data.reports)
+    } catch (error: any) {
+      message.error('加载报告列表失败：' + (error.response?.data?.detail || error.message))
+    } finally {
+      setReportListLoading(false)
+    }
+  }
+
+  // 预览报告
+  const handlePreviewReport = async (reportId: string) => {
+    setReportPreviewLoading(true)
+    setReportPreviewVisible(true)
+    try {
+      const data = await getVersionQualityReportHtml(reportId)
+      setReportPreviewHtml(data.html)
+      setReportPreviewMeta(data.meta)
+    } catch (error: any) {
+      message.error('加载报告失败：' + (error.response?.data?.detail || error.message))
+      setReportPreviewVisible(false)
+    } finally {
+      setReportPreviewLoading(false)
+    }
+  }
+
+  // 删除报告
+  const handleDeleteReport = async (reportId: string) => {
+    setReportDeleting(reportId)
+    try {
+      await deleteVersionQualityReport(reportId)
+      message.success('报告已删除')
+      await handleLoadReportList()
+    } catch (error: any) {
+      message.error('删除失败：' + (error.response?.data?.detail || error.message))
+    } finally {
+      setReportDeleting(null)
+    }
+  }
+
+  // 下载报告（触发浏览器下载）
+  const handleDownloadReport = (reportId: string, baseTag?: string, headTag?: string) => {
+    const url = getVersionQualityReportDownloadUrl(reportId)
+    const token = localStorage.getItem('access_token')
+    // 使用 fetch 下载（带 token）
+    fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('下载失败')
+        return res.blob()
+      })
+      .then(blob => {
+        const blobUrl = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = `version_quality_${baseTag || 'base'}_to_${headTag || 'head'}.html`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        // 延迟撤销以兼容 Firefox 下载管理器
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000)
+      })
+      .catch(error => {
+        message.error('下载失败：' + error.message)
+      })
   }
 
   // 处理 PR 操作（已在 PROperations 组件中实现）
@@ -528,9 +645,31 @@ function ProjectBoard() {
 
                 {compareResult && (
                   <div id="compare-result">
-                    <Title level={4}>
-                      对比：{compareResult.base_tag} → {compareResult.head_tag}
-                    </Title>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 8 }}>
+                      <Title level={4} style={{ margin: 0 }}>
+                        对比：{compareResult.base_tag} → {compareResult.head_tag}
+                      </Title>
+                      <Space>
+                        {isAdmin && (
+                          <Tooltip title="基于对比数据调用大模型生成报告，预计耗时 30-60 秒">
+                            <Button
+                              type="primary"
+                              icon={<SafetyCertificateOutlined />}
+                              loading={reportGenerating}
+                              onClick={() => handleGenerateReport(false)}
+                            >
+                              生成版本质量报告
+                            </Button>
+                          </Tooltip>
+                        )}
+                        <Button
+                          icon={<HistoryOutlined />}
+                          onClick={() => { setReportListVisible(true); handleLoadReportList() }}
+                        >
+                          历史报告
+                        </Button>
+                      </Space>
+                    </div>
                     <Descriptions bordered column={4} style={{ marginBottom: 24 }}>
                       <Descriptions.Item label="总提交数">
                         {compareResult.total_commits}
@@ -899,6 +1038,150 @@ function ProjectBoard() {
           }] : []),
         ]}
       />
+
+      {/* 版本质量报告预览弹窗 */}
+      <Modal
+        title={
+          reportPreviewMeta
+            ? `版本质量评估报告：${reportPreviewMeta.base_tag} → ${reportPreviewMeta.head_tag}`
+            : '版本质量评估报告'
+        }
+        open={reportPreviewVisible}
+        onCancel={() => { setReportPreviewVisible(false); setReportPreviewHtml(''); setReportPreviewMeta(null) }}
+        footer={
+          <Space>
+            <Button onClick={() => { setReportPreviewVisible(false); setReportPreviewHtml(''); setReportPreviewMeta(null) }}>
+              关闭
+            </Button>
+            {reportPreviewMeta && (
+              <Button
+                type="primary"
+                icon={<DownloadOutlined />}
+                onClick={() => handleDownloadReport(reportPreviewMeta.report_id, reportPreviewMeta.base_tag, reportPreviewMeta.head_tag)}
+              >
+                下载 HTML
+              </Button>
+            )}
+          </Space>
+        }
+        width="90%"
+        style={{ top: 20 }}
+        styles={{ body: { height: '75vh', overflow: 'hidden', padding: 0 } }}
+      >
+        {reportPreviewLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+            <Spin tip="正在加载报告..." size="large" />
+          </div>
+        ) : reportPreviewHtml ? (
+          <iframe
+            srcDoc={reportPreviewHtml}
+            sandbox=""
+            style={{ width: '100%', height: '100%', border: 'none' }}
+            title="版本质量评估报告"
+          />
+        ) : (
+          <Empty description="报告内容为空" style={{ marginTop: 100 }} />
+        )}
+      </Modal>
+
+      {/* 版本质量报告历史列表弹窗 */}
+      <Modal
+        title="版本质量评估报告历史"
+        open={reportListVisible}
+        onCancel={() => setReportListVisible(false)}
+        footer={<Button onClick={() => setReportListVisible(false)}>关闭</Button>}
+        width={900}
+      >
+        <Table
+          dataSource={reportList}
+          loading={reportListLoading}
+          rowKey="report_id"
+          size="small"
+          pagination={{ pageSize: 10 }}
+          columns={[
+            {
+              title: '版本对比',
+              key: 'tags',
+              render: (_: any, record: VersionQualityReportMeta) => (
+                <Text strong style={{ fontSize: 12 }}>
+                  {record.base_tag} → {record.head_tag}
+                </Text>
+              ),
+            },
+            {
+              title: '生成时间',
+              dataIndex: 'generated_at',
+              key: 'generated_at',
+              width: 160,
+              render: (at: string) => at ? dayjs(at).format('YYYY-MM-DD HH:mm') : '-',
+            },
+            {
+              title: '关键指标',
+              key: 'metrics',
+              width: 220,
+              render: (_: any, record: VersionQualityReportMeta) => (
+                <Space size={4} wrap>
+                  <Tag color="blue">提交 {record.total_commits}</Tag>
+                  <Tag color="red">Bug {record.open_bugs}</Tag>
+                  <Tag color="green">PR {record.merged_prs}</Tag>
+                </Space>
+              ),
+            },
+            {
+              title: '模型',
+              dataIndex: 'llm_model',
+              key: 'llm_model',
+              width: 140,
+              ellipsis: true,
+              render: (m: string | null) => m ? <Tag>{m}</Tag> : '-',
+            },
+            {
+              title: '操作',
+              key: 'action',
+              width: 180,
+              render: (_: any, record: VersionQualityReportMeta) => (
+                <Space size="small">
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<EyeOutlined />}
+                    onClick={() => handlePreviewReport(record.report_id)}
+                  >
+                    预览
+                  </Button>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<DownloadOutlined />}
+                    onClick={() => handleDownloadReport(record.report_id, record.base_tag, record.head_tag)}
+                  >
+                    下载
+                  </Button>
+                  {isAdmin && (
+                    <Popconfirm
+                      title="确定删除此报告？"
+                      onConfirm={() => handleDeleteReport(record.report_id)}
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <Button
+                        type="link"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        loading={reportDeleting === record.report_id}
+                      >
+                        删除
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Modal>
     </div>
   )
 }
