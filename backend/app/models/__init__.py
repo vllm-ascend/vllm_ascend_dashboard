@@ -47,10 +47,10 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String(50), unique=True, nullable=False, index=True)
+    username = Column(String(50), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), default="user", index=True)  # user, admin, super_admin
-    email = Column(String(100), unique=True, nullable=False, index=True)
+    email = Column(String(100), unique=True, nullable=False)  # unique=True 已自带索引
     is_active = Column(Boolean, default=True)
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
@@ -122,7 +122,7 @@ class CIResult(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     workflow_name = Column(String(100), nullable=False, index=True)
-    run_id = Column(BigInteger, nullable=False, index=True, unique=True)
+    run_id = Column(BigInteger, nullable=False, unique=True)
     run_number = Column(Integer)  # workflow run 编号
     status = Column(String(20), index=True)  # completed, in_progress, queued
     conclusion = Column(String(20))  # success, failure, cancelled
@@ -143,7 +143,7 @@ class CIJob(Base):
     __tablename__ = "ci_jobs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(BigInteger, nullable=False, index=True, unique=True)  # GitHub job ID
+    job_id = Column(BigInteger, nullable=False, unique=True)  # GitHub job ID
     run_id = Column(BigInteger, nullable=False, index=True)  # 关联的 workflow run_id
     workflow_name = Column(String(100), nullable=False, index=True)
     job_name = Column(String(500), nullable=False)  # job 名称
@@ -167,7 +167,7 @@ class WorkflowConfig(Base):
     __tablename__ = "workflow_configs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    workflow_name = Column(String(100), nullable=False, unique=True, index=True)  # 显示名称，如 "Nightly-A2"
+    workflow_name = Column(String(100), nullable=False, unique=True)  # 显示名称，如 "Nightly-A2"
     workflow_file = Column(String(100), nullable=False, unique=True)  # workflow 文件名，如 "schedule_nightly_test_a2.yaml"
     hardware = Column(String(20), nullable=False)  # 硬件类型：A2, A3, 310P 等
     event = Column(String(50), default="schedule")  # 采集的事件类型：schedule/push/pull_request/workflow_dispatch，空=不过滤
@@ -244,7 +244,7 @@ class ProjectDashboardConfig(Base):
     __tablename__ = "project_dashboard_config"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    config_key = Column(String(100), unique=True, nullable=False, index=True)  # 配置键
+    config_key = Column(String(100), unique=True, nullable=False)  # 配置键
     config_value = Column(JSON, nullable=False)  # 配置值（JSON 格式）
     description = Column(String(500))  # 配置描述
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
@@ -256,7 +256,7 @@ class KubernetesClusterConfig(Base):
     __tablename__ = "kubernetes_cluster_configs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), unique=True, nullable=False, index=True)
+    name = Column(String(100), unique=True, nullable=False)
     description = Column(String(500))
     kubeconfig_encrypted = Column(Text, nullable=False)
     context = Column(String(200))
@@ -352,7 +352,7 @@ class JobFailureAnalysis(Base):
     __tablename__ = "job_failure_analysis"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(BigInteger, nullable=False, unique=True, index=True)
+    job_id = Column(BigInteger, nullable=False, unique=True)
     run_id = Column(BigInteger, nullable=False, index=True)
     workflow_name = Column(String(100), nullable=False, index=True)
     job_name = Column(String(500), nullable=False)
@@ -376,7 +376,7 @@ class JobFailureAnalysis(Base):
     analysis_status = Column(String(20), default="pending", index=True)
     error_message = Column(String(500))
     triggered_by = Column(String(20), default="manual")  # "manual" | "scheduler"
-    share_token = Column(String(64), unique=True, index=True)  # 公开分享 token
+    share_token = Column(String(64), unique=True)  # 公开分享 token
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
@@ -474,7 +474,7 @@ class TokenBlacklist(Base):
     __tablename__ = "token_blacklist"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    token_jti = Column(String(100), unique=True, nullable=False, index=True)
+    token_jti = Column(String(100), unique=True, nullable=False)
     blacklisted_at = Column(TIMESTAMP, nullable=False, default=lambda: datetime.now(UTC), index=True)
     expires_at = Column(TIMESTAMP, nullable=False, index=True)
 
