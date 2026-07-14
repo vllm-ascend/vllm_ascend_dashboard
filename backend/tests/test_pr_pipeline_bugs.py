@@ -140,6 +140,42 @@ class TestContributorEmails:
             "alice@example.com",
         }
 
+    @pytest.mark.asyncio
+    async def test_author_email_queries_do_not_scale_with_contributor_count(self, db_session):
+        now = datetime.now(UTC)
+        for index, author in enumerate(("alice", "bob", "carol"), start=1):
+            pr = make_pr(
+                pr_number=9400 + index,
+                author=author,
+                created_at=now - timedelta(days=1),
+            )
+            pr.author_email = f"{author}@example.com"
+            pr.data = {
+                "commits": [
+                    {
+                        "author": {"login": author},
+                        "commit": {"author": {"email": f"{author}@example.com"}},
+                    }
+                ]
+            }
+            db_session.add(pr)
+        await db_session.commit()
+
+        original_execute = db_session.execute
+        db_session.execute = AsyncMock(wraps=original_execute)
+
+        service = PRPipelineService()
+        result = await service.get_contributors(
+            db_session,
+            OWNER,
+            REPO,
+            days=30,
+            type="author",
+        )
+
+        assert {item.username for item in result.items} == {"alice", "bob", "carol"}
+        assert db_session.execute.await_count == 3
+
 
 # ============================================================================
 # B1: Backlog index formula — should be Open(non-Draft) / daily_merge_avg

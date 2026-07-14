@@ -340,8 +340,20 @@ class PRPipelineService:
                 data_stmt = data_stmt.limit(limit * 5)  # both types: reasonable cap
 
             result = await db.execute(data_stmt)
-            for row in result.all():
-                emails = await self._get_author_emails(db, owner, repo, row[0], since, row[3])
+            author_rows = result.all()
+            author_names = [row[0] for row in author_rows]
+            fallback_emails = {row[0]: row[3] for row in author_rows}
+            author_emails = await self._get_authors_emails(
+                db,
+                owner,
+                repo,
+                author_names,
+                since,
+                fallback_emails,
+            )
+
+            for row in author_rows:
+                emails = author_emails.get(row[0], [])
                 primary_email = emails[0] if emails else None
                 contributors.append(PRPipelineContributor(
                     username=row[0],
@@ -448,29 +460,33 @@ class PRPipelineService:
             items=contributors,
         )
 
-    async def _get_author_emails(
+    async def _get_authors_emails(
         self,
         db: AsyncSession,
         owner: str,
         repo: str,
-        author: str,
+        authors: list[str],
         since: datetime,
-        fallback_email: str | None = None,
-    ) -> list[str]:
-        stmt = select(PullRequest.data).where(
+        fallback_emails: dict[str, str | None],
+    ) -> dict[str, list[str]]:
+        if not authors:
+            return {}
+
+        stmt = select(PullRequest.author, PullRequest.data).where(
             PullRequest.owner == owner,
             PullRequest.repo == repo,
-            PullRequest.author == author,
+            PullRequest.author.in_(authors),
             PullRequest.created_at >= since,
         )
         result = await db.execute(stmt)
-        counts: Counter[str] = Counter()
-        if fallback_email:
-            counts[fallback_email] += 1
+        counts_by_author = {author: Counter() for author in authors}
 
-        for row in result.all():
-            data = row[0] or {}
-            commits = data.get("commits") or []
+        for author, fallback_email in fallback_emails.items():
+            if fallback_email:
+                counts_by_author[author][fallback_email] += 1
+
+        for author, data in result.all():
+            commits = (data or {}).get("commits") or []
             if not isinstance(commits, list):
                 continue
             for commit in commits:
@@ -485,9 +501,12 @@ class PRPipelineService:
                 author_data = commit_data.get("author") if isinstance(commit_data, dict) else {}
                 email = author_data.get("email") if isinstance(author_data, dict) else None
                 if email:
-                    counts[email] += 1
+                    counts_by_author[author][email] += 1
 
-        return [email for email, _ in counts.most_common()]
+        return {
+            author: [email for email, _ in counts.most_common()]
+            for author, counts in counts_by_author.items()
+        }
 
     async def get_trends(
         self,

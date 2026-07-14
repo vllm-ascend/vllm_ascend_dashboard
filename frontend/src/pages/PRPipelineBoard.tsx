@@ -153,14 +153,26 @@ const renderCIStatusTag = (status: string | null) => {
   return <Tag color={CI_STATUS_COLORS[status] || 'default'}>{CI_STATUS_LABELS[status] || status}</Tag>
 }
 
-const renderAvatar = (author: string, avatarUrl: string | null, avatarBase64?: string | null, email?: string | null) => (
-  <Space size={4}>
-    <Avatar size={20} src={avatarBase64 || avatarUrl} style={{ backgroundColor: '#1677ff' }}>
-      {author?.[0]?.toUpperCase()}
-    </Avatar>
-    <Text>{email ? `${author} <${email}>` : author}</Text>
-  </Space>
-)
+const renderAvatar = (
+  author: string,
+  avatarUrl: string | null,
+  avatarBase64?: string | null,
+  email?: string | null,
+) => {
+  const identity = email ? `${author} <${email}>` : author
+  const maxTextWidth = email ? 200 : 140
+
+  return (
+    <Space size={4} style={{ maxWidth: '100%' }}>
+      <Avatar size={20} src={avatarBase64 || avatarUrl} style={{ backgroundColor: '#1677ff', flex: 'none' }}>
+        {author?.[0]?.toUpperCase()}
+      </Avatar>
+      <Tooltip title={identity}>
+        <Text ellipsis style={{ maxWidth: maxTextWidth }}>{identity}</Text>
+      </Tooltip>
+    </Space>
+  )
+}
 
 const formatHours = (hours: number | null) => {
   if (hours === null || hours === undefined) return '—'
