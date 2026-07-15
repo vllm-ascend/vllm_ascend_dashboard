@@ -145,6 +145,10 @@ backend/_ci_logs/
 backend/app.db.*
 backend/app_recovered.sql
 
+# Local dev scripts & VS Code debug config
+restart-backend.ps1
+.vscode/launch.json
+
 # Temp / analysis (not for commit)
 analysis_eval/
 backend/matches_v5.xlsx
