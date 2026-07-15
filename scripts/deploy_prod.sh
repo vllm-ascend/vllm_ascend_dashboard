@@ -9,6 +9,7 @@
 #   ./deploy_prod.sh              # 部署最新代码
 #   ./deploy_prod.sh --no-pull    # 不拉取代码，仅重新部署当前版本
 #   ./deploy_prod.sh --rollback   # 回滚到最近一次备份
+#   ./deploy_prod.sh --dry-run    # 演练模式（仅备份+验证+记录状态，不实际部署）
 #
 
 set -euo pipefail
@@ -25,10 +26,13 @@ MAX_WAIT=30  # 服务启动最大等待秒数
 # 解析参数
 DO_PULL=true
 FORCE_ROLLBACK=false
-for arg in "$@"; do
-    case $arg in
-        --no-pull)   DO_PULL=false ;;
-        --rollback)  FORCE_ROLLBACK=true ;;
+DRY_RUN=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-pull)   DO_PULL=false; shift ;;
+        --rollback)  FORCE_ROLLBACK=true; shift ;;
+        --dry-run)   DRY_RUN=true; shift ;;
+        *)           shift ;;
     esac
 done
 
@@ -52,6 +56,10 @@ get_user_list() {
     sqlite3 "$DB_PATH" "SELECT id, username, role FROM users ORDER BY id;" 2>/dev/null || echo "(无法读取)"
 }
 
+get_service_user() {
+    systemctl show "$SERVICE_NAME" -p User --value 2>/dev/null | tr -d ' ' || echo "root"
+}
+
 wait_for_service() {
     local elapsed=0
     while [ $elapsed -lt $MAX_WAIT ]; do
@@ -65,8 +73,11 @@ wait_for_service() {
 }
 
 # ── 回滚函数 ──────────────────────────────────
+# 回滚数据库 + 代码 + 依赖，确保完全恢复到部署前状态
 rollback() {
     local backup_file="$1"
+    local pre_git="$2"
+    local service_user="$3"
     echo ""
     step "紧急回滚"
     warn "正在从备份恢复: $backup_file"
@@ -74,10 +85,24 @@ rollback() {
     systemctl stop "$SERVICE_NAME" 2>/dev/null || true
     sleep 2
 
+    # 回滚数据库
     cp "$backup_file" "$DB_PATH"
-    chown root:root "$DB_PATH"
+    chown "${service_user}:${service_user}" "$DB_PATH" 2>/dev/null || chown root:root "$DB_PATH"
     chmod 644 "$DB_PATH"
 
+    # 回滚代码到部署前 commit
+    if [ -n "$pre_git" ] && [ "$pre_git" != "unknown" ]; then
+        warn "回滚代码到 commit: $pre_git"
+        cd "$PROJECT_ROOT"
+        git checkout "$pre_git" 2>/dev/null || warn "git checkout 失败，保持当前代码"
+    fi
+
+    # 回滚依赖
+    warn "回滚依赖..."
+    cd "$BACKEND_DIR"
+    uv sync --dev 2>/dev/null || warn "依赖回滚失败，请手动检查"
+
+    # 重启服务
     systemctl start "$SERVICE_NAME"
     sleep 3
 
@@ -88,7 +113,11 @@ rollback() {
         get_user_list | while read -r line; do echo "    $line"; done
     else
         fail "回滚后服务仍无法启动，请手动检查"
-        fail "手动恢复: cp $backup_file $DB_PATH && systemctl start $SERVICE_NAME"
+        fail "手动恢复步骤:"
+        fail "  1. cp $backup_file $DB_PATH"
+        fail "  2. cd $PROJECT_ROOT && git checkout $pre_git"
+        fail "  3. cd $BACKEND_DIR && uv sync --dev"
+        fail "  4. systemctl start $SERVICE_NAME"
     fi
     exit 1
 }
@@ -100,7 +129,9 @@ if [ "$FORCE_ROLLBACK" = true ]; then
         fail "没有可用的备份文件"
         exit 1
     fi
-    rollback "$LATEST_BACKUP"
+    SERVICE_USER=$(get_service_user)
+    PRE_GIT=$(cd "$PROJECT_ROOT" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    rollback "$LATEST_BACKUP" "$PRE_GIT" "$SERVICE_USER"
 fi
 
 # ── 正式部署流程 ──────────────────────────────
@@ -108,15 +139,26 @@ echo ""
 echo "================================================"
 echo "  vLLM Ascend Dashboard — 生产部署"
 echo "  $(date '+%Y-%m-%d %H:%M:%S')"
+[ "$DRY_RUN" = true ] && echo "  ⚠ 演练模式（--dry-run）：仅备份+验证，不实际部署"
 echo "================================================"
+
+# 获取服务运行用户（用于回滚时设置文件权限）
+SERVICE_USER=$(get_service_user)
 
 # ── Step 1: 备份数据库 ────────────────────────
 step "Step 1/8: 备份数据库"
 
-BACKUP_FILE=$(bash "$SCRIPT_DIR/backup_db.sh" 2>&1 | tail -1)
-if [ ! -f "$BACKUP_FILE" ]; then
+# 不使用管道，避免 set -e + pipefail 下 backup_db.sh 失败导致脚本直接退出
+BACKUP_OUTPUT=$(bash "$SCRIPT_DIR/backup_db.sh" 2>&1) || {
     fail "备份失败，部署中止"
-    fail "输出: $BACKUP_FILE"
+    fail "输出: $BACKUP_OUTPUT"
+    exit 1
+}
+BACKUP_FILE=$(echo "$BACKUP_OUTPUT" | tail -1)
+
+if [ ! -f "$BACKUP_FILE" ]; then
+    fail "备份文件不存在，部署中止"
+    fail "输出: $BACKUP_OUTPUT"
     exit 1
 fi
 ok "备份成功: $BACKUP_FILE"
@@ -151,8 +193,28 @@ PRE_GIT=$(cd "$PROJECT_ROOT" && git rev-parse --short HEAD 2>/dev/null || echo "
 ok "当前 Git commit: $PRE_GIT"
 ok "用户数: $PRE_USERS"
 ok "数据表数: $PRE_TABLES"
+ok "服务运行用户: $SERVICE_USER"
 ok "用户列表:"
 get_user_list | while read -r line; do echo "    $line"; done
+
+# 致命检查：部署前用户数为 0 说明数据库已损坏，回滚条件无法触发
+if [ "$PRE_USERS" -eq 0 ]; then
+    fail "部署前用户数为 0，数据库可能已损坏！"
+    fail "此时回滚条件（POST < PRE）永远为假，保护机制将失效"
+    fail "部署中止，请先手动恢复数据库"
+    fail "  恢复方式: ls -t $BACKUP_DIR/dashboard_*.db | head -1"
+    fail "  然后: cp <最新备份> $DB_PATH"
+    exit 1
+fi
+
+# 演练模式：到此为止
+if [ "$DRY_RUN" = true ]; then
+    echo ""
+    step "演练完成（--dry-run）"
+    ok "备份和验证均通过，可以安全部署"
+    ok "备份文件: $BACKUP_FILE"
+    exit 0
+fi
 
 # ── Step 4: 拉取最新代码 ──────────────────────
 step "Step 4/8: 拉取最新代码"
@@ -178,7 +240,7 @@ if uv sync --dev; then
     ok "依赖更新完成"
 else
     fail "依赖更新失败"
-    exit 1
+    rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
 fi
 
 # ── Step 6: 数据库迁移（不重置用户）────────────
@@ -189,15 +251,25 @@ cd "$BACKEND_DIR"
 if .venv/bin/python scripts/init_db.py --no-users; then
     ok "数据库迁移完成"
 else
-    warn "数据库迁移出错，检查是否影响现有数据"
-    # 验证用户数据是否还在
+    # 迁移失败：默认中止，让运维人工核查
+    fail "数据库迁移失败"
     POST_MIGRATION_USERS=$(get_user_count)
+    POST_MIGRATION_TABLES=$(get_table_count)
+    fail "迁移后用户数: $PRE_USERS → $POST_MIGRATION_USERS"
+    fail "迁移后数据表数: $PRE_TABLES → $POST_MIGRATION_TABLES"
+
     if [ "$POST_MIGRATION_USERS" -lt "$PRE_USERS" ]; then
-        fail "迁移后用户数减少 ($PRE_USERS → $POST_MIGRATION_USERS)！"
-        fail "正在回滚..."
-        rollback "$BACKUP_FILE"
+        fail "用户数减少！正在回滚..."
+        rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
     fi
-    warn "迁移有警告但用户数据完好，继续部署"
+    if [ "$POST_MIGRATION_TABLES" -lt "$PRE_TABLES" ]; then
+        fail "数据表数减少！正在回滚..."
+        rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
+    fi
+
+    fail "用户数和表数未减少，但迁移失败可能意味着其他数据损坏"
+    fail "部署中止，请人工核查后再手动继续"
+    exit 1
 fi
 
 # ── Step 7: 重启服务 ──────────────────────────
@@ -211,7 +283,7 @@ if wait_for_service; then
 else
     fail "服务在 ${MAX_WAIT}s 内未响应"
     fail "正在回滚..."
-    rollback "$BACKUP_FILE"
+    rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
 fi
 
 # ── Step 8: 部署后验证 ────────────────────────
@@ -222,20 +294,26 @@ if systemctl is-active --quiet "$SERVICE_NAME"; then
     ok "服务状态: running"
 else
     fail "服务状态: inactive"
-    rollback "$BACKUP_FILE"
+    rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
 fi
 
-# 8b. 用户数对比
+# 8b. 用户数 + 表数对比
 POST_USERS=$(get_user_count)
 POST_TABLES=$(get_table_count)
 
 if [ "$POST_USERS" -lt "$PRE_USERS" ]; then
     fail "用户数减少！部署前 $PRE_USERS → 部署后 $POST_USERS"
     fail "正在回滚..."
-    rollback "$BACKUP_FILE"
+    rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
 fi
 ok "用户数: $PRE_USERS → $POST_USERS ✓"
-ok "数据表数: $PRE_TABLES → $POST_TABLES"
+
+if [ "$POST_TABLES" -lt "$PRE_TABLES" ]; then
+    fail "数据表数减少！部署前 $PRE_TABLES → 部署后 $POST_TABLES"
+    fail "正在回滚..."
+    rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
+fi
+ok "数据表数: $PRE_TABLES → $POST_TABLES ✓"
 
 # 8c. API 健康检查
 if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1; then
@@ -268,6 +346,7 @@ echo "================================================"
 echo "  备份文件:   $BACKUP_FILE"
 echo "  Git commit: $PRE_GIT → $(cd "$PROJECT_ROOT" && git rev-parse --short HEAD)"
 echo "  用户数:     $PRE_USERS → $POST_USERS"
+echo "  数据表数:   $PRE_TABLES → $POST_TABLES"
 echo ""
 echo "  如需回滚:"
 echo "    $0 --rollback"

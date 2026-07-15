@@ -20,10 +20,11 @@ RETENTION_DAYS=30
 SILENT=false
 
 # 解析参数
-for arg in "$@"; do
-    case $arg in
-        --silent)    SILENT=true ;;
-        --retention) shift; RETENTION_DAYS="${1:-30}" ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --silent)    SILENT=true; shift ;;
+        --retention) RETENTION_DAYS="${2:-30}"; shift 2 ;;
+        *)           shift ;;
     esac
 done
 
