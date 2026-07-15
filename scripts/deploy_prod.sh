@@ -23,6 +23,9 @@ BACKUP_DIR="$PROJECT_ROOT/backups"
 SERVICE_NAME="dashboard-backend"
 MAX_WAIT=30  # 服务启动最大等待秒数
 
+# 确保 uv 在 PATH 中（非交互 SSH 可能缺少 ~/.local/bin）
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
 # 解析参数
 DO_PULL=true
 FORCE_ROLLBACK=false
@@ -63,7 +66,7 @@ get_service_user() {
 wait_for_service() {
     local elapsed=0
     while [ $elapsed -lt $MAX_WAIT ]; do
-        if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1; then
+        if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
             return 0
         fi
         sleep 1
@@ -98,9 +101,13 @@ rollback() {
     fi
 
     # 回滚依赖
-    warn "回滚依赖..."
-    cd "$BACKEND_DIR"
-    uv sync --dev 2>/dev/null || warn "依赖回滚失败，请手动检查"
+    if command -v uv &> /dev/null; then
+        warn "回滚依赖..."
+        cd "$BACKEND_DIR"
+        uv sync --dev 2>/dev/null || warn "依赖回滚失败，请手动检查"
+    else
+        warn "uv 未安装，跳过依赖回滚"
+    fi
 
     # 重启服务
     systemctl start "$SERVICE_NAME"
@@ -236,17 +243,28 @@ fi
 step "Step 5/8: 更新后端依赖"
 
 cd "$BACKEND_DIR"
-if uv sync --dev; then
-    ok "依赖更新完成"
+if command -v uv &> /dev/null; then
+    if uv sync --dev; then
+        ok "依赖更新完成"
+    else
+        fail "依赖更新失败"
+        rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
+    fi
 else
-    fail "依赖更新失败"
-    rollback "$BACKUP_FILE" "$PRE_GIT" "$SERVICE_USER"
+    warn "uv 未安装，跳过依赖更新"
+    warn "如需更新依赖，请先安装 uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
 fi
 
 # ── Step 6: 数据库迁移（不重置用户）────────────
 step "Step 6/8: 数据库迁移"
 
 cd "$BACKEND_DIR"
+
+# 加载环境变量（systemd 通过 EnvironmentFile 加载，命令行需手动 source）
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a; source "$PROJECT_ROOT/.env"; set +a
+fi
+
 # 关键：使用 --no-users 防止 init_db.py 重置用户
 if .venv/bin/python scripts/init_db.py --no-users; then
     ok "数据库迁移完成"
@@ -316,7 +334,7 @@ fi
 ok "数据表数: $PRE_TABLES → $POST_TABLES ✓"
 
 # 8c. API 健康检查
-if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1; then
+if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
     ok "API 健康检查: 通过"
 else
     warn "API 健康检查: 失败（服务可能还在初始化）"
