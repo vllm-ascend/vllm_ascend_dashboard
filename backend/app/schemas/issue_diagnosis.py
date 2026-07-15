@@ -8,7 +8,7 @@ class IssueDiagnosisMessage(BaseModel):
 
 
 class IssueDiagnosisRequest(BaseModel):
-    data_source_type: str = Field(
+    data_source_type: Literal["pr_pipeline", "ci_job", "commit", "manual"] = Field(
         ...,
         description="数据源类型: pr_pipeline, ci_job, commit, manual",
     )
@@ -33,12 +33,12 @@ class IssueDiagnosisRequest(BaseModel):
     user_prompt: Optional[str] = Field(
         None,
         description="用户补充提示词",
-        max_length=20000,
+        max_length=60000,
     )
     conversation_history: list[IssueDiagnosisMessage] = Field(
         default_factory=list,
         description="当前页面会话中的历史问答",
-        max_length=20,
+        max_length=50,
     )
 
     @field_validator('commit_sha')
@@ -52,9 +52,6 @@ class IssueDiagnosisRequest(BaseModel):
 
     @model_validator(mode='after')
     def validate_data_source(self) -> 'IssueDiagnosisRequest':
-        valid_types = ('pr_pipeline', 'ci_job', 'commit', 'manual')
-        if self.data_source_type not in valid_types:
-            raise ValueError(f'data_source_type must be one of {valid_types}')
         if self.data_source_type == 'pr_pipeline' and self.pr_number is None:
             raise ValueError('pr_number is required for pr_pipeline diagnosis')
         return self

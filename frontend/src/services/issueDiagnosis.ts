@@ -19,6 +19,20 @@ export interface DiagnosisMessage {
   content: string
 }
 
+export function formatApiError(detail: unknown, fallback: string): string {
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map(item => {
+        if (typeof item !== 'object' || item === null || !('msg' in item)) return ''
+        return typeof item.msg === 'string' ? item.msg : ''
+      })
+      .filter(Boolean)
+    if (messages.length) return messages.join('；')
+  }
+  return fallback
+}
+
 export interface CIJobOption {
   job_id: number
   run_id: number
@@ -76,6 +90,7 @@ export const streamDiagnosis = async (
   onMeta: (meta: { provider: string; model: string }) => void,
   onDone: (summary: { total_content_length: number; duration_seconds: number; chunk_count: number }) => void,
   onError: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> => {
   const token = localStorage.getItem('access_token')
 
@@ -88,12 +103,13 @@ export const streamDiagnosis = async (
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
+      signal,
     }
   )
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ detail: response.statusText }))
-    onError(errorData.detail || response.statusText)
+    onError(formatApiError(errorData.detail, response.statusText || '诊断请求失败'))
     return
   }
 
@@ -108,6 +124,7 @@ export const streamDiagnosis = async (
   let terminated = false
 
   const handleEvent = (event: SSEEvent) => {
+    if (terminated) return
     try {
       const data = JSON.parse(event.data)
       if (event.event === 'chunk') {
@@ -125,6 +142,7 @@ export const streamDiagnosis = async (
       terminated = true
       console.warn('SSE data parse error:', error)
       onError('AI 流式响应格式错误，请重试')
+      void reader.cancel()
     }
   }
 

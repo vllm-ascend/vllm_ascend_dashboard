@@ -74,6 +74,7 @@ function IssueDiagnosis() {
     streamContent,
     conversation,
     followUpQuestion,
+    followUpAllowed,
     meta,
     summary,
     error,
@@ -438,7 +439,9 @@ function IssueDiagnosis() {
                               handleFollowUp()
                             }
                           }}
-                          placeholder="继续追问 AI 分析结果，Enter 发送，Shift+Enter 换行"
+                          placeholder={followUpAllowed
+                            ? '继续追问 AI 分析结果，Enter 发送，Shift+Enter 换行'
+                            : '当前会话已达到追问上限，请开始新的诊断'}
                           autoSize={{ minRows: 2, maxRows: 5 }}
                           disabled={isStreaming}
                         />
@@ -446,7 +449,7 @@ function IssueDiagnosis() {
                           type="primary"
                           onClick={handleFollowUp}
                           loading={isStreaming}
-                          disabled={isStreaming || !followUpQuestion.trim()}
+                          disabled={isStreaming || !followUpAllowed || !followUpQuestion.trim()}
                         >
                           追问
                         </Button>

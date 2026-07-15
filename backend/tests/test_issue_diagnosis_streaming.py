@@ -124,3 +124,34 @@ async def test_empty_stream_returns_error():
         "event": "error",
         "data": {"message": "AI 未返回分析内容，请稍后重试"},
     }
+
+
+@pytest.mark.asyncio
+async def test_unexpected_errors_do_not_expose_internal_details():
+    class BrokenService(IssueDiagnosisService):
+        async def _get_llm_config(self, db):
+            raise RuntimeError("database password leaked")
+
+    events = [event async for event in BrokenService().stream_diagnose(**stream_args())]
+
+    assert events[-1] == {
+        "event": "error",
+        "data": {"message": "问题诊断失败，请稍后重试"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_reports_error_after_continuation_limit():
+    stream_chunk = llm_client_module.LLMStreamChunk
+    service = FakeIssueDiagnosisService([
+        [stream_chunk("一"), stream_chunk(finish_reason="length")],
+        [stream_chunk("二"), stream_chunk(finish_reason="length")],
+        [stream_chunk("三"), stream_chunk(finish_reason="length")],
+    ])
+
+    events = [event async for event in service.stream_diagnose(**stream_args())]
+
+    assert events[-1] == {
+        "event": "error",
+        "data": {"message": "AI 输出仍被截断，请缩小输入范围后重试"},
+    }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { message } from 'antd'
 import {
   IssueDiagnosisRequest,
@@ -9,7 +9,7 @@ import {
   saveDiagnosisRecord,
   toggleDiagnosisLike,
 } from '../services/issueDiagnosis'
-import { buildFollowUpRequest } from '../services/issueDiagnosisConversation'
+import { buildFollowUpRequest, canAskFollowUp } from '../services/issueDiagnosisConversation'
 import type { DiagnosisSummary } from '../components/StreamMarkdownRenderer'
 
 function appendAssistantChunk(messages: DiagnosisMessage[], chunk: string): DiagnosisMessage[] {
@@ -20,6 +20,13 @@ function appendAssistantChunk(messages: DiagnosisMessage[], chunk: string): Diag
   return next
 }
 
+function removeEmptyAssistantTail(messages: DiagnosisMessage[]): DiagnosisMessage[] {
+  const last = messages[messages.length - 1]
+  return last?.role === 'assistant' && !last.content.trim()
+    ? messages.slice(0, -1)
+    : messages
+}
+
 function formatConversation(messages: DiagnosisMessage[]): string {
   return messages
     .map(item => `## ${item.role === 'assistant' ? 'AI 分析' : '追问'}\n\n${item.content}`)
@@ -27,6 +34,7 @@ function formatConversation(messages: DiagnosisMessage[]): string {
 }
 
 export function useIssueDiagnosis() {
+  const activeController = useRef<AbortController | null>(null)
   const [dataSourceType, setDataSourceType] = useState<string>('pr_pipeline')
   const [prNumber, setPrNumber] = useState<number | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null)
@@ -62,7 +70,12 @@ export function useIssueDiagnosis() {
     if (dataSourceType === 'ci_job' && ciJobOptions.length === 0) loadCIJobs()
   }, [dataSourceType, ciJobOptions.length, loadCIJobs])
 
+  useEffect(() => () => activeController.current?.abort(), [])
+
   const clearDiagnosis = useCallback(() => {
+    activeController.current?.abort()
+    activeController.current = null
+    setIsStreaming(false)
     setStreamContent('')
     setConversation([])
     setBaseRequest(null)
@@ -122,6 +135,9 @@ export function useIssueDiagnosis() {
       targetLabel = job ? `${job.workflow_name} - ${job.job_name}` : undefined
     }
 
+    activeController.current?.abort()
+    const controller = new AbortController()
+    activeController.current = controller
     setIsStreaming(true)
     setStreamContent('')
     setConversation([{ role: 'assistant', content: '' }])
@@ -139,12 +155,18 @@ export function useIssueDiagnosis() {
       await streamDiagnosis(
         request,
         chunk => {
+          if (controller.signal.aborted) return
           accumulated += chunk
           setStreamContent(previous => previous + chunk)
           setConversation(previous => appendAssistantChunk(previous, chunk))
         },
-        value => { localMeta = value; setMeta(value) },
         value => {
+          if (controller.signal.aborted) return
+          localMeta = value
+          setMeta(value)
+        },
+        value => {
+          if (controller.signal.aborted) return
           setSummary(value)
           if (accumulated.trim()) {
             saveDiagnosisRecord({
@@ -160,20 +182,38 @@ export function useIssueDiagnosis() {
             }).catch(saveError => console.warn('保存诊断记录失败:', saveError))
           }
         },
-        errorMessage => setError(errorMessage),
+        errorMessage => {
+          if (controller.signal.aborted) return
+          setError(errorMessage)
+          setConversation(removeEmptyAssistantTail)
+        },
+        controller.signal,
       )
     } catch (requestError: any) {
-      setError(requestError.message || '诊断请求失败')
+      if (!controller.signal.aborted) {
+        setError(requestError.message || '诊断请求失败')
+        setConversation(removeEmptyAssistantTail)
+      }
     } finally {
-      setIsStreaming(false)
+      if (activeController.current === controller) {
+        activeController.current = null
+        setIsStreaming(false)
+      }
     }
   }, [dataSourceType, prNumber, selectedJobId, userPrompt, logContent, ciJobOptions])
 
   const handleFollowUp = useCallback(async () => {
     const question = followUpQuestion.trim()
     if (!question || !baseRequest || !conversation.length) return
+    if (!canAskFollowUp(conversation)) {
+      message.warning('当前会话已达到追问上限，请开始新的诊断')
+      return
+    }
 
     const request = buildFollowUpRequest(baseRequest, conversation, question)
+    activeController.current?.abort()
+    const controller = new AbortController()
+    activeController.current = controller
     setConversation(previous => [
       ...previous,
       { role: 'user', content: question },
@@ -187,15 +227,30 @@ export function useIssueDiagnosis() {
     try {
       await streamDiagnosis(
         request,
-        chunk => setConversation(previous => appendAssistantChunk(previous, chunk)),
-        setMeta,
-        setSummary,
-        errorMessage => setError(errorMessage),
+        chunk => {
+          if (!controller.signal.aborted) {
+            setConversation(previous => appendAssistantChunk(previous, chunk))
+          }
+        },
+        value => { if (!controller.signal.aborted) setMeta(value) },
+        value => { if (!controller.signal.aborted) setSummary(value) },
+        errorMessage => {
+          if (controller.signal.aborted) return
+          setError(errorMessage)
+          setConversation(removeEmptyAssistantTail)
+        },
+        controller.signal,
       )
     } catch (requestError: any) {
-      setError(requestError.message || '追问请求失败')
+      if (!controller.signal.aborted) {
+        setError(requestError.message || '追问请求失败')
+        setConversation(removeEmptyAssistantTail)
+      }
     } finally {
-      setIsStreaming(false)
+      if (activeController.current === controller) {
+        activeController.current = null
+        setIsStreaming(false)
+      }
     }
   }, [followUpQuestion, baseRequest, conversation])
 
@@ -252,6 +307,7 @@ export function useIssueDiagnosis() {
     isStreaming,
     streamContent,
     conversation,
+    followUpAllowed: canAskFollowUp(conversation),
     followUpQuestion,
     meta,
     summary,

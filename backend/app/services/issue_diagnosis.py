@@ -273,10 +273,11 @@ class IssueDiagnosisService:
                 "event": "error",
                 "data": {"message": str(e)}
             }
-        except Exception as e:
+        except Exception:
+            logger.exception("Unexpected issue diagnosis failure")
             yield {
                 "event": "error",
-                "data": {"message": f"内部错误: {str(e)}"}
+                "data": {"message": "问题诊断失败，请稍后重试"}
             }
 
     async def get_failed_ci_jobs(self, days_back: int, db: AsyncSession) -> list[dict]:
