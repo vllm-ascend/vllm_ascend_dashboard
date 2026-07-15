@@ -33,6 +33,27 @@ class PRDiagnosisService:
 
     async def diagnose(self, pr_number: int) -> dict:
         """诊断指定 PR 的 CI 失败，返回深层次诊断报告"""
+        context, system_prompt, pr_title = await self.prepare_context(pr_number)
+        llm_config = await self._get_llm_config()
+
+        start_time = datetime.now()
+        result_content, model_used = await self._call_direct_llm(
+            context, system_prompt, llm_config
+        )
+        duration = (datetime.now() - start_time).total_seconds()
+
+        return {
+            "pr_number": pr_number,
+            "pr_title": pr_title,
+            "report": result_content,
+            "model": model_used or llm_config.default_model,
+            "provider": llm_config.provider,
+            "duration_seconds": round(duration, 1),
+            "tokens": 0,
+        }
+
+    async def prepare_context(self, pr_number: int) -> tuple[str, str, str]:
+        """收集 PR 诊断上下文，供同步和流式诊断复用。"""
         # 1. 获取 PR 信息（DB 优先，GitHub API 降级）
         pr_info = await self._get_pr_info(pr_number)
         head_sha = pr_info.get("head_sha")
@@ -60,26 +81,9 @@ class PRDiagnosisService:
             pr_info, check_runs, failing_details, recent_prs, workflow_config
         )
 
-        # 7. 获取 LLM 配置和系统提示词
-        llm_config = await self._get_llm_config()
+        # 7. 获取系统提示词
         system_prompt = self._get_system_prompt()
-
-        # 8. 调用 LLM — direct 模式（agentic 模式在容器中不稳定，暂跳过）
-        start_time = datetime.now()
-        result_content, model_used = await self._call_direct_llm(
-            context, system_prompt, llm_config
-        )
-        duration = (datetime.now() - start_time).total_seconds()
-
-        return {
-            "pr_number": pr_number,
-            "pr_title": pr_info.get("title", ""),
-            "report": result_content,
-            "model": model_used or llm_config.default_model,
-            "provider": llm_config.provider,
-            "duration_seconds": round(duration, 1),
-            "tokens": 0,
-        }
+        return context, system_prompt, pr_info.get("title", "")
 
     async def _call_agentic_llm(self, prompt: str, system_prompt: str, llm_config) -> tuple[str, str]:
         """使用 Claude Code CLI agentic 模式（支持工具调用）"""

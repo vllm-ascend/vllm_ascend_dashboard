@@ -13,11 +13,27 @@ from app.services.skill_registry import get_skill_registry
 
 logger = logging.getLogger(__name__)
 
+CHINESE_RESPONSE_REQUIREMENT = """## 输出语言要求
+除代码、日志、命令、错误原文和专有名词外，所有解释、标题、结论和建议必须使用简体中文。
+不要输出英文标题或英文说明。"""
+
 
 class IssueDiagnosisService:
 
     def __init__(self):
         self.llm_client = LLMClient()
+
+    @staticmethod
+    def _with_language_requirement(system_prompt: str) -> str:
+        return f"{system_prompt.rstrip()}\n\n{CHINESE_RESPONSE_REQUIREMENT}"
+
+    @staticmethod
+    def _trim_continuation_overlap(existing: str, continuation: str) -> str:
+        max_overlap = min(len(existing), len(continuation), 1000)
+        for size in range(max_overlap, 0, -1):
+            if existing.endswith(continuation[:size]):
+                return continuation[size:]
+        return continuation
 
     async def _get_llm_config(self, db: AsyncSession) -> LLMProviderConfig:
         stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
@@ -30,7 +46,7 @@ class IssueDiagnosisService:
         return config
 
     async def _get_system_prompt(self, data_source_type: str, db: AsyncSession) -> str:
-        if data_source_type == "ci_job":
+        if data_source_type in ("pr_pipeline", "ci_job"):
             config_key = "ci_failure_analysis_system_prompt"
         elif data_source_type == "commit":
             config_key = "commit_analysis_system_prompt"
@@ -53,7 +69,7 @@ class IssueDiagnosisService:
 
     def _get_skill_prompt(self, data_source_type: str) -> str:
         registry = get_skill_registry()
-        if data_source_type == "ci_job":
+        if data_source_type in ("pr_pipeline", "ci_job"):
             skill = registry.get_skill_by_scope("ci_failure_analysis")
             if skill and skill.content:
                 return skill.content
@@ -106,10 +122,12 @@ class IssueDiagnosisService:
     async def stream_diagnose(
         self,
         data_source_type: str,
+        pr_number: Optional[int],
         job_id: Optional[int],
         run_id: Optional[int],
         commit_sha: Optional[str],
         user_prompt: Optional[str],
+        conversation_history: Optional[list[dict]],
         db: AsyncSession,
     ) -> AsyncGenerator[dict, None]:
         try:
@@ -121,15 +139,26 @@ class IssueDiagnosisService:
             if data_source_type == "ci_job" and not job_id:
                 effective_type = "manual"
 
-            system_prompt = await self._get_system_prompt(effective_type, db)
-
             context = ""
-            if data_source_type == "ci_job" and job_id:
+            if data_source_type == "pr_pipeline":
+                if not pr_number:
+                    raise ValueError("pr_pipeline requires pr_number")
+                from app.services.pr_diagnosis import PRDiagnosisService
+
+                context, system_prompt, _ = await PRDiagnosisService(db).prepare_context(pr_number)
+            elif data_source_type == "ci_job" and job_id:
                 context = await self._collect_ci_job_context(job_id, db)
+                system_prompt = await self._get_system_prompt(effective_type, db)
             elif data_source_type == "commit":
                 context = await self._collect_commit_context(run_id, commit_sha, db)
+                system_prompt = await self._get_system_prompt(effective_type, db)
             elif effective_type == "manual":
                 context = ""
+                system_prompt = await self._get_system_prompt(effective_type, db)
+            else:
+                system_prompt = await self._get_system_prompt(effective_type, db)
+
+            system_prompt = self._with_language_requirement(system_prompt)
 
             full_user_prompt = context
             if user_prompt:
@@ -152,31 +181,76 @@ class IssueDiagnosisService:
             start_time = time.time()
             total_content = ""
             chunk_count = 0
+            continuation_count = 0
+            finish_reason = None
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": full_user_prompt},
+                *(conversation_history or []),
+            ]
 
             try:
-                stream_gen = self.llm_client.generate_stream(
-                    provider=llm_config.provider,
-                    model=llm_config.default_model,
-                    api_key=llm_config.decrypted_api_key,
-                    api_base=llm_config.api_base_url,
-                    system_prompt=system_prompt,
-                    user_prompt=full_user_prompt,
-                    temperature=0.3,
-                    max_tokens=8192,
-                )
-                got_first_chunk = False
+                current_messages = messages
+                while True:
+                    attempt_content = ""
+                    finish_reason = None
+                    stream_gen = self.llm_client.generate_stream(
+                        provider=llm_config.provider,
+                        model=llm_config.default_model,
+                        api_key=llm_config.decrypted_api_key,
+                        api_base=llm_config.api_base_url,
+                        temperature=0.3,
+                        max_tokens=8192,
+                        messages=current_messages,
+                    )
 
-                async for chunk in stream_gen:
-                    got_first_chunk = True
-                    total_content += chunk
-                    chunk_count += 1
-                    yield {
-                        "event": "chunk",
-                        "data": {"content": chunk}
-                    }
+                    async for chunk in stream_gen:
+                        if chunk.finish_reason:
+                            finish_reason = chunk.finish_reason
+                        if not chunk.content:
+                            continue
+                        attempt_content += chunk.content
+                        if continuation_count == 0:
+                            total_content += chunk.content
+                            chunk_count += 1
+                            yield {
+                                "event": "chunk",
+                                "data": {"content": chunk.content},
+                            }
 
-                if not got_first_chunk:
-                    raise LLMError("LLM stream produced no output (possible timeout)")
+                    if continuation_count > 0 and attempt_content:
+                        continuation = self._trim_continuation_overlap(
+                            total_content, attempt_content
+                        )
+                        if continuation:
+                            total_content += continuation
+                            chunk_count += 1
+                            yield {
+                                "event": "chunk",
+                                "data": {"content": continuation},
+                            }
+
+                    if finish_reason not in ("length", "max_tokens"):
+                        break
+                    if continuation_count >= 2:
+                        yield {
+                            "event": "error",
+                            "data": {"message": "AI 输出仍被截断，请缩小输入范围后重试"},
+                        }
+                        return
+
+                    continuation_count += 1
+                    current_messages = [
+                        *messages,
+                        {"role": "assistant", "content": total_content},
+                        {
+                            "role": "user",
+                            "content": "请从中断处直接继续，避免重复已经输出的内容，并保持简体中文。",
+                        },
+                    ]
+
+                if not total_content:
+                    raise LLMError("AI 未返回分析内容，请稍后重试")
 
                 duration = time.time() - start_time
                 yield {
@@ -185,6 +259,8 @@ class IssueDiagnosisService:
                         "total_content_length": len(total_content),
                         "duration_seconds": round(duration, 1),
                         "chunk_count": chunk_count,
+                        "finish_reason": finish_reason,
+                        "continuation_count": continuation_count,
                     }
                 }
             except LLMError as e:
