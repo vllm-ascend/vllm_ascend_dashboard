@@ -37,7 +37,6 @@ export interface TestCaseItem {
   last_run_at: string | null
   first_seen_at: string | null
   total_runs: number
-  total_failed: number
   lifetime_runs: number
   lifetime_failures: number
   issues_found: number

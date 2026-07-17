@@ -60,7 +60,7 @@ class TestCase(Base):
     # 超级管理员可维护字段
     issues_found = Column(Integer, default=0)  # 发现问题数（该用例发现的真实产品问题数）
     suspected_test_issue_count = Column(Integer, default=0)  # 被怀疑为用例自身问题的次数
-    is_flaky_manual = Column(Boolean, default=False)  # 为 True 时 is_flaky 由人工维护，自动检测不再覆盖
+    is_flaky_manual = Column(Boolean, default=False, index=True)  # 为 True 时 is_flaky 由人工维护，自动检测不再覆盖
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 

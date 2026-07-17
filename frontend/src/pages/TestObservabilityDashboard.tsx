@@ -180,7 +180,7 @@ function TestObservabilityDashboard() {
       },
     },
     {
-      title: '执行次数',
+      title: <Tooltip title="全生命周期累计（自用例上线以来），区别于 30 天滑动窗口的通过率">执行次数</Tooltip>,
       dataIndex: 'lifetime_runs',
       key: 'lifetime_runs',
       width: 90,
@@ -697,7 +697,7 @@ function TestObservabilityDashboard() {
       <Modal
         title={editingCase ? `维护用例元数据：${editingCase.test_name}` : '维护用例元数据'}
         open={!!editingCase}
-        onCancel={() => setEditingCase(null)}
+        onCancel={() => { setEditingCase(null); editForm.resetFields() }}
         okText="保存"
         cancelText="取消"
         confirmLoading={updateCaseMutation.isPending}
@@ -708,6 +708,7 @@ function TestObservabilityDashboard() {
             await updateCaseMutation.mutateAsync({ caseId: editingCase.id, payload: values })
             message.success('保存成功')
             setEditingCase(null)
+            editForm.resetFields()
           } catch {
             // 校验失败或请求失败，保持弹窗
           }
@@ -722,12 +723,18 @@ function TestObservabilityDashboard() {
             <Form.Item name="suspected_test_issue_count" label="疑似用例问题次数" tooltip="该用例被怀疑为用例自身问题（非产品问题）的次数">
               <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item name="is_flaky" label="Flaky 标记">
+            <Form.Item name="is_flaky" label="Flaky 标记" tooltip="标记为 Flaky 时自动锁定人工维护；标记为稳定不会改变锁定状态">
               <Select
                 options={[
                   { label: '标记为 Flaky', value: true },
                   { label: '标记为稳定', value: false },
                 ]}
+                onChange={(value: boolean) => {
+                  // 联动：标记为 Flaky 时自动锁定人工维护；标记为稳定不自动改锁定
+                  if (value === true) {
+                    editForm.setFieldValue('is_flaky_manual', true)
+                  }
+                }}
               />
             </Form.Item>
             <Form.Item name="is_flaky_manual" label="锁定为人工维护" tooltip="开启后，自动检测将不再覆盖 Flaky 标记；关闭则恢复自动检测">
@@ -739,10 +746,10 @@ function TestObservabilityDashboard() {
               />
             </Form.Item>
             <Form.Item name="owner" label="负责人">
-              <Input placeholder="负责人姓名" allowClear />
+              <Input placeholder="负责人姓名" allowClear maxLength={100} />
             </Form.Item>
-            <Form.Item name="owner_email" label="负责人邮箱">
-              <Input placeholder="负责人邮箱（可选）" allowClear />
+            <Form.Item name="owner_email" label="负责人邮箱" rules={[{ type: 'email', message: '邮箱格式不正确' }]}>
+              <Input placeholder="负责人邮箱（可选）" allowClear maxLength={200} />
             </Form.Item>
           </Form>
         )}

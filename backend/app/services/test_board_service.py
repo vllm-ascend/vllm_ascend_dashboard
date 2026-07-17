@@ -138,7 +138,11 @@ class TestBoardService:
         order = (filters or {}).get("order", "desc")
         sort_map = {"health_score": TestCase.health_score, "pass_rate": TestCase.pass_rate_7d,
                     "flaky_rate": TestCase.flaky_rate, "duration": TestCase.avg_duration_seconds,
-                    "last_run": TestCase.last_run_at}
+                    "last_run": TestCase.last_run_at,
+                    "lifetime_runs": TestCase.lifetime_runs,
+                    "lifetime_failures": TestCase.lifetime_failures,
+                    "issues_found": TestCase.issues_found,
+                    "suspected_test_issue_count": TestCase.suspected_test_issue_count}
         sort_col = sort_map.get(sort, TestCase.health_score)
         stmt = stmt.order_by(desc(sort_col) if order == "desc" else asc(sort_col))
 
@@ -330,7 +334,7 @@ class TestBoardService:
                         event=ci_result.event if ci_result else "schedule",
                         branch=ci_result.branch if ci_result else None,
                         started_at=ci_job.started_at, completed_at=ci_job.completed_at,
-                        failure_category=category if pr["result"] == "failed" else None,
+                        failure_category=None,
                         failure_message=pr.get("failure_message")),
                 ci_job, self.db
             )
@@ -351,9 +355,10 @@ class TestBoardService:
             self.db.add(run)
             test_case.data_granularity = pr.get("data_granularity", test_case.data_granularity)
             # 全生命周期累计计数（自用例上线以来），不受滑动窗口与数据清理影响
-            test_case.lifetime_runs = (test_case.lifetime_runs or 0) + 1
+            # 使用 SQL 表达式赋值（flush 时生成 SET col = coalesce(col,0) + 1），原子递增，避免并发同步丢失
+            test_case.lifetime_runs = func.coalesce(TestCase.lifetime_runs, 0) + 1
             if pr["result"] == "failed":
-                test_case.lifetime_failures = (test_case.lifetime_failures or 0) + 1
+                test_case.lifetime_failures = func.coalesce(TestCase.lifetime_failures, 0) + 1
             count += 1
         return count
 

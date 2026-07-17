@@ -270,7 +270,8 @@ async def _migrate_test_case_columns():
                 await db.commit()
                 logger.info("Added test_cases columns: %s", ", ".join(added))
 
-            # Backfill lifetime counters from test_runs (best-effort, covers retained data)
+            # 回填生命周期计数：仅能从 test_runs 保留期（默认 90 天）内的数据回填，
+            # 不包含更早的历史，因此迁移前老用例的值为近似值；之后的新增采集中会持续累加。
             if "lifetime_runs" in added:
                 await db.execute(text(
                     "UPDATE test_cases SET lifetime_runs = ("
@@ -285,6 +286,17 @@ async def _migrate_test_case_columns():
                 ))
                 await db.commit()
                 logger.info("Backfilled lifetime_runs / lifetime_failures from test_runs")
+
+            # 为 is_flaky_manual 创建索引（与 is_flaky 同级语义，便于 WHERE 过滤）
+            if "is_flaky_manual" in added:
+                try:
+                    await db.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_test_cases_is_flaky_manual "
+                        "ON test_cases (is_flaky_manual)"
+                    ))
+                    await db.commit()
+                except Exception as idx_err:
+                    logger.warning("is_flaky_manual index creation skipped (non-fatal): %s", idx_err)
 
     except Exception as e:
         logger.warning(f"test_cases column migration skipped (non-fatal): {e}")

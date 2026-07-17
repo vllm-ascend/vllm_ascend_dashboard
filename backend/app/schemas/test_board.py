@@ -59,12 +59,12 @@ class TestCaseUpdateRequest(BaseModel):
     所有字段可选，仅更新传入的字段。当 is_flaky_manual=True 时，is_flaky 以人工标记为准，
     自动检测将不再覆盖；置为 False 则恢复自动检测。
     """
-    issues_found: int | None = None
-    suspected_test_issue_count: int | None = None
+    issues_found: int | None = Field(None, ge=0)
+    suspected_test_issue_count: int | None = Field(None, ge=0)
     is_flaky: bool | None = None
     is_flaky_manual: bool | None = None
-    owner: str | None = None
-    owner_email: str | None = None
+    owner: str | None = Field(None, max_length=100)
+    owner_email: str | None = Field(None, max_length=200, pattern=r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
 class TestRunResponse(BaseModel):

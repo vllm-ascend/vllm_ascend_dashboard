@@ -4,7 +4,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, CurrentSuperAdminUser, DbSession
@@ -203,29 +204,54 @@ async def update_case(
     """超级管理员维护测试用例元数据。
 
     可维护字段：发现问题数、疑似用例问题次数、Flaky 标记（含人工锁定）、负责人。
+    所有变更写入审计日志（app_logs），记录操作人、用例 ID 与变更前后值。
     """
-    from sqlalchemy import select
     case = (await db.execute(select(TestCase).where(TestCase.id == case_id))).scalar_one_or_none()
     if not case:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试用例不存在")
 
+    # 记录变更前后值，用于审计
+    changes: dict[str, tuple] = {}
+
+    def _record(field: str, new_val):
+        old_val = getattr(case, field)
+        if new_val != old_val:
+            changes[field] = (old_val, new_val)
+
     if request.issues_found is not None:
+        _record("issues_found", request.issues_found)
         case.issues_found = request.issues_found
     if request.suspected_test_issue_count is not None:
+        _record("suspected_test_issue_count", request.suspected_test_issue_count)
         case.suspected_test_issue_count = request.suspected_test_issue_count
     if request.is_flaky_manual is not None:
+        _record("is_flaky_manual", request.is_flaky_manual)
         case.is_flaky_manual = request.is_flaky_manual
     if request.is_flaky is not None:
+        _record("is_flaky", request.is_flaky)
         case.is_flaky = request.is_flaky
-        # 一旦人工设置 is_flaky，默认锁定为人工维护
-        if request.is_flaky_manual is None:
+        # 仅当显式标记为 Flaky 且未指定锁定时，默认锁定为人工维护；
+        # 标记为稳定（False）不自动锁定，保留自动检测继续观察
+        if request.is_flaky_manual is None and request.is_flaky is True:
+            _record("is_flaky_manual", True)
             case.is_flaky_manual = True
     if request.owner is not None:
-        case.owner = request.owner or None
+        new_owner = request.owner or None
+        _record("owner", new_owner)
+        case.owner = new_owner
     if request.owner_email is not None:
-        case.owner_email = request.owner_email or None
+        new_email = request.owner_email or None
+        _record("owner_email", new_email)
+        case.owner_email = new_email
 
     await db.commit()
     await db.refresh(case)
+
+    # 审计日志：谁、何时、改了什么（持久化到 app_logs，满足 requirements §10.3）
+    if changes:
+        logger.info(
+            "test_case_metadata_updated: user=%s case_id=%s changes=%s",
+            user.username, case_id,
+            {k: {"from": v[0], "to": v[1]} for k, v in changes.items()},
+        )
     return case
