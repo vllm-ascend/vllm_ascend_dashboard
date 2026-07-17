@@ -76,6 +76,7 @@ async def init_db():
         await _migrate_avatar_base64_column()
         await _migrate_failure_analysis_pipeline_columns()
         await _migrate_ci_job_tracking_columns()
+        await _migrate_test_case_columns()
 
         # 初始化 LLM 提供商默认配置
         await _init_llm_provider_configs()
@@ -230,6 +231,63 @@ async def _migrate_avatar_base64_column():
 
     except Exception as e:
         logger.warning(f"PR pipeline author column migration skipped (non-fatal): {e}")
+
+
+async def _migrate_test_case_columns():
+    """Ensure test_cases table has lifetime counters and admin-maintained columns.
+
+    create_all won't ALTER existing tables, so add missing columns for existing DBs.
+    """
+    try:
+        from sqlalchemy import text, inspect
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+        from app.db.base import _is_sqlite
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            def _get_columns(conn):
+                return [c['name'] for c in inspect(conn).get_columns('test_cases')]
+            existing_cols = await db.run_sync(_get_columns)
+
+            # (column_name, sqlite_type, mysql_type)
+            new_columns = [
+                ("lifetime_runs", "INTEGER DEFAULT 0", "INT DEFAULT 0"),
+                ("lifetime_failures", "INTEGER DEFAULT 0", "INT DEFAULT 0"),
+                ("issues_found", "INTEGER DEFAULT 0", "INT DEFAULT 0"),
+                ("suspected_test_issue_count", "INTEGER DEFAULT 0", "INT DEFAULT 0"),
+                ("is_flaky_manual", "BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE"),
+            ]
+
+            added = []
+            for col_name, sqlite_def, mysql_def in new_columns:
+                if col_name not in existing_cols:
+                    col_type = sqlite_def if _is_sqlite else mysql_def
+                    logger.info("Adding missing column '%s' to test_cases", col_name)
+                    await db.execute(text(f"ALTER TABLE test_cases ADD COLUMN {col_name} {col_type}"))
+                    added.append(col_name)
+
+            if added:
+                await db.commit()
+                logger.info("Added test_cases columns: %s", ", ".join(added))
+
+            # Backfill lifetime counters from test_runs (best-effort, covers retained data)
+            if "lifetime_runs" in added:
+                await db.execute(text(
+                    "UPDATE test_cases SET lifetime_runs = ("
+                    "  SELECT COUNT(*) FROM test_runs WHERE test_runs.test_case_id = test_cases.id"
+                    ") WHERE lifetime_runs IS NULL OR lifetime_runs = 0"
+                ))
+                await db.execute(text(
+                    "UPDATE test_cases SET lifetime_failures = ("
+                    "  SELECT COUNT(*) FROM test_runs WHERE test_runs.test_case_id = test_cases.id"
+                    "    AND test_runs.result = 'failed'"
+                    ") WHERE lifetime_failures IS NULL OR lifetime_failures = 0"
+                ))
+                await db.commit()
+                logger.info("Backfilled lifetime_runs / lifetime_failures from test_runs")
+
+    except Exception as e:
+        logger.warning(f"test_cases column migration skipped (non-fatal): {e}")
 
 
 async def _warmup_claude_code_cli():

@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import {
-  Card, Table, Space, Statistic, Row, Col, Typography, Tabs, Tag, Button, message, Modal, Input, Select, Progress, Tooltip, Empty,
+  Card, Table, Space, Statistic, Row, Col, Typography, Tabs, Tag, Button, message, Modal, Input, Select, Progress, Tooltip, Empty, InputNumber, Form,
 } from 'antd'
 import {
   BugOutlined, CheckCircleOutlined, WarningOutlined, ClockCircleOutlined,
-  SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined,
+  SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined, EditOutlined,
 } from '@ant-design/icons'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
-import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions } from '../hooks/useTestBoard'
+import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions, useUpdateCase } from '../hooks/useTestBoard'
+import { useCurrentUser } from '../hooks/useCurrentUser'
 import type { TestCaseItem, FlakyCaseDetail, FailureBreakdown, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
 import './TestObservabilityDashboard.css'
 
@@ -41,6 +42,9 @@ function TestObservabilityDashboard() {
   const { data: overview, isLoading: overviewLoading } = useTestOverview(7)
   const { data: suites, isLoading: suitesLoading } = useTestSuites()
   const syncMutation = useTriggerSync()
+  const { data: currentUser } = useCurrentUser()
+  const isSuperAdmin = currentUser?.role === 'super_admin'
+  const updateCaseMutation = useUpdateCase()
 
   const [casePage, setCasePage] = useState(1)
   const [caseFilters, setCaseFilters] = useState<Record<string, string | undefined>>({})
@@ -57,6 +61,10 @@ function TestObservabilityDashboard() {
   const { data: breakdown, isLoading: breakdownLoading } = useFailureBreakdown({ days: 30 })
   const { data: owners, isLoading: ownersLoading } = useOwnerMatrix()
   const { data: modules, isLoading: modulesLoading } = useModuleHealth()
+
+  // 用例元数据编辑（超级管理员）
+  const [editingCase, setEditingCase] = useState<TestCaseItem | null>(null)
+  const [editForm] = Form.useForm()
 
   const handleSync = () => {
     Modal.confirm({
@@ -172,12 +180,100 @@ function TestObservabilityDashboard() {
       },
     },
     {
+      title: '执行次数',
+      dataIndex: 'lifetime_runs',
+      key: 'lifetime_runs',
+      width: 90,
+      sorter: true,
+      render: (runs: number, record: TestCaseItem) => (
+        <Tooltip title={record.first_seen_at ? `上线时间：${new Date(record.first_seen_at).toLocaleString()}` : '上线时间未知'}>
+          <span>{runs ?? 0}</span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '失败次数',
+      dataIndex: 'lifetime_failures',
+      key: 'lifetime_failures',
+      width: 90,
+      sorter: true,
+      render: (failures: number, record: TestCaseItem) => {
+        const total = record.lifetime_runs || 0
+        const failRate = total > 0 ? (failures || 0) / total : 0
+        return (
+          <Tooltip title={total > 0 ? `失败率：${(failRate * 100).toFixed(1)}%` : '无数据'}>
+            <span style={{ color: (failures || 0) > 0 ? '#cf1322' : undefined }}>{failures ?? 0}</span>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      title: '发现问题数',
+      dataIndex: 'issues_found',
+      key: 'issues_found',
+      width: 100,
+      sorter: true,
+      render: (count: number) => {
+        const n = count ?? 0
+        return n > 0 ? <Tag color="red">{n}</Tag> : <Text type="secondary">0</Text>
+      },
+    },
+    {
+      title: '疑似用例问题',
+      dataIndex: 'suspected_test_issue_count',
+      key: 'suspected_test_issue_count',
+      width: 120,
+      sorter: true,
+      render: (count: number) => {
+        const n = count ?? 0
+        return n > 0 ? <Tag color="orange">{n}</Tag> : <Text type="secondary">0</Text>
+      },
+    },
+    {
+      title: 'Flaky 标记',
+      dataIndex: 'is_flaky',
+      key: 'is_flaky',
+      width: 100,
+      render: (flaky: boolean, record: TestCaseItem) => (
+        <Space size={4}>
+          {flaky ? <Tag color="volcano">Flaky</Tag> : <Tag>稳定</Tag>}
+          {record.is_flaky_manual && <Tooltip title="人工维护，自动检测已锁定"><Tag color="gold">人工</Tag></Tooltip>}
+        </Space>
+      ),
+    },
+    {
       title: '负责人',
       dataIndex: 'owner',
       key: 'owner',
       width: 100,
       render: (owner: string | null) => owner || <Text type="secondary">未分配</Text>,
     },
+    ...(isSuperAdmin ? [{
+      title: '操作',
+      key: 'action',
+      width: 80,
+      fixed: 'right' as const,
+      render: (_: unknown, record: TestCaseItem) => (
+        <Button
+          type="link"
+          size="small"
+          icon={<EditOutlined />}
+          onClick={() => {
+            setEditingCase(record)
+            editForm.setFieldsValue({
+              issues_found: record.issues_found ?? 0,
+              suspected_test_issue_count: record.suspected_test_issue_count ?? 0,
+              is_flaky: record.is_flaky,
+              is_flaky_manual: record.is_flaky_manual,
+              owner: record.owner ?? '',
+              owner_email: record.owner_email ?? '',
+            })
+          }}
+        >
+          维护
+        </Button>
+      ),
+    }] : []),
   ]
 
   const flakyColumns = [
@@ -534,7 +630,7 @@ function TestObservabilityDashboard() {
                     onChange: setCasePage,
                     showTotal: (total) => `共 ${total} 条`,
                   }}
-                  scroll={{ x: 1200 }}
+                  scroll={{ x: 1700 }}
                 />
               </Card>
             ),
@@ -597,6 +693,60 @@ function TestObservabilityDashboard() {
           },
         ]}
       />
+
+      <Modal
+        title={editingCase ? `维护用例元数据：${editingCase.test_name}` : '维护用例元数据'}
+        open={!!editingCase}
+        onCancel={() => setEditingCase(null)}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={updateCaseMutation.isPending}
+        onOk={async () => {
+          if (!editingCase) return
+          try {
+            const values = await editForm.validateFields()
+            await updateCaseMutation.mutateAsync({ caseId: editingCase.id, payload: values })
+            message.success('保存成功')
+            setEditingCase(null)
+          } catch {
+            // 校验失败或请求失败，保持弹窗
+          }
+        }}
+        width={520}
+      >
+        {editingCase && (
+          <Form form={editForm} layout="vertical">
+            <Form.Item name="issues_found" label="发现问题数" tooltip="该用例发现的真实产品问题数量">
+              <InputNumber min={0} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="suspected_test_issue_count" label="疑似用例问题次数" tooltip="该用例被怀疑为用例自身问题（非产品问题）的次数">
+              <InputNumber min={0} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="is_flaky" label="Flaky 标记">
+              <Select
+                options={[
+                  { label: '标记为 Flaky', value: true },
+                  { label: '标记为稳定', value: false },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item name="is_flaky_manual" label="锁定为人工维护" tooltip="开启后，自动检测将不再覆盖 Flaky 标记；关闭则恢复自动检测">
+              <Select
+                options={[
+                  { label: '人工维护（锁定）', value: true },
+                  { label: '自动检测', value: false },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item name="owner" label="负责人">
+              <Input placeholder="负责人姓名" allowClear />
+            </Form.Item>
+            <Form.Item name="owner_email" label="负责人邮箱">
+              <Input placeholder="负责人邮箱（可选）" allowClear />
+            </Form.Item>
+          </Form>
+        )}
+      </Modal>
     </div>
   )
 }

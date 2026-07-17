@@ -350,6 +350,10 @@ class TestBoardService:
             )
             self.db.add(run)
             test_case.data_granularity = pr.get("data_granularity", test_case.data_granularity)
+            # 全生命周期累计计数（自用例上线以来），不受滑动窗口与数据清理影响
+            test_case.lifetime_runs = (test_case.lifetime_runs or 0) + 1
+            if pr["result"] == "failed":
+                test_case.lifetime_failures = (test_case.lifetime_failures or 0) + 1
             count += 1
         return count
 

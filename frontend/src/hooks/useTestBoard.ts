@@ -139,3 +139,16 @@ export const useAnnotateFailure = () => {
     },
   })
 }
+
+export const useUpdateCase = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ caseId, payload }: { caseId: number; payload: testBoardApi.TestCaseUpdatePayload }) =>
+      testBoardApi.updateCase(caseId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['test-board-cases'] })
+      queryClient.invalidateQueries({ queryKey: ['test-board-overview'] })
+      queryClient.invalidateQueries({ queryKey: ['test-board-flaky'] })
+    },
+  })
+}
