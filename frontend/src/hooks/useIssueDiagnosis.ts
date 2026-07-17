@@ -1,17 +1,40 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { message } from 'antd'
 import {
   IssueDiagnosisRequest,
+  type DiagnosisMessage,
   CIJobOption,
   getFailedCIJobs,
   streamDiagnosis,
   saveDiagnosisRecord,
   toggleDiagnosisLike,
 } from '../services/issueDiagnosis'
-import { diagnosePR } from '../services/prPipeline'
+import { buildFollowUpRequest, canAskFollowUp } from '../services/issueDiagnosisConversation'
 import type { DiagnosisSummary } from '../components/StreamMarkdownRenderer'
 
+function appendAssistantChunk(messages: DiagnosisMessage[], chunk: string): DiagnosisMessage[] {
+  const next = [...messages]
+  const last = next[next.length - 1]
+  if (!last || last.role !== 'assistant') return next
+  next[next.length - 1] = { ...last, content: last.content + chunk }
+  return next
+}
+
+function removeEmptyAssistantTail(messages: DiagnosisMessage[]): DiagnosisMessage[] {
+  const last = messages[messages.length - 1]
+  return last?.role === 'assistant' && !last.content.trim()
+    ? messages.slice(0, -1)
+    : messages
+}
+
+function formatConversation(messages: DiagnosisMessage[]): string {
+  return messages
+    .map(item => `## ${item.role === 'assistant' ? 'AI 分析' : '追问'}\n\n${item.content}`)
+    .join('\n\n')
+}
+
 export function useIssueDiagnosis() {
+  const activeController = useRef<AbortController | null>(null)
   const [dataSourceType, setDataSourceType] = useState<string>('pr_pipeline')
   const [prNumber, setPrNumber] = useState<number | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null)
@@ -19,6 +42,9 @@ export function useIssueDiagnosis() {
   const [logContent, setLogContent] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamContent, setStreamContent] = useState('')
+  const [conversation, setConversation] = useState<DiagnosisMessage[]>([])
+  const [baseRequest, setBaseRequest] = useState<IssueDiagnosisRequest | null>(null)
+  const [followUpQuestion, setFollowUpQuestion] = useState('')
   const [meta, setMeta] = useState<{ provider: string; model: string } | null>(null)
   const [summary, setSummary] = useState<DiagnosisSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -44,68 +70,50 @@ export function useIssueDiagnosis() {
     if (dataSourceType === 'ci_job' && ciJobOptions.length === 0) loadCIJobs()
   }, [dataSourceType, ciJobOptions.length, loadCIJobs])
 
-  const handleDataSourceTypeChange = useCallback((type: string) => {
-    setDataSourceType(type)
-    setSelectedJobId(null)
-    setPrNumber(null)
-  }, [])
+  useEffect(() => () => activeController.current?.abort(), [])
 
-  const handleStartDiagnosis = useCallback(async () => {
-    if (dataSourceType === 'pr_pipeline') {
-      if (!prNumber) {
-        message.warning('请输入 PR 编号')
-        return
-      }
-    } else if (dataSourceType === 'ci_job') {
-      if (!selectedJobId && !userPrompt && !logContent) {
-        message.warning('请选择 CI Job 或输入提示词/日志内容')
-        return
-      }
-    } else {
-      if (!userPrompt && !logContent) {
-        message.warning('请输入提示词或日志内容')
-        return
-      }
-    }
-
-    setIsStreaming(true)
+  const clearDiagnosis = useCallback(() => {
+    activeController.current?.abort()
+    activeController.current = null
+    setIsStreaming(false)
     setStreamContent('')
+    setConversation([])
+    setBaseRequest(null)
+    setFollowUpQuestion('')
     setMeta(null)
     setSummary(null)
     setError(null)
     setHistoryId(null)
     setIsLiked(false)
+  }, [])
 
-    if (dataSourceType === 'pr_pipeline' && prNumber) {
-      try {
-        const result = await diagnosePR(prNumber)
-        setStreamContent(result.report)
-        setMeta({ provider: result.provider, model: result.model })
-        setSummary({
-          total_content_length: result.report.length,
-          duration_seconds: result.duration_seconds,
-          chunk_count: 1,
-        })
-        if (result.history_id) setHistoryId(result.history_id)
-      } catch (e: any) {
-        const errBody = e?.response?.data?.detail
-        setError(errBody || e.message || 'PR 诊断请求失败')
-      } finally {
-        setIsStreaming(false)
-      }
+  const handleDataSourceTypeChange = useCallback((type: string) => {
+    setDataSourceType(type)
+    setSelectedJobId(null)
+    setPrNumber(null)
+    clearDiagnosis()
+  }, [clearDiagnosis])
+
+  const handleStartDiagnosis = useCallback(async () => {
+    if (dataSourceType === 'pr_pipeline' && !prNumber) {
+      message.warning('请输入 PR 编号')
+      return
+    }
+    if (dataSourceType === 'ci_job' && !selectedJobId && !userPrompt && !logContent) {
+      message.warning('请选择 CI Job 或输入提示词/日志内容')
+      return
+    }
+    if (dataSourceType === 'manual' && !userPrompt && !logContent) {
+      message.warning('请输入提示词或日志内容')
       return
     }
 
-    const hasDataSource = dataSourceType === 'ci_job' && selectedJobId
-    const effectiveDataSourceType = hasDataSource ? 'ci_job' : 'manual'
-
-    const request: IssueDiagnosisRequest = {
-      data_source_type: effectiveDataSourceType as 'ci_job' | 'manual',
-    }
-
-    if (dataSourceType === 'ci_job' && selectedJobId) {
-      request.job_id = selectedJobId
-    }
+    const effectiveType = dataSourceType === 'ci_job' && !selectedJobId
+      ? 'manual'
+      : dataSourceType as IssueDiagnosisRequest['data_source_type']
+    const request: IssueDiagnosisRequest = { data_source_type: effectiveType }
+    if (effectiveType === 'pr_pipeline' && prNumber) request.pr_number = prNumber
+    if (effectiveType === 'ci_job' && selectedJobId) request.job_id = selectedJobId
 
     let prompt = userPrompt
     if (logContent) {
@@ -115,14 +123,30 @@ export function useIssueDiagnosis() {
     }
     if (prompt) request.user_prompt = prompt
 
-    const targetId = effectiveDataSourceType === 'ci_job' && selectedJobId
-      ? String(selectedJobId)
-      : `manual_${Date.now()}`
+    const targetId = effectiveType === 'pr_pipeline'
+      ? String(prNumber)
+      : effectiveType === 'ci_job' && selectedJobId
+        ? String(selectedJobId)
+        : `manual_${Date.now()}`
     let targetLabel: string | undefined
-    if (effectiveDataSourceType === 'ci_job' && selectedJobId) {
-      const job = ciJobOptions.find(j => j.job_id === selectedJobId)
+    if (effectiveType === 'pr_pipeline') targetLabel = `PR #${prNumber}`
+    if (effectiveType === 'ci_job' && selectedJobId) {
+      const job = ciJobOptions.find(item => item.job_id === selectedJobId)
       targetLabel = job ? `${job.workflow_name} - ${job.job_name}` : undefined
     }
+
+    activeController.current?.abort()
+    const controller = new AbortController()
+    activeController.current = controller
+    setIsStreaming(true)
+    setStreamContent('')
+    setConversation([{ role: 'assistant', content: '' }])
+    setBaseRequest(request)
+    setMeta(null)
+    setSummary(null)
+    setError(null)
+    setHistoryId(null)
+    setIsLiked(false)
 
     let accumulated = ''
     let localMeta: { provider: string; model: string } | null = null
@@ -130,67 +154,134 @@ export function useIssueDiagnosis() {
     try {
       await streamDiagnosis(
         request,
-        (chunk) => { accumulated += chunk; setStreamContent(prev => prev + chunk) },
-        (m) => { localMeta = m; setMeta(m) },
-        (s) => {
-          setSummary(s)
-          setIsStreaming(false)
+        chunk => {
+          if (controller.signal.aborted) return
+          accumulated += chunk
+          setStreamContent(previous => previous + chunk)
+          setConversation(previous => appendAssistantChunk(previous, chunk))
+        },
+        value => {
+          if (controller.signal.aborted) return
+          localMeta = value
+          setMeta(value)
+        },
+        value => {
+          if (controller.signal.aborted) return
+          setSummary(value)
           if (accumulated.trim()) {
             saveDiagnosisRecord({
-            diagnosis_type: effectiveDataSourceType,
-            target_id: targetId,
-            target_label: targetLabel,
-            report_content: accumulated,
-            model_used: localMeta?.model,
-            duration_seconds: s.duration_seconds,
-            status: 'success',
-          }).then((res) => {
-            if (res.id) setHistoryId(res.id)
-          }).catch((err) => console.warn('保存诊断记录失败:', err))
+              diagnosis_type: effectiveType,
+              target_id: targetId,
+              target_label: targetLabel,
+              report_content: accumulated,
+              model_used: localMeta?.model,
+              duration_seconds: value.duration_seconds,
+              status: 'success',
+            }).then(result => {
+              if (result.id) setHistoryId(result.id)
+            }).catch(saveError => console.warn('保存诊断记录失败:', saveError))
           }
         },
-        (errMsg) => { setError(errMsg); setIsStreaming(false) },
+        errorMessage => {
+          if (controller.signal.aborted) return
+          setError(errorMessage)
+          setConversation(removeEmptyAssistantTail)
+        },
+        controller.signal,
       )
-    } catch (e: any) {
-      setError(e.message || '诊断请求失败')
+    } catch (requestError: any) {
+      if (!controller.signal.aborted) {
+        setError(requestError.message || '诊断请求失败')
+        setConversation(removeEmptyAssistantTail)
+      }
     } finally {
-      setIsStreaming(false)
+      if (activeController.current === controller) {
+        activeController.current = null
+        setIsStreaming(false)
+      }
     }
   }, [dataSourceType, prNumber, selectedJobId, userPrompt, logContent, ciJobOptions])
 
+  const handleFollowUp = useCallback(async () => {
+    const question = followUpQuestion.trim()
+    if (!question || !baseRequest || !conversation.length) return
+    if (!canAskFollowUp(conversation)) {
+      message.warning('当前会话已达到追问上限，请开始新的诊断')
+      return
+    }
+
+    const request = buildFollowUpRequest(baseRequest, conversation, question)
+    activeController.current?.abort()
+    const controller = new AbortController()
+    activeController.current = controller
+    setConversation(previous => [
+      ...previous,
+      { role: 'user', content: question },
+      { role: 'assistant', content: '' },
+    ])
+    setFollowUpQuestion('')
+    setError(null)
+    setSummary(null)
+    setIsStreaming(true)
+
+    try {
+      await streamDiagnosis(
+        request,
+        chunk => {
+          if (!controller.signal.aborted) {
+            setConversation(previous => appendAssistantChunk(previous, chunk))
+          }
+        },
+        value => { if (!controller.signal.aborted) setMeta(value) },
+        value => { if (!controller.signal.aborted) setSummary(value) },
+        errorMessage => {
+          if (controller.signal.aborted) return
+          setError(errorMessage)
+          setConversation(removeEmptyAssistantTail)
+        },
+        controller.signal,
+      )
+    } catch (requestError: any) {
+      if (!controller.signal.aborted) {
+        setError(requestError.message || '追问请求失败')
+        setConversation(removeEmptyAssistantTail)
+      }
+    } finally {
+      if (activeController.current === controller) {
+        activeController.current = null
+        setIsStreaming(false)
+      }
+    }
+  }, [followUpQuestion, baseRequest, conversation])
+
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(streamContent)
+    navigator.clipboard.writeText(formatConversation(conversation))
     message.success('已复制到剪贴板')
-  }, [streamContent])
+  }, [conversation])
 
   const handleExport = useCallback(() => {
-    if (!streamContent) { message.warning('暂无可导出的内容'); return }
-    const blob = new Blob([streamContent], { type: 'text/markdown;charset=utf-8' })
+    if (!conversation.length) { message.warning('暂无可导出的内容'); return }
+    const blob = new Blob([formatConversation(conversation)], { type: 'text/markdown;charset=utf-8' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
     link.download = `issue_diagnosis_${new Date().toISOString().slice(0, 10)}.md`
     link.click()
     URL.revokeObjectURL(link.href)
     message.success('已导出')
-  }, [streamContent])
+  }, [conversation])
 
   const handleReset = useCallback(() => {
-    setStreamContent('')
-    setMeta(null)
-    setSummary(null)
-    setError(null)
-    setHistoryId(null)
-    setIsLiked(false)
+    clearDiagnosis()
     setUserPrompt('')
     setLogContent('')
-  }, [])
+  }, [clearDiagnosis])
 
   const handleLike = useCallback(async () => {
     if (!historyId) return
     try {
-      const res = await toggleDiagnosisLike(historyId)
-      setIsLiked(res.is_liked)
-      message.success(res.is_liked ? '已点赞' : '已取消点赞')
+      const result = await toggleDiagnosisLike(historyId)
+      setIsLiked(result.is_liked)
+      message.success(result.is_liked ? '已点赞' : '已取消点赞')
     } catch {
       message.error('点赞失败')
     }
@@ -198,8 +289,8 @@ export function useIssueDiagnosis() {
 
   const handleLogFileUpload = useCallback((file: File) => {
     const reader = new FileReader()
-    reader.onload = (e) => {
-      const text = e.target?.result as string
+    reader.onload = event => {
+      const text = event.target?.result as string
       setLogContent(text)
       message.success(`已加载日志文件 (${text.length} 字符)`)
     }
@@ -208,24 +299,33 @@ export function useIssueDiagnosis() {
   }, [])
 
   return {
-    dataSourceType, setDataSourceType,
-    prNumber, setPrNumber,
-    selectedJobId, setSelectedJobId,
-    userPrompt, setUserPrompt,
-    logContent, setLogContent,
+    dataSourceType,
+    prNumber,
+    selectedJobId,
+    userPrompt,
+    logContent,
     isStreaming,
     streamContent,
+    conversation,
+    followUpAllowed: canAskFollowUp(conversation),
+    followUpQuestion,
     meta,
     summary,
     error,
     historyId,
     isLiked,
-    clearError: () => setError(null),
-    handleLike,
     ciJobOptions,
     loadingJobs,
+    setPrNumber,
+    setSelectedJobId,
+    setUserPrompt,
+    setLogContent,
+    setFollowUpQuestion,
+    clearError: () => setError(null),
+    handleLike,
     handleDataSourceTypeChange,
     handleStartDiagnosis,
+    handleFollowUp,
     handleCopy,
     handleExport,
     handleReset,

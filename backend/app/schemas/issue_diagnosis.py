@@ -1,11 +1,21 @@
 from pydantic import BaseModel, Field, model_validator, field_validator
-from typing import Optional
+from typing import Literal, Optional
+
+
+class IssueDiagnosisMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=100000)
 
 
 class IssueDiagnosisRequest(BaseModel):
-    data_source_type: str = Field(
+    data_source_type: Literal["pr_pipeline", "ci_job", "commit", "manual"] = Field(
         ...,
-        description="数据源类型: ci_job, commit, manual",
+        description="数据源类型: pr_pipeline, ci_job, commit, manual",
+    )
+    pr_number: Optional[int] = Field(
+        None,
+        description="PR 编号 (data_source_type=pr_pipeline 时必填)",
+        gt=0,
     )
     job_id: Optional[int] = Field(
         None,
@@ -23,7 +33,12 @@ class IssueDiagnosisRequest(BaseModel):
     user_prompt: Optional[str] = Field(
         None,
         description="用户补充提示词",
-        max_length=20000,
+        max_length=60000,
+    )
+    conversation_history: list[IssueDiagnosisMessage] = Field(
+        default_factory=list,
+        description="当前页面会话中的历史问答",
+        max_length=50,
     )
 
     @field_validator('commit_sha')
@@ -37,9 +52,8 @@ class IssueDiagnosisRequest(BaseModel):
 
     @model_validator(mode='after')
     def validate_data_source(self) -> 'IssueDiagnosisRequest':
-        valid_types = ('ci_job', 'commit', 'manual')
-        if self.data_source_type not in valid_types:
-            raise ValueError(f'data_source_type must be one of {valid_types}')
+        if self.data_source_type == 'pr_pipeline' and self.pr_number is None:
+            raise ValueError('pr_number is required for pr_pipeline diagnosis')
         return self
 
 

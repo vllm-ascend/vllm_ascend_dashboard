@@ -72,6 +72,9 @@ function IssueDiagnosis() {
     logContent,
     isStreaming,
     streamContent,
+    conversation,
+    followUpQuestion,
+    followUpAllowed,
     meta,
     summary,
     error,
@@ -84,7 +87,9 @@ function IssueDiagnosis() {
     setSelectedJobId,
     setUserPrompt,
     setLogContent,
+    setFollowUpQuestion,
     handleStartDiagnosis,
+    handleFollowUp,
     handleCopy,
     handleExport,
     handleReset,
@@ -412,12 +417,45 @@ function IssueDiagnosis() {
                     </Button>
                   ) : null
                 }>
-                  <StreamMarkdownRenderer
-                    content={streamContent}
-                    isStreaming={isStreaming}
-                    meta={meta}
-                    summary={summary}
-                  />
+                  <div style={{ height: 500 }}>
+                    <StreamMarkdownRenderer
+                      content={streamContent}
+                      messages={conversation}
+                      isStreaming={isStreaming}
+                      meta={meta}
+                      summary={summary}
+                    />
+                  </div>
+                  {streamContent && (
+                    <>
+                      <Divider style={{ margin: '16px 0 12px' }} />
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Input.TextArea
+                          value={followUpQuestion}
+                          onChange={event => setFollowUpQuestion(event.target.value)}
+                          onPressEnter={event => {
+                            if (!event.shiftKey) {
+                              event.preventDefault()
+                              handleFollowUp()
+                            }
+                          }}
+                          placeholder={followUpAllowed
+                            ? '继续追问 AI 分析结果，Enter 发送，Shift+Enter 换行'
+                            : '当前会话已达到追问上限，请开始新的诊断'}
+                          autoSize={{ minRows: 2, maxRows: 5 }}
+                          disabled={isStreaming}
+                        />
+                        <Button
+                          type="primary"
+                          onClick={handleFollowUp}
+                          loading={isStreaming}
+                          disabled={isStreaming || !followUpAllowed || !followUpQuestion.trim()}
+                        >
+                          追问
+                        </Button>
+                      </Space.Compact>
+                    </>
+                  )}
                 </Card>
               </div>
             ),

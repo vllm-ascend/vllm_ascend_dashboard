@@ -1,14 +1,36 @@
 import api from './api'
+import { SSEParser, type SSEEvent } from './sseParser'
 
 const API_BASE_URL = (typeof import.meta !== 'undefined' &&
   (import.meta as any).env?.VITE_API_BASE_URL) || 'http://localhost:8000/api/v1'
 
 export interface IssueDiagnosisRequest {
-  data_source_type: 'ci_job' | 'commit' | 'manual'
+  data_source_type: 'pr_pipeline' | 'ci_job' | 'commit' | 'manual'
+  pr_number?: number
   job_id?: number
   run_id?: number
   commit_sha?: string
   user_prompt?: string
+  conversation_history?: DiagnosisMessage[]
+}
+
+export interface DiagnosisMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export function formatApiError(detail: unknown, fallback: string): string {
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map(item => {
+        if (typeof item !== 'object' || item === null || !('msg' in item)) return ''
+        return typeof item.msg === 'string' ? item.msg : ''
+      })
+      .filter(Boolean)
+    if (messages.length) return messages.join('；')
+  }
+  return fallback
 }
 
 export interface CIJobOption {
@@ -68,6 +90,7 @@ export const streamDiagnosis = async (
   onMeta: (meta: { provider: string; model: string }) => void,
   onDone: (summary: { total_content_length: number; duration_seconds: number; chunk_count: number }) => void,
   onError: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> => {
   const token = localStorage.getItem('access_token')
 
@@ -80,12 +103,13 @@ export const streamDiagnosis = async (
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(request),
+      signal,
     }
   )
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ detail: response.statusText }))
-    onError(errorData.detail || response.statusText)
+    onError(formatApiError(errorData.detail, response.statusText || '诊断请求失败'))
     return
   }
 
@@ -96,41 +120,44 @@ export const streamDiagnosis = async (
   }
 
   const decoder = new TextDecoder()
-  let buffer = ''
-  let currentEvent = ''
+  const parser = new SSEParser()
+  let terminated = false
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-
-    for (const line of lines) {
-      if (line.startsWith('event:') || line.startsWith('event: ')) {
-        currentEvent = line.slice(line.indexOf(':') + 1).trim()
-      } else if (line.startsWith('data:') || line.startsWith('data: ')) {
-        const dataStr = line.slice(line.indexOf(':') + 1).trim()
-        try {
-          const data = JSON.parse(dataStr)
-          if (currentEvent === 'chunk') {
-            onChunk(data.content)
-          } else if (currentEvent === 'meta') {
-            onMeta(data)
-          } else if (currentEvent === 'done') {
-            onDone(data)
-          } else if (currentEvent === 'error') {
-            onError(data.message)
-          }
-        } catch (e) {
-          console.warn('SSE data parse error:', e)
-        }
-        currentEvent = ''
+  const handleEvent = (event: SSEEvent) => {
+    if (terminated) return
+    try {
+      const data = JSON.parse(event.data)
+      if (event.event === 'chunk') {
+        onChunk(data.content)
+      } else if (event.event === 'meta') {
+        onMeta(data)
+      } else if (event.event === 'done') {
+        terminated = true
+        onDone(data)
+      } else if (event.event === 'error') {
+        terminated = true
+        onError(data.message)
       }
+    } catch (error) {
+      terminated = true
+      console.warn('SSE data parse error:', error)
+      onError('AI 流式响应格式错误，请重试')
+      void reader.cancel()
     }
   }
+
+  let reading = true
+  while (reading) {
+    const { done, value } = await reader.read()
+    if (done) {
+      reading = false
+      continue
+    }
+    parser.push(decoder.decode(value, { stream: true })).forEach(handleEvent)
+  }
+
+  parser.finish(decoder.decode()).forEach(handleEvent)
+  if (!terminated) onError('AI 流式响应意外中断，请重试')
 }
 
 export interface DiagnosisHistoryItem {

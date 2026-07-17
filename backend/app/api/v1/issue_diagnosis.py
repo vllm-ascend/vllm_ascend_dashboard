@@ -19,7 +19,7 @@ router = APIRouter()
 @router.post("/diagnose", summary="问题定位诊断（SSE流式响应）")
 async def diagnose(
     request: IssueDiagnosisRequest,
-    current_user: CurrentAdminUser,
+    current_user: CurrentUser,
     db: DbSession,
     fastapi_request: Request,
 ):
@@ -29,10 +29,12 @@ async def diagnose(
         try:
             async for event_data in service.stream_diagnose(
                 data_source_type=request.data_source_type,
+                pr_number=request.pr_number,
                 job_id=request.job_id,
                 run_id=request.run_id,
                 commit_sha=request.commit_sha,
                 user_prompt=request.user_prompt,
+                conversation_history=[message.model_dump() for message in request.conversation_history],
                 db=db,
             ):
                 if await fastapi_request.is_disconnected():
@@ -61,7 +63,7 @@ async def diagnose(
 
 @router.get("/data-sources/ci-jobs", summary="获取失败的CI Job列表")
 async def get_failed_ci_jobs(
-    current_user: CurrentAdminUser,
+    current_user: CurrentUser,
     db: DbSession,
     days_back: int = 7,
 ):

@@ -6,6 +6,7 @@ API Key 从数据库配置中获取，不再依赖环境变量
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import AsyncGenerator, Optional
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,14 @@ class LLMError(Exception):
     pass
 
 
+@dataclass
+class LLMStreamChunk:
+    """流式响应片段及模型结束原因。"""
+
+    content: str = ""
+    finish_reason: Optional[str] = None
+
+
 class BaseLLMClient:
     """LLM 客户端基类"""
 
@@ -53,7 +62,7 @@ class BaseLLMClient:
         messages: list[dict],
         temperature: float = 0.7,
         max_tokens: int = 4096,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[LLMStreamChunk, None]:
         raise NotImplementedError
 
 
@@ -127,9 +136,12 @@ class OpenAIClient(BaseLLMClient):
             async for chunk in response:
                 if not chunk.choices:
                     continue
-                delta = chunk.choices[0].delta
+                choice = chunk.choices[0]
+                delta = choice.delta
                 if delta and delta.content:
-                    yield delta.content
+                    yield LLMStreamChunk(content=delta.content)
+                if choice.finish_reason:
+                    yield LLMStreamChunk(finish_reason=choice.finish_reason)
         except Exception as e:
             logger.error(f"LLM streaming failed: {type(e).__name__}")
             raise LLMError("LLM 流式调用失败")
@@ -213,7 +225,9 @@ class AnthropicClient(BaseLLMClient):
                 temperature=temperature,
             ) as stream:
                 async for text in stream.text_stream:
-                    yield text
+                    yield LLMStreamChunk(content=text)
+                final_message = await stream.get_final_message()
+                yield LLMStreamChunk(finish_reason=final_message.stop_reason)
         except Exception as e:
             logger.error(f"LLM streaming failed: {type(e).__name__}")
             raise LLMError("LLM 流式调用失败")
@@ -282,9 +296,12 @@ class QwenClient(BaseLLMClient):
             async for chunk in response:
                 if not chunk.choices:
                     continue
-                delta = chunk.choices[0].delta
+                choice = chunk.choices[0]
+                delta = choice.delta
                 if delta and delta.content:
-                    yield delta.content
+                    yield LLMStreamChunk(content=delta.content)
+                if choice.finish_reason:
+                    yield LLMStreamChunk(finish_reason=choice.finish_reason)
         except Exception as e:
             logger.error(f"LLM streaming failed: {type(e).__name__}")
             raise LLMError("LLM 流式调用失败")
@@ -375,16 +392,18 @@ class LLMClient:
         user_prompt: str = "",
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        messages: Optional[list[dict]] = None,
     ):
         if not api_key:
             raise LLMError(f"API Key not configured for provider: {provider}")
 
         client = create_client(provider, api_key, api_base)
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+        if messages is None:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
 
         async for chunk in client.generate_stream(
             model=model,
