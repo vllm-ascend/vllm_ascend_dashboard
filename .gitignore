@@ -164,3 +164,9 @@ backend/job_log.txt
 backend/threshold
 nul
 summary_response.json
+
+# Codex logs
+.codex-logs/
+
+# Temp monitoring / one-off scripts
+tmp_*.py
