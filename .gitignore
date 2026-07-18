@@ -170,15 +170,3 @@ summary_response.json
 
 # Temp monitoring / one-off scripts
 tmp_*.py
-
-# Local verification / debug scripts
-backend/scripts/trigger_failure_analysis.py
-backend/scripts/verify_agent.py
-
-# Pipeline tests & design doc (pending future PR)
-backend/tests/test_agent_runtime_retry.py
-backend/tests/test_failure_analysis_pipeline.py
-backend/tests/test_failure_analysis_regression_window.py
-backend/tests/test_failure_analysis_uncertainty.py
-backend/tests/test_report_validation_gate.py
-docs/failure-analysis-agent-design.md
