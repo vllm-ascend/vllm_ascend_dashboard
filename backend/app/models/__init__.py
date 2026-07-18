@@ -374,6 +374,11 @@ class JobFailureAnalysis(Base):
     generation_time_seconds = Column(Float)
 
     analysis_status = Column(String(20), default="pending", index=True)
+    analysis_phase = Column(String(30), default="queued")
+    evidence_ledger = Column(JSON)
+    validation_result = Column(JSON)
+    agent_trace = Column(JSON)
+    agent_steps = Column(Integer, default=0)
     error_message = Column(String(500))
     triggered_by = Column(String(20), default="manual")  # "manual" | "scheduler"
     share_token = Column(String(64), unique=True)  # 公开分享 token
