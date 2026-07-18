@@ -170,3 +170,7 @@ summary_response.json
 
 # Temp monitoring / one-off scripts
 tmp_*.py
+
+# Local verification / debug scripts
+backend/scripts/trigger_failure_analysis.py
+backend/scripts/verify_agent.py
