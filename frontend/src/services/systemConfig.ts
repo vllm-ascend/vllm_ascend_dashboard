@@ -104,18 +104,18 @@ export const triggerConfigReload = async (): Promise<{ success: boolean; message
   return response.data
 }
 
-// Claude Code CLI config
-export interface ClaudeCLIConfig {
+// Failure analysis agent config
+export interface AgentAnalysisConfig {
   max_turns: number
   timeout_seconds: number
 }
 
-export const getClaudeCLIConfig = async (): Promise<ClaudeCLIConfig> => {
-  const response = await api.get('/ci/claude-cli-config')
+export const getAgentAnalysisConfig = async (): Promise<AgentAnalysisConfig> => {
+  const response = await api.get('/ci/agent-config')
   return response.data
 }
 
-export const updateClaudeCLIConfig = async (config: Partial<ClaudeCLIConfig>): Promise<ClaudeCLIConfig> => {
-  const response = await api.put('/ci/claude-cli-config', config)
+export const updateAgentAnalysisConfig = async (config: Partial<AgentAnalysisConfig>): Promise<AgentAnalysisConfig> => {
+  const response = await api.put('/ci/agent-config', config)
   return response.data
 }

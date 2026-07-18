@@ -47,10 +47,10 @@ class GitHubLocalCache:
             # 默认缓存目录：
             # - 生产环境：/app/data/repos (Docker volume 持久化)
             # - 开发环境：根目录 data/repos
-            if settings.ENVIRONMENT == "production":
-                self.cache_dir = Path("/app/data/repos") / self.repo_name
-            else:
-                self.cache_dir = Path(__file__).parent.parent.parent.parent / "data" / "repos" / self.repo_name
+            data_root = Path(settings.DATA_DIR)
+            if not data_root.is_absolute():
+                data_root = Path.cwd() / data_root
+            self.cache_dir = data_root.resolve() / "repos" / self.repo_name
         self.clone_url = f"https://github.com/{self.owner}/{self.repo}.git"
         self._ensure_cache_dir()
 

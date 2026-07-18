@@ -2,6 +2,7 @@
 CI 数据 API 路由
 Phase 2: 实现数据采集和展示
 """
+import asyncio
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from app.schemas import (
     CISyncResponse,
     CITrend,
     FailureAnalysisListResponse,
+    FailureAnalysisKnowledgeGraphResponse,
     FailureAnalysisResponse,
     WorkflowLatestResult,
 )
@@ -35,6 +37,11 @@ from app.utils.ci_filters import build_workflow_time_filter
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Keep strong references to long-running analyses. asyncio only keeps weak
+# references to Tasks, so an unreferenced background analysis may disappear
+# after producing files but before committing its final database state.
+_failure_analysis_tasks: set[asyncio.Task] = set()
 
 
 @router.get("/workflows", response_model=list[str])
@@ -981,8 +988,6 @@ async def analyze_failed_job(
     force: bool = Query(default=False, description="强制重新分析"),
 ):
     """触发失败分析（异步后台执行，立即返回，前端轮询 GET 接口获取结果）"""
-    import asyncio
-
     from sqlalchemy import delete, text
 
     from app.db.base import SessionLocal
@@ -1013,33 +1018,36 @@ async def analyze_failed_job(
     if existing and existing.analysis_status in ("completed", "reused") and not force:
         return existing
 
-    # 3. force 模式下清理旧记录（已完成/失败的可重跑）
-    if force and existing:
-        try:
-            await db.execute(text("SET SESSION innodb_lock_wait_timeout = 2"))
-        except Exception:
-            pass
-        del_stmt = delete(JobFailureAnalysis).where(JobFailureAnalysis.job_id == job_id)
-        await db.execute(del_stmt)
-        await db.flush()
-
-    # 4. 创建 "analyzing" 占位记录，立即返回
+    # 3. 创建或复用 "analyzing" 占位记录，立即返回。强制重跑时
+    # 保留同一行和 share URL，避免 DELETE 锁冲突及前端轮询旧 ID。
     service = FailureAnalysisService()
     fingerprint = service.compute_failure_fingerprint(job)
-    placeholder = JobFailureAnalysis(
-        job_id=job_id,
-        run_id=job.run_id,
-        workflow_name=job.workflow_name,
-        job_name=job.job_name,
-        failure_date=job.completed_at or datetime.now(UTC),
-        failure_fingerprint=fingerprint,
-        analysis_status="analyzing",
-    )
-    db.add(placeholder)
+    if existing:
+        placeholder = existing
+        placeholder.analysis_status = "analyzing"
+        placeholder.analysis_phase = "queued"
+        placeholder.error_message = None
+        placeholder.failure_fingerprint = fingerprint
+        placeholder.agent_trace = []
+        placeholder.agent_steps = 0
+        placeholder.evidence_ledger = None
+        placeholder.validation_result = None
+    else:
+        placeholder = JobFailureAnalysis(
+            job_id=job_id,
+            run_id=job.run_id,
+            workflow_name=job.workflow_name,
+            job_name=job.job_name,
+            failure_date=job.completed_at or datetime.now(UTC),
+            failure_fingerprint=fingerprint,
+            analysis_status="analyzing",
+            analysis_phase="queued",
+        )
+        db.add(placeholder)
     await db.commit()
     await db.refresh(placeholder)
 
-    # 5. 后台异步执行实际分析
+    # 4. 后台异步执行实际分析
     async def _run_analysis():
         async with SessionLocal() as bg_db:
             svc = FailureAnalysisService()
@@ -1059,8 +1067,41 @@ async def analyze_failed_job(
                 except Exception as db_e:
                     logger.error(f"Failed to update analysis status for job {job_id}: {db_e}")
 
-    asyncio.create_task(_run_analysis())
+    task = asyncio.create_task(_run_analysis())
+    _failure_analysis_tasks.add(task)
+    task.add_done_callback(_failure_analysis_tasks.discard)
     return placeholder
+
+
+@router.post("/failure-analysis/cancel/{job_id}")
+async def cancel_analysis(
+    job_id: int,
+    current_user: CurrentAdminUser,
+    db: DbSession,
+):
+    """取消正在进行的失败分析"""
+    from app.models import JobFailureAnalysis
+
+    stmt = select(JobFailureAnalysis).where(
+        JobFailureAnalysis.job_id == job_id,
+        JobFailureAnalysis.analysis_status == "analyzing",
+    )
+    result = await db.execute(stmt)
+    analysis = result.scalar_one_or_none()
+
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="没有正在进行的分析任务",
+        )
+
+    analysis.analysis_status = "cancelled"
+    analysis.analysis_phase = "cancelled"
+    analysis.error_message = "用户手动取消"
+    await db.commit()
+
+    logger.info(f"Analysis cancelled for job {job_id}")
+    return {"success": True, "message": "分析已取消"}
 
 
 @router.post("/failure-analysis/analyze-batch")
@@ -1116,6 +1157,22 @@ async def get_failure_analysis(
     if not analysis:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分析记录不存在")
     return analysis
+
+
+@router.get("/failure-analysis/{analysis_id}/knowledge-graph", response_model=FailureAnalysisKnowledgeGraphResponse)
+async def get_failure_analysis_knowledge_graph(
+    analysis_id: int,
+    db: DbSession,
+):
+    stmt = select(JobFailureAnalysis).where(JobFailureAnalysis.id == analysis_id)
+    result = await db.execute(stmt)
+    analysis = result.scalar_one_or_none()
+    if not analysis:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分析记录不存在")
+
+    from app.services.failure_analysis_knowledge_graph import build_failure_analysis_knowledge_graph
+
+    return build_failure_analysis_knowledge_graph(analysis)
 
 
 @router.get("/failure-analysis/{analysis_id}/report")
@@ -1203,18 +1260,19 @@ async def read_claude_log(
     return {"filename": filename, "content": content}
 
 
-# ============ Claude Code CLI Config ============
+# ============ Failure Analysis Agent Config ============
 
-@router.get("/claude-cli-config")
-async def get_claude_cli_config(
+@router.get("/agent-config")
+@router.get("/claude-cli-config", include_in_schema=False)
+async def get_failure_analysis_agent_config(
     current_user: CurrentAdminUser,
     db: DbSession,
 ):
-    """获取 Claude Code CLI 配置（max_turns、timeout）"""
+    """获取失败分析 Agent 的最大步骤数和总超时。"""
     from app.models import ProjectDashboardConfig
 
     stmt = select(ProjectDashboardConfig).where(
-        ProjectDashboardConfig.config_key == "claude_code_cli_config"
+        ProjectDashboardConfig.config_key == "failure_analysis_agent_config"
     )
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
@@ -1223,28 +1281,39 @@ async def get_claude_cli_config(
     return {"max_turns": 80, "timeout_seconds": 1800}
 
 
-@router.put("/claude-cli-config")
-async def update_claude_cli_config(
+@router.put("/agent-config")
+@router.put("/claude-cli-config", include_in_schema=False)
+async def update_failure_analysis_agent_config(
     data: dict,
     current_user: CurrentAdminUser,
     db: DbSession,
 ):
-    """更新 Claude Code CLI 配置"""
+    """更新失败分析 Agent 运行限制。"""
     from app.models import ProjectDashboardConfig
 
-    max_turns = data.get("max_turns", 80)
-    timeout_seconds = data.get("timeout_seconds", 1800)
+    try:
+        max_turns = int(data.get("max_turns", 80))
+        timeout_seconds = int(data.get("timeout_seconds", 1800))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="轮次和超时必须是整数") from exc
+    if not 3 <= max_turns <= 100:
+        raise HTTPException(status_code=422, detail="最大轮次必须在 3 到 100 之间")
+    if not 60 <= timeout_seconds <= 7200:
+        raise HTTPException(status_code=422, detail="超时必须在 60 到 7200 秒之间")
     config_value = {"max_turns": max_turns, "timeout_seconds": timeout_seconds}
 
     stmt = select(ProjectDashboardConfig).where(
-        ProjectDashboardConfig.config_key == "claude_code_cli_config"
+        ProjectDashboardConfig.config_key == "failure_analysis_agent_config"
     )
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
     if row:
         row.config_value = config_value
     else:
-        row = ProjectDashboardConfig(config_key="claude_code_cli_config", config_value=config_value)
+        row = ProjectDashboardConfig(
+            config_key="failure_analysis_agent_config",
+            config_value=config_value,
+        )
         db.add(row)
     await db.commit()
     return config_value

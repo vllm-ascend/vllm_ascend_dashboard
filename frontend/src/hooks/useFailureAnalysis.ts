@@ -10,6 +10,15 @@ export const useFailureAnalysisList = (params?: {
   return useQuery({
     queryKey: ['failure-analysis-list', params],
     queryFn: () => faApi.listFailureAnalyses(params),
+    refetchInterval: (query) => {
+      const data = query.state.data as { items?: Array<{ analysis_status?: string }> } | undefined
+      // The analysis POST returns immediately while work continues in the
+      // backend. Keep the workflow table fresh until every active item exits.
+      return data?.items?.some(item => item.analysis_status === 'analyzing')
+        ? 5000
+        : false
+    },
+    refetchOnWindowFocus: true,
   })
 }
 
@@ -31,6 +40,14 @@ export const useFailureAnalysisReport = (analysisId: number | null) => {
   return useQuery({
     queryKey: ['failure-analysis-report', analysisId],
     queryFn: () => analysisId ? faApi.getFailureAnalysisReport(analysisId) : Promise.resolve(null),
+    enabled: !!analysisId,
+  })
+}
+
+export const useFailureAnalysisKnowledgeGraph = (analysisId: number | null) => {
+  return useQuery({
+    queryKey: ['failure-analysis-knowledge-graph', analysisId],
+    queryFn: () => analysisId ? faApi.getFailureAnalysisKnowledgeGraph(analysisId) : Promise.resolve(null),
     enabled: !!analysisId,
   })
 }
@@ -59,6 +76,19 @@ export const useAnalyzeFailedJob = () => {
       queryClient.invalidateQueries({ queryKey: ['job-failure-analysis'] })
       queryClient.invalidateQueries({ queryKey: ['failure-analysis'] })
       queryClient.invalidateQueries({ queryKey: ['failure-analysis-report'] })
+    },
+  })
+}
+
+export const useCancelAnalysis = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (jobId: number) => faApi.cancelAnalysis(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['failure-analysis-list'] })
+      queryClient.invalidateQueries({ queryKey: ['job-failure-analysis'] })
+      queryClient.invalidateQueries({ queryKey: ['failure-analysis'] })
     },
   })
 }

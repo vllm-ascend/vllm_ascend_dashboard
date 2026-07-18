@@ -74,6 +74,7 @@ async def init_db():
 
         await _migrate_login_log_columns()
         await _migrate_avatar_base64_column()
+        await _migrate_failure_analysis_pipeline_columns()
 
         # 初始化 LLM 提供商默认配置
         await _init_llm_provider_configs()
@@ -128,6 +129,36 @@ async def _migrate_login_log_columns():
 
     except Exception as e:
         logger.warning(f"Login log column migration skipped (non-fatal): {e}")
+
+
+async def _migrate_failure_analysis_pipeline_columns():
+    """Add observable evidence-pipeline fields to existing installations."""
+    try:
+        from sqlalchemy import inspect, text
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            def _get_columns(sync_session):
+                return {
+                    c["name"]
+                    for c in inspect(sync_session.connection()).get_columns("job_failure_analysis")
+                }
+
+            existing = await db.run_sync(_get_columns)
+            migrations = {
+                "analysis_phase": "VARCHAR(30) NULL",
+                "evidence_ledger": "JSON NULL",
+                "validation_result": "JSON NULL",
+                "agent_trace": "JSON NULL",
+                "agent_steps": "INT DEFAULT 0",
+            }
+            for name, sql_type in migrations.items():
+                if name not in existing:
+                    await db.execute(text(f"ALTER TABLE job_failure_analysis ADD COLUMN {name} {sql_type}"))
+                    await db.commit()
+    except Exception as e:
+        logger.warning("Failure-analysis pipeline migration skipped (non-fatal): %s", e)
 
 
 async def _migrate_avatar_base64_column():
@@ -200,7 +231,7 @@ async def _warmup_claude_code_cli():
 
 
 async def _cleanup_stale_analyses():
-    """启动时清理超过 1 小时还在 analyzing 的僵尸分析记录"""
+    """启动时清理残留的 analyzing 记录（区分超时与重启）"""
     try:
         from datetime import UTC, datetime, timedelta
 
@@ -208,25 +239,50 @@ async def _cleanup_stale_analyses():
 
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
-            from sqlalchemy import update
+            from sqlalchemy import or_, update
 
             from app.models import JobFailureAnalysis
 
             cutoff = datetime.now(UTC) - timedelta(hours=1)
+
+            # 1. 超时：超过 1 小时的标记为超时失败
             result = await db.execute(
                 update(JobFailureAnalysis)
                 .where(
                     JobFailureAnalysis.analysis_status == "analyzing",
                     JobFailureAnalysis.created_at < cutoff,
+                    or_(
+                        JobFailureAnalysis.analysis_phase.is_(None),
+                        JobFailureAnalysis.analysis_phase != "completed",
+                    ),
                 )
                 .values(
                     analysis_status="failed",
                     error_message="分析超时，启动时自动标记为失败",
                 )
             )
-            await db.commit()
             if result.rowcount:
-                logger.warning("Cleaned %d stale analysis records", result.rowcount)
+                logger.warning("Timed out %d stale analysis records", result.rowcount)
+
+            # 2. 重启：剩余 analyzing 记录（1 小时内的）均为重启中断
+            result = await db.execute(
+                update(JobFailureAnalysis)
+                .where(
+                    JobFailureAnalysis.analysis_status == "analyzing",
+                    or_(
+                        JobFailureAnalysis.analysis_phase.is_(None),
+                        JobFailureAnalysis.analysis_phase != "completed",
+                    ),
+                )
+                .values(
+                    analysis_status="failed",
+                    error_message="服务重启，分析中断",
+                )
+            )
+            if result.rowcount:
+                logger.warning("Restart-cleaned %d interrupted analysis records", result.rowcount)
+
+            await db.commit()
     except Exception as e:
         logger.warning("Failed to cleanup stale analyses (non-fatal): %s", e)
 
