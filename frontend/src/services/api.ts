@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosResponse } from 'axios'
+import { appUrl } from '../utils/basePath'
 
 // 获取 API 基础 URL - 使用简单的方式避免 TypeScript 错误
 const API_BASE_URL = (typeof import.meta !== 'undefined' &&
@@ -93,8 +94,8 @@ apiClient.interceptors.response.use(
       if (originalRequest.url?.includes('/auth/refresh')) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login'
+        if (!window.location.pathname.endsWith('/login')) {
+          window.location.href = appUrl('/login')
         }
         return Promise.reject(error)
       }
@@ -151,8 +152,8 @@ apiClient.interceptors.response.use(
         // 刷新失败，清除 token 并跳转登录页
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login'
+        if (!window.location.pathname.endsWith('/login')) {
+          window.location.href = appUrl('/login')
         }
         return Promise.reject(refreshError)
       } finally {

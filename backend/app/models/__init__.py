@@ -23,7 +23,8 @@ from sqlalchemy.types import JSON
 # 导出所有模型类，方便其他地方导入
 __all__ = [
     "Base", "User", "ModelConfig", "ModelReport", "CIResult", "CIJob",
-    "WorkflowConfig", "PerformanceData", "JobOwner",
+    "DailyFailureRecord",
+    "WorkflowConfig", "PerformanceData", "JobOwner", "NightlyTestCase",
     "ModelSyncConfig", "ProjectDashboardConfig", "KubernetesClusterConfig",
     "DailyPR", "DailyIssue", "DailyCommit", "DailySummary", "LLMProviderConfig",
     "DailyReportHistory", "ResourceNpuMetrics", "JobFailureAnalysis",
@@ -158,8 +159,49 @@ class CIJob(Base):
     steps_data = Column(Text)  # job steps 详细信息（JSON 格式）
     logs_url = Column(String(500))  # job 日志 URL
     data = Column(Text)  # 完整的 job 数据 (LONGTEXT)
+    # 每日失败追踪：人工处理状态
+    processing_status = Column(String(20), default="未处理", index=True)  # 未处理/处理中/已修复/已关闭
+    notes = Column(Text)  # 处理备注
+    updated_by = Column(String(50))  # 最后更新人
+    status_updated_at = Column(TIMESTAMP)  # 状态最后更新时间
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), index=True)
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class DailyFailureRecord(Base):
+    """每日失败记录物化表 — CI sync 后自动填充，JOIN 静态用例表快照"""
+    __tablename__ = "daily_failure_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report_date = Column(Date, nullable=False, index=True)  # 失败日期（北京时间）
+    workflow_name = Column(String(100), nullable=False, index=True)
+    job_name = Column(String(500), nullable=False, index=True)
+    run_id = Column(BigInteger, nullable=False)
+    job_id = Column(BigInteger)  # GitHub job_id
+    conclusion = Column(String(50))
+    started_at = Column(TIMESTAMP)
+    completed_at = Column(TIMESTAMP)
+    duration_seconds = Column(Integer)
+    hardware = Column(String(20))
+    # 静态用例快照（物化时从 nightly_test_cases 复制）
+    display_name = Column(String(200))
+    test_model = Column(String(200))
+    model_fo = Column(String(100))
+    owner = Column(String(100))
+    deployment_type = Column(String(100))
+    # 人工处理状态
+    processing_status = Column(String(20), default="未处理", index=True)
+    notes = Column(Text)
+    updated_by = Column(String(50))
+    status_updated_at = Column(TIMESTAMP)
+    # GitHub 链接快照
+    github_job_url = Column(String(500))
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        UniqueConstraint('report_date', 'workflow_name', 'job_name', name='uq_daily_failure_date_wf_job'),
+    )
 
 
 class WorkflowConfig(Base):
@@ -220,6 +262,29 @@ class JobOwner(Base):
     # 唯一约束：workflow_name + job_name 组合唯一
     __table_args__ = (
         UniqueConstraint('workflow_name', 'job_name', name='uq_job_owner_workflow_job'),
+    )
+
+
+class NightlyTestCase(Base):
+    """Nightly 静态用例表 — 定义 Nightly 流水线中有哪些用例及其元信息"""
+    __tablename__ = "nightly_test_cases"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workflow_name = Column(String(100), nullable=False, index=True)  # Nightly-A2 / Nightly-A3
+    job_name = Column(String(500), nullable=False, index=True)  # job 名称
+    display_name = Column(String(200))  # 显示名
+    test_model = Column(String(200))  # 测试的模型名称
+    model_fo = Column(String(100))  # 模型 FO（Feature Owner）
+    owner = Column(String(100))  # 测试负责人
+    deployment_type = Column(String(100))  # 部署方式（如 pd-disagg / single-node 等）
+    notes = Column(Text)  # 备注
+    enabled = Column(Boolean, default=True, index=True)  # 是否启用
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    # 唯一约束：workflow_name + job_name 组合唯一
+    __table_args__ = (
+        UniqueConstraint('workflow_name', 'job_name', name='uq_nightly_test_case_workflow_job'),
     )
 
 

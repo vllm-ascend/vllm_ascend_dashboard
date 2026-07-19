@@ -454,6 +454,84 @@ class DataSyncScheduler:
         )
         self._initialized = True
 
+    async def _populate_daily_failure_records(self, db) -> int:
+        """CI 同步后物化每日失败记录：CIJob JOIN NightlyTestCase 快照到 daily_failure_records"""
+        from datetime import timedelta, timezone
+
+        from sqlalchemy import select
+
+        from app.models import CIJob, DailyFailureRecord, NightlyTestCase
+
+        beijing_tz = timezone(timedelta(hours=8))
+        now_utc = datetime.now(UTC)
+
+        # 查询最近 14 天的失败 job（给 syncer 窗口留余量）
+        cutoff = now_utc - timedelta(days=14)
+        stmt = select(CIJob).where(
+            CIJob.started_at >= cutoff,
+            CIJob.conclusion.in_(["failure", "cancelled"]),
+        )
+        result = await db.execute(stmt)
+        failed_jobs = result.scalars().all()
+
+        # 获取所有 NightlyTestCase 映射
+        tc_stmt = select(NightlyTestCase)
+        tc_result = await db.execute(tc_stmt)
+        tc_map: dict[tuple[str, str], NightlyTestCase] = {}
+        for tc in tc_result.scalars().all():
+            tc_map[(tc.workflow_name, tc.job_name)] = tc
+
+        # 获取已有记录
+        existing_stmt = select(DailyFailureRecord)
+        existing_result = await db.execute(existing_stmt)
+        existing_keys: set[tuple[str, str, str]] = set()
+        for rec in existing_result.scalars().all():
+            existing_keys.add((str(rec.report_date), rec.workflow_name, rec.job_name))
+
+        new_count = 0
+        for job in failed_jobs:
+            # 计算北京时间日期
+            started = job.started_at
+            if not started:
+                continue
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            beijing_date = started.astimezone(beijing_tz).strftime("%Y-%m-%d")
+
+            key = (beijing_date, job.workflow_name, job.job_name)
+            if key in existing_keys:
+                continue
+
+            tc = tc_map.get((job.workflow_name, job.job_name))
+            github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}" if job.job_id else None
+
+            record = DailyFailureRecord(
+                report_date=beijing_date,
+                workflow_name=job.workflow_name,
+                job_name=job.job_name,
+                run_id=job.run_id,
+                job_id=job.job_id,
+                conclusion=job.conclusion,
+                started_at=job.started_at,
+                completed_at=job.completed_at,
+                duration_seconds=job.duration_seconds,
+                hardware=job.hardware,
+                display_name=tc.display_name if tc else None,
+                test_model=tc.test_model if tc else None,
+                model_fo=tc.model_fo if tc else None,
+                owner=tc.owner if tc else None,
+                deployment_type=tc.deployment_type if tc else None,
+                processing_status="未处理",
+                github_job_url=github_url,
+            )
+            db.add(record)
+            existing_keys.add(key)
+            new_count += 1
+
+        if new_count > 0:
+            await db.commit()
+        return new_count
+
     async def _sync_ci_data_job(self) -> None:
         """CI 数据同步任务"""
         logger.info("=" * 60)
@@ -510,6 +588,14 @@ class DataSyncScheduler:
                     await self._analyze_failed_jobs(db)
                 except Exception as analyze_err:
                     logger.warning(f"Failed to analyze CI failures (non-fatal): {analyze_err}")
+
+                # 物化每日失败记录表
+                try:
+                    count = await self._populate_daily_failure_records(db)
+                    if count > 0:
+                        logger.info(f"Populated {count} new daily failure records")
+                except Exception as pf_err:
+                    logger.warning(f"Failed to populate daily failure records (non-fatal): {pf_err}")
 
                 logger.info("=" * 60)
                 logger.info(f"CI DATA SYNC JOB COMPLETED - Collected {collected} runs")
