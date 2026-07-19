@@ -96,3 +96,14 @@ export const getLatestReport = async (): Promise<DailyReportLatest | { message: 
   const response = await api.get('/daily-report/latest')
   return response.data
 }
+
+export const generateReportDraft = async (reportDate?: string): Promise<DailyReportTriggerResponse> => {
+  const params = reportDate ? { report_date: reportDate } : {}
+  const response = await longTimeoutApiClient.post<DailyReportTriggerResponse>('/daily-report/draft', null, { params })
+  return response.data
+}
+
+export const sendReportDraft = async (reportId: number): Promise<DailyReportTriggerResponse> => {
+  const response = await longTimeoutApiClient.post<DailyReportTriggerResponse>(`/daily-report/draft/${reportId}/send`)
+  return response.data
+}
