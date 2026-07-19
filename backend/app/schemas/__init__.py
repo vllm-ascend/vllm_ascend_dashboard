@@ -592,6 +592,11 @@ class FailureAnalysisResponse(BaseModel):
     completion_tokens: int | None = None
     generation_time_seconds: float | None = None
     analysis_status: str = "pending"
+    analysis_phase: str | None = None
+    evidence_ledger: dict | None = None
+    validation_result: dict | None = None
+    agent_trace: list[dict] | None = None
+    agent_steps: int | None = None
     error_message: str | None = None
     triggered_by: str | None = None
     share_token: str | None = None
@@ -602,6 +607,34 @@ class FailureAnalysisResponse(BaseModel):
 class FailureAnalysisListResponse(BaseModel):
     total: int
     items: list[FailureAnalysisResponse]
+
+
+class FailureAnalysisKnowledgeGraphNode(BaseModel):
+    id: str
+    type: str
+    label: str
+    title: str | None = None
+    subtitle: str | None = None
+    status: str | None = None
+    confidence: str | None = None
+    data: dict[str, Any] | None = None
+
+
+class FailureAnalysisKnowledgeGraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    label: str
+    type: str
+    data: dict[str, Any] | None = None
+
+
+class FailureAnalysisKnowledgeGraphResponse(BaseModel):
+    analysis_id: int
+    generated_at: datetime
+    nodes: list[FailureAnalysisKnowledgeGraphNode]
+    edges: list[FailureAnalysisKnowledgeGraphEdge]
+    stats: dict[str, int]
 
 
 class FailureAnalysisAnalyzeRequest(BaseModel):

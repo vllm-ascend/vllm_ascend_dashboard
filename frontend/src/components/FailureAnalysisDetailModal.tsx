@@ -1,18 +1,20 @@
 import React, { useEffect, useState } from 'react'
-import { Modal, Spin, Alert, Space, Tag, Descriptions, Button, Typography, message } from 'antd'
+import { Modal, Spin, Alert, Space, Tag, Descriptions, Button, Typography, message, Tabs } from 'antd'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ReloadOutlined, FileSearchOutlined, ShareAltOutlined, DownloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined, FileSearchOutlined, ShareAltOutlined, DownloadOutlined, CloseCircleOutlined } from '@ant-design/icons'
 import {
   useFailureAnalysis,
   useFailureAnalysisReport,
   useAnalyzeFailedJob,
+  useCancelAnalysis,
 } from '../hooks/useFailureAnalysis'
 import {
   PROBLEM_CATEGORY_MAP,
   ANALYSIS_STATUS_MAP,
   type FailureAnalysis,
 } from '../services/failureAnalysis'
+import { FailureAnalysisKnowledgeGraph } from './FailureAnalysisKnowledgeGraph'
 
 const { Text } = Typography
 
@@ -36,8 +38,9 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
     analysis?.analysis_status === 'completed' ? analysisId : null
   )
   const analyzeMutation = useAnalyzeFailedJob()
+  const cancelMutation = useCancelAnalysis()
 
-  // analysis 优先（提交新分析后能反映最新状态），existingAnalysis 仅作初始值
+  // analysis 优先：提交新分析后能反映最新状态，existingAnalysis 仅作为初始值
   const currentAnalysis = analysis || existingAnalysis
 
   useEffect(() => {
@@ -118,7 +121,7 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
       }
       open={open}
       onCancel={onClose}
-      width={960}
+      width={1180}
       footer={[
         <Button key="close" onClick={onClose}>关闭</Button>,
         currentAnalysis?.share_token && currentAnalysis.analysis_status === 'completed' && (
@@ -148,6 +151,23 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
             复制分享链接
           </Button>
         ),
+        currentAnalysis && currentAnalysis.analysis_status === 'analyzing' && (
+          <Button
+            key="cancel"
+            icon={<CloseCircleOutlined />}
+            danger
+            loading={cancelMutation.isPending}
+            onClick={() => {
+              if (!jobId) return
+              cancelMutation.mutate(jobId, {
+                onSuccess: () => message.success('已取消分析'),
+                onError: (err: any) => message.error(err?.response?.data?.detail || '取消失败'),
+              })
+            }}
+          >
+            取消分析
+          </Button>
+        ),
         currentAnalysis && currentAnalysis.analysis_status !== 'analyzing' && (
           <Button
             key="reanalyze"
@@ -174,7 +194,7 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
         <div style={{ textAlign: 'center', padding: '40px 20px' }}>
           <Alert
             message="暂无分析记录"
-            description="该 Job 尚未进行失败分析，请点击'重新分析'按钮触发分析"
+            description="该 Job 尚未进行失败分析，请点击“重新分析”按钮触发分析"
             type="info"
             showIcon
             action={
@@ -222,17 +242,28 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
             )}
           </Descriptions>
 
+
           {currentAnalysis.analysis_status === 'completed' && (
-            <div>
-              <Text strong style={{ marginBottom: 8, display: 'block' }}>详细报告</Text>
-              {reportLoading ? (
-                <Spin tip="加载报告中..." />
-              ) : reportData?.content ? (
-                renderMarkdownContent(reportData.content)
-              ) : (
-                <Alert message="报告文件未找到" type="warning" showIcon />
-              )}
-            </div>
+            <Tabs
+              items={[
+                {
+                  key: 'report',
+                  label: '详细报告',
+                  children: reportLoading ? (
+                    <Spin tip="加载报告中..." />
+                  ) : reportData?.content ? (
+                    renderMarkdownContent(reportData.content)
+                  ) : (
+                    <Alert message="报告文件未找到" type="warning" showIcon />
+                  ),
+                },
+                {
+                  key: 'knowledge-graph',
+                  label: '知识图谱',
+                  children: <FailureAnalysisKnowledgeGraph analysisId={currentAnalysis.id} />,
+                },
+              ]}
+            />
           )}
 
           {currentAnalysis.analysis_status === 'analyzing' && (
@@ -240,8 +271,41 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
               <Spin size="large" tip="分析进行中..." />
               <div style={{ marginTop: 16, color: '#8c8c8c' }}>
                 <p>系统正在自动分析中，请稍后刷新查看结果</p>
+                <p style={{ fontSize: 12, color: '#b0b0b0' }}>
+                  通常需要 5-15 分钟，复杂分析可能更久
+                </p>
               </div>
+              <Button
+                type="primary"
+                danger
+                icon={<CloseCircleOutlined />}
+                loading={cancelMutation.isPending}
+                onClick={() => {
+                  if (!jobId) return
+                  cancelMutation.mutate(jobId, {
+                    onSuccess: () => message.success('已取消分析'),
+                    onError: (err: any) => message.error(err?.response?.data?.detail || '取消失败'),
+                  })
+                }}
+                style={{ marginTop: 16 }}
+              >
+                取消分析
+              </Button>
             </div>
+          )}
+
+          {currentAnalysis.analysis_status === 'cancelled' && (
+            <Alert
+              message="分析已取消"
+              description="该分析任务已被手动取消，可点击下方按钮重新分析"
+              type="warning"
+              showIcon
+              action={
+                <Button size="small" onClick={handleReAnalyze} loading={analyzeMutation.isPending}>
+                  重新分析
+                </Button>
+              }
+            />
           )}
 
           {currentAnalysis.analysis_status === 'failed' && (

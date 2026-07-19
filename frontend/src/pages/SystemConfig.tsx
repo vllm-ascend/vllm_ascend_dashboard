@@ -73,20 +73,20 @@ import {
   getForceMergeRecords,
   type ProjectDashboardConfig,
 } from '../services/projectDashboard'
-import { getClaudeCLIConfig, updateClaudeCLIConfig, type ClaudeCLIConfig } from '../services/systemConfig'
+import { getAgentAnalysisConfig, updateAgentAnalysisConfig } from '../services/systemConfig'
 
-// Claude Code CLI config tab
-function ClaudeCLIConfigTab() {
+// Failure analysis agent config tab
+function AgentAnalysisConfigTab() {
   const queryClient = useQueryClient()
   const { data: config, isLoading } = useQuery({
-    queryKey: ['claude-cli-config'],
-    queryFn: getClaudeCLIConfig,
+    queryKey: ['agent-analysis-config'],
+    queryFn: getAgentAnalysisConfig,
   })
   const mutation = useMutation({
-    mutationFn: updateClaudeCLIConfig,
+    mutationFn: updateAgentAnalysisConfig,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['claude-cli-config'] })
-      message.success('Claude Code CLI 配置已更新')
+      queryClient.invalidateQueries({ queryKey: ['agent-analysis-config'] })
+      message.success('Agent 分析配置已更新')
     },
     onError: () => message.error('更新失败'),
   })
@@ -99,20 +99,20 @@ function ClaudeCLIConfigTab() {
   if (isLoading) return <Spin />
 
   return (
-    <Card title={<Space><CodeOutlined />Claude Code CLI 配置</Space>} size="small">
+    <Card title={<Space><CodeOutlined />Agent 分析配置</Space>} size="small">
       <Form form={form} layout="inline" onFinish={(v) => mutation.mutate(v)}>
         <Form.Item name="max_turns" label="最大轮次" rules={[{ required: true }]}>
-          <InputNumber min={10} max={200} style={{ width: 100 }} />
+          <InputNumber min={3} max={100} style={{ width: 100 }} />
         </Form.Item>
         <Form.Item name="timeout_seconds" label="超时(秒)" rules={[{ required: true }]}>
-          <InputNumber min={300} max={7200} step={300} style={{ width: 120 }} />
+          <InputNumber min={60} max={7200} step={60} style={{ width: 120 }} />
         </Form.Item>
         <Form.Item>
           <Button type="primary" htmlType="submit" loading={mutation.isPending}>保存</Button>
         </Form.Item>
       </Form>
       <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
-        修改后下次分析生效。当前值: 最大 {config?.max_turns ?? 80} 轮, 超时 {(config?.timeout_seconds ?? 1800) / 60} 分钟
+        修改后下次分析生效。当前值：最大 {config?.max_turns ?? 80} 轮，超时 {(config?.timeout_seconds ?? 1800) / 60} 分钟。Agent 使用 Docker LiteLLM / formatproxy，不使用本地 Claude CLI。
       </div>
     </Card>
   )
@@ -290,7 +290,7 @@ function SystemConfig() {
     1440 // 24 小时 = 1440 分钟
   )
 
-  // ============ 同步配置 Handler 函数（需要在 render 函数之前定义） ============
+  // ============ 同步配置 Handler 函数（需要在 render 函数之前定义）============
   
   // CI 同步配置 Handler
   const handleUpdateCISyncConfig = (values: Record<string, number | boolean | null | undefined>) => {
@@ -387,7 +387,7 @@ function SystemConfig() {
     setIsCacheDirModalOpen(true)
   }
 
-  // ============ 同步配置 Mutations（需要在 handler 之前定义） ============
+  // ============ 同步配置 Mutations（需要在 handler 之前定义）============
   
   const updateCISyncMutation = useMutation({
     mutationFn: (data: Record<string, number | boolean>) =>
@@ -532,7 +532,7 @@ function SystemConfig() {
   const handleRebuildCache = async () => {
     Modal.confirm({
       title: '确认重建缓存？',
-      content: '这将删除现有的 git 仓库缓存并重新克隆完整历史和 tags。首次克隆可能需要 5-10 分钟，请耐心等待。确定要继续吗？',
+      content: '这将删除现有 git 仓库缓存，并重新克隆完整历史和 tags。首次克隆可能需要 5-10 分钟，请耐心等待。确定要继续吗？',
       okText: '确认',
       cancelText: '取消',
       okButtonProps: { danger: true },
@@ -554,7 +554,7 @@ function SystemConfig() {
   const handleFixCache = async () => {
     Modal.confirm({
       title: '确认修复缓存？',
-      content: '这将清理 git 锁文件、重置本地修改并获取最新状态。比重建缓存更快，推荐首先尝试此操作。',
+      content: '这将清理 git 锁文件、重置本地修改并获取最新状态。比重建缓存更快，推荐优先尝试此操作。',
       okText: '确认',
       cancelText: '取消',
       onOk: async () => {
@@ -725,7 +725,7 @@ function SystemConfig() {
     return <Tag color={config.color} icon={config.icon}>{type.toUpperCase()}</Tag>
   }
 
-  // 系统信息 Tab 内容（新增）
+  // 系统信息 Tab 内容
   const systemInfoTabContent = (
     <Card
       title={
@@ -1043,7 +1043,7 @@ function SystemConfig() {
           {!config?.github_config?.token_configured && (
             <Alert
               message="GitHub Token 未配置"
-              description="请点击右上角'编辑 GitHub'按钮配置 GitHub Token，否则无法同步 CI 数据"
+              description="请点击右上角“编辑 GitHub”按钮配置 GitHub Token，否则无法同步 CI 数据"
               type="warning"
               showIcon
               style={{ marginTop: 16 }}
@@ -1054,7 +1054,7 @@ function SystemConfig() {
     </Card>
   )
 
-  // 项目动态配置 Tab 渲染函数（用于同步配置 tab 中）
+  // 项目动态配置 Tab 渲染函数（用于同步配置 tab）
   const renderDailySummaryTab = () => (
     <Card
       title="项目动态配置"
@@ -1096,7 +1096,7 @@ function SystemConfig() {
           <Space wrap>
             {dailySummaryConfig?.projects?.map((p: any) => (
               <Tag key={p.id} color={p.enabled ? 'green' : 'default'}>
-                {p.name} {p.enabled ? '✓' : '✗'}
+                {p.name} {p.enabled ? '已启用' : '已禁用'}
               </Tag>
             ))}
           </Space>
@@ -1126,7 +1126,7 @@ function SystemConfig() {
         <div>
           <Alert
             message="提示"
-            description="LLM API Key 直接在此页面配置。设置「激活状态」为 true 的提供商将用于 AI 分析。支持新增自定义提供商和删除不需要的提供商。"
+            description="LLM API Key 可在此页面配置。设置“激活状态”为 true 的提供商将用于 AI 分析。支持新增自定义提供商和删除不需要的提供商。CI 失败分析 Agent 使用 Docker LiteLLM / formatproxy，不走本地 Claude CLI。"
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
@@ -1329,7 +1329,7 @@ function SystemConfig() {
           </div>
           <Alert
             message="说明"
-            description="系统提示词用于指导 AI 分析 CI 失败 Job 的根因分类和改进建议。基于 auto-bug-fixer 技能模板，附加 CI 专属分类附录。"
+            description="系统提示词用于指导 AI 分析 CI 失败 Job 的根因分类和改进建议。基于 auto-bug-fixer 技能模板，并追加 CI 专属分类附录。"
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
@@ -1548,10 +1548,10 @@ function SystemConfig() {
       label: (
         <Space>
           <CodeOutlined />
-          Claude Code CLI 配置
+          Agent 分析配置
         </Space>
       ),
-      children: <ClaudeCLIConfigTab />,
+      children: <AgentAnalysisConfigTab />,
     },
     {
       key: 'sync_config',
@@ -1984,7 +1984,7 @@ function SystemConfig() {
                       label: (
                         <Space>
                           <ExperimentOutlined />
-                          CI结果
+                          CI 结果
                         </Space>
                       ),
                       children: renderCISyncTab(),
@@ -2211,7 +2211,7 @@ function SystemConfig() {
       >
         <Alert
           message="提示"
-          description='设置"激活状态"为 true 的提供商将用于 AI 每日总结生成。同一时间只能有一个提供商被激活。'
+          description='设置“激活状态”为 true 的提供商将用于 AI 每日总结生成。同一时间只能有一个提供商被激活。CI 失败分析 Agent 使用 Docker LiteLLM / formatproxy 配置。'
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
@@ -2275,9 +2275,9 @@ function SystemConfig() {
                 name="provider"
                 label="提供商标识"
                 rules={[{ required: true, message: '请输入提供商标识' }, { pattern: /^[a-zA-Z0-9_-]+$/, message: '只能包含字母、数字、下划线和连字符' }]}
-                extra="唯一标识，创建后不可修改。如 openai、deepseek、zhipu"
+                extra="唯一标识，创建后不可修改。如 openai、deepseek、zhipu、litellm"
               >
-                <Input placeholder="例如：deepseek、zhipu" />
+                <Input placeholder="例如：deepseek、zhipu、litellm" />
               </Form.Item>
             )}
             {!isCreatingLLMProvider && (
@@ -2291,7 +2291,7 @@ function SystemConfig() {
               label="显示名称"
               rules={[{ required: true, message: '请输入显示名称' }]}
             >
-              <Input placeholder="例如：OpenAI GPT-4, 通义千问" />
+              <Input placeholder="例如：Docker LiteLLM、OpenAI GPT-4、通义千问" />
             </Form.Item>
 
             <Form.Item
@@ -2299,7 +2299,7 @@ function SystemConfig() {
               label="API Key"
               extra={
                 <Space direction="vertical" size={0}>
-                  <span>留空表示不修改，输入新的 API Key 将会覆盖原有配置。</span>
+                  <span>留空表示不修改，输入新的 API Key 将覆盖原有配置。</span>
                   {llmProviders?.find((p: any) => p.provider === selectedLLMProvider)?.api_key_configured && (
                     <span style={{ color: '#52c41a', fontWeight: 500 }}>
                       已配置
@@ -2319,14 +2319,14 @@ function SystemConfig() {
               label="默认模型"
               rules={[{ required: true, message: '请输入默认模型名称' }]}
             >
-              <Input placeholder="例如：gpt-4o, claude-sonnet-4-20250514, qwen-plus" />
+              <Input placeholder="例如：gpt-4o、qwen-plus、glm-4.5、litellm/qwen" />
             </Form.Item>
 
             <Form.Item
               name="api_base_url"
               label="API Base URL"
             >
-              <Input placeholder="例如：https://api.openai.com/v1" />
+              <Input placeholder="例如：http://localhost:4000/v1 或 https://api.openai.com/v1" />
             </Form.Item>
 
             <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
@@ -2600,7 +2600,7 @@ function SystemConfig() {
           <Form.Item
             name="github_cache_dir"
             label="GitHub 缓存目录"
-            extra="GitHub 本地缓存目录路径，留空使用默认值 (data/repos/)，例如：/mnt/data/github-cache"
+            extra="GitHub 本地缓存目录路径，留空使用默认值（data/repos/），例如：/mnt/data/github-cache"
           >
             <Input placeholder="留空使用默认值，例如：/mnt/data/github-cache" />
           </Form.Item>
@@ -2749,7 +2749,7 @@ function SystemConfig() {
               description={
                 <Space direction="vertical" size="small" style={{ width: '100%' }}>
                   <Progress percent={progress?.progress_percentage || 0} />
-                  <Text>已用时间：{elapsedTime}秒</Text>
+                  <Text>已用时间：{elapsedTime} 秒</Text>
                   <Text>已采集：{progress?.total_collected || 0} 条记录</Text>
                 </Space>
               }
@@ -2919,3 +2919,4 @@ function SystemConfig() {
 }
 
 export default SystemConfig
+

@@ -12,6 +12,8 @@ from urllib.parse import quote
 
 import aiohttp
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # provider → LiteLLM model 前缀映射
@@ -47,7 +49,7 @@ def _detect_prefix(provider: str, api_base: str) -> str:
     return _PROVIDER_PREFIX.get(provider, "openai")
 
 # config 写入路径（通过 LITELLM_CONFIG_FILE 环境变量指定）
-_CONFIG_FILE = os.environ.get("LITELLM_CONFIG_FILE", "/app/litellm_config.yaml")
+_CONFIG_FILE = settings.LITELLM_CONFIG_FILE
 
 
 def _yaml_value(v: str) -> str:
@@ -91,8 +93,8 @@ class LiteLLMSync:
     """同步数据库 provider 配置到 LiteLLM 网关"""
 
     def __init__(self, litellm_url: Optional[str] = None):
-        self.litellm_url = (litellm_url or os.environ.get("LITELLM_PROXY_URL", "")).rstrip("/")
-        self.master_key = os.environ.get("LITELLM_MASTER_KEY", "sk-litellm-master-key-change-me")
+        self.litellm_url = (litellm_url or settings.LITELLM_PROXY_URL).rstrip("/")
+        self.master_key = settings.LITELLM_MASTER_KEY or "sk-litellm-master-key-change-me"
 
     @property
     def available(self) -> bool:
@@ -159,7 +161,7 @@ class LiteLLMSync:
         socket_path = "/var/run/docker.sock"
         if os.path.exists(socket_path):
             try:
-                container_name = os.environ.get("LITELLM_CONTAINER_NAME", "vllm-dashboard-litellm")
+                container_name = settings.LITELLM_CONTAINER_NAME
                 conn = aiohttp.UnixConnector(path=socket_path)
                 async with aiohttp.ClientSession(connector=conn) as s:
                     async with s.post(

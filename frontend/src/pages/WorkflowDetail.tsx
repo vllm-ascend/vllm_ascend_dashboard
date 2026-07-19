@@ -76,7 +76,22 @@ function WorkflowDetail() {
   }
 
   const handleQuickAnalyze = (jobId: number) => {
-    analyzeMutation.mutate({ jobId, force: true })
+    analyzeMutation.mutate(
+      { jobId, force: true },
+      {
+        onSuccess: (data) => {
+          message.success('分析已开始，请稍候...')
+          // 自动打开弹窗，展示分析进度
+          setSelectedJobId(jobId)
+          setSelectedAnalysis(data)
+          setModalOpen(true)
+        },
+        onError: (error: any) => {
+          const detail = error?.response?.data?.detail || error?.message || '分析启动失败'
+          message.error(detail)
+        },
+      }
+    )
   }
 
   const columns = [

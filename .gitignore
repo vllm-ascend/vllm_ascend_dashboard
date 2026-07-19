@@ -145,6 +145,10 @@ backend/_ci_logs/
 backend/app.db.*
 backend/app_recovered.sql
 
+# Local dev scripts & VS Code debug config
+restart-backend.ps1
+.vscode/launch.json
+
 # Temp / analysis (not for commit)
 analysis_eval/
 backend/matches_v5.xlsx
@@ -160,3 +164,21 @@ backend/job_log.txt
 backend/threshold
 nul
 summary_response.json
+
+# Codex logs
+.codex-logs/
+
+# Temp monitoring / one-off scripts
+tmp_*.py
+
+# Local verification / debug scripts
+backend/scripts/trigger_failure_analysis.py
+backend/scripts/verify_agent.py
+
+# Pipeline tests & design doc (pending future PR)
+backend/tests/test_agent_runtime_retry.py
+backend/tests/test_failure_analysis_pipeline.py
+backend/tests/test_failure_analysis_regression_window.py
+backend/tests/test_failure_analysis_uncertainty.py
+backend/tests/test_report_validation_gate.py
+docs/failure-analysis-agent-design.md

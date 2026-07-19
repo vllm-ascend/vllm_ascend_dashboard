@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     # 数据目录
     DATA_DIR: str = "data"  # 数据文件存储目录
 
+    # Agent / Docker LiteLLM routing. Declaring these settings also makes
+    # backend/.env work for a locally launched uvicorn process.
+    LITELLM_PROXY_URL: str = ""
+    LITELLM_MASTER_KEY: str = ""
+    LITELLM_CONFIG_FILE: str = "/app/litellm_config.yaml"
+    LITELLM_CONTAINER_NAME: str = "vllm-dashboard-litellm"
+    AGENT_SERVICE_ENABLED: bool = False
+    AGENT_PROXY_ONLY: bool = False
+    AGENT_PROXY_ALLOWED_HOSTS: str = "litellm,vllm-dashboard-litellm,vllm-litellm-dev"
+
     # 数据同步配置
     CI_SYNC_INTERVAL_MINUTES: int = 720  # CI 数据同步间隔（分钟），默认 12 小时
     CI_SYNC_DAYS_BACK: int = 7  # 自动同步时采集最近 N 天的数据

@@ -59,30 +59,14 @@ async def check_column_exists(table_name: str, column_name: str) -> bool:
 
 async def ensure_version_table():
     """创建版本记录表（如果不存在）"""
-    # 检测数据库类型
-    is_mysql = "mysql" in str(engine.url)
-
-    # MySQL 和 SQLite 兼容的建表语句
-    if is_mysql:
-        # MySQL: 使用 DATETIME 代替 TIMESTAMP 避免时区问题
-        create_sql = f"""
-        CREATE TABLE IF NOT EXISTS {VERSION_TABLE} (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            version VARCHAR(20) NOT NULL UNIQUE,
-            applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            description TEXT
-        )
-        """
-    else:
-        # SQLite: 使用 TIMESTAMP
-        create_sql = f"""
-        CREATE TABLE IF NOT EXISTS {VERSION_TABLE} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            version VARCHAR(20) NOT NULL UNIQUE,
-            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            description TEXT
-        )
-        """
+    create_sql = f"""
+    CREATE TABLE IF NOT EXISTS {VERSION_TABLE} (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        version VARCHAR(20) NOT NULL UNIQUE,
+        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        description TEXT
+    )
+    """
 
     async with engine.begin() as conn:
         await conn.execute(text(create_sql))
