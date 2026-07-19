@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Avatar,
@@ -37,7 +37,7 @@ import {
 import type { MenuProps } from 'antd'
 import { logout } from '../services/auth'
 import { useCurrentUser } from '../hooks/useCurrentUser'
-import vllmAscendLogo from '../assets/vllm-ascend-logo.png'
+import BrandMark from './BrandMark'
 import ChangePasswordModal from './ChangePasswordModal'
 import './Layout.css'
 
@@ -123,11 +123,15 @@ function getSelectedNavigation(pathname: string) {
 function Layout() {
   const [changePasswordModalOpen, setChangePasswordModalOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('navigation_collapsed') === 'true')
   const navigate = useNavigate()
   const location = useLocation()
   const { data: currentUser } = useCurrentUser()
   const hasAdminRole = currentUser?.role === 'admin' || currentUser?.role === 'super_admin'
+
+  useEffect(() => {
+    localStorage.setItem('navigation_collapsed', String(collapsed))
+  }, [collapsed])
 
   const navigationItems = useMemo(
     () => (hasAdminRole ? [...primaryNavigation, adminNavigation] : primaryNavigation),
@@ -187,9 +191,8 @@ function Layout() {
         theme="dark"
       >
         <div className="app-brand">
-          <img src={vllmAscendLogo} alt="vLLM Ascend" className="app-brand-logo" />
+          <BrandMark title="vLLM Ascend" className="app-brand-logo" />
           <div className="app-brand-copy">
-            <strong>vLLM Ascend</strong>
             <span>Community Ops</span>
           </div>
         </div>
@@ -239,7 +242,7 @@ function Layout() {
               aria-label="打开导航菜单"
             />
             <div className="mobile-brand">
-              <img src={vllmAscendLogo} alt="" />
+              <BrandMark />
             </div>
             <div className="page-context">
               <span>{currentPage.section}</span>

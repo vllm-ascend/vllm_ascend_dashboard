@@ -14,9 +14,9 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import Date, case, cast, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.deps import CurrentAdminUser, CurrentSuperAdminUser, DbSession
+from app.api.deps import CurrentAdminUser, CurrentSuperAdminUser, CurrentUser, DbSession
 from app.core.config import settings
-from app.models import CIJob, CIResult, JobFailureAnalysis, JobOwner, User, WorkflowConfig
+from app.models import CIJob, CIResult, DailyFailureRecord, JobFailureAnalysis, JobOwner, NightlyTestCase, User, WorkflowConfig
 from app.schemas import (
     CIDailyReport,
     CIJobDetailResponse,
@@ -25,9 +25,16 @@ from app.schemas import (
     CIStats,
     CISyncResponse,
     CITrend,
+    DailyFailureJob,
+    DailyFailureListResponse,
+    DailyFailureStats,
+    DailyFailureUpdateRequest,
     FailureAnalysisListResponse,
     FailureAnalysisKnowledgeGraphResponse,
     FailureAnalysisResponse,
+    NightlyTestCaseCreate,
+    NightlyTestCaseResponse,
+    NightlyTestCaseUpdate,
     WorkflowLatestResult,
 )
 from app.services.scheduler import get_scheduler
@@ -1277,8 +1284,8 @@ async def get_failure_analysis_agent_config(
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
     if row and row.config_value:
-        return dict(row.config_value)
-    return {"max_turns": 80, "timeout_seconds": 1800}
+        return {"runtime": "claude_cli", **dict(row.config_value)}
+    return {"runtime": "claude_cli", "max_turns": 80, "timeout_seconds": 1800}
 
 
 @router.put("/agent-config")
@@ -1292,15 +1299,22 @@ async def update_failure_analysis_agent_config(
     from app.models import ProjectDashboardConfig
 
     try:
+        runtime = str(data.get("runtime", "claude_cli")).strip().lower()
         max_turns = int(data.get("max_turns", 80))
         timeout_seconds = int(data.get("timeout_seconds", 1800))
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="轮次和超时必须是整数") from exc
+    if runtime not in {"claude_cli", "custom_agent"}:
+        raise HTTPException(status_code=422, detail="运行方式必须是 claude_cli 或 custom_agent")
     if not 3 <= max_turns <= 100:
         raise HTTPException(status_code=422, detail="最大轮次必须在 3 到 100 之间")
     if not 60 <= timeout_seconds <= 7200:
         raise HTTPException(status_code=422, detail="超时必须在 60 到 7200 秒之间")
-    config_value = {"max_turns": max_turns, "timeout_seconds": timeout_seconds}
+    config_value = {
+        "runtime": runtime,
+        "max_turns": max_turns,
+        "timeout_seconds": timeout_seconds,
+    }
 
     stmt = select(ProjectDashboardConfig).where(
         ProjectDashboardConfig.config_key == "failure_analysis_agent_config"
@@ -1418,3 +1432,224 @@ async def download_public_analysis_pdf(
             filename=f"report_{analysis.job_id}.pdf")
 
     raise HTTPException(status_code=500, detail="PDF 生成失败")
+
+
+# ============ Daily Failure Tracking ============
+
+@router.get("/daily-failures", response_model=list[DailyFailureListResponse])
+async def list_daily_failures(
+    db: DbSession,
+    start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD（北京时间），不传则查全部"),
+    end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD（北京时间），不传则查全部"),
+    workflow_name: str | None = Query(None, description="按 workflow 名称筛选"),
+    processing_status: str | None = Query(None, description="按处理状态筛选: 未处理/处理中/已修复/已关闭"),
+    notes_search: str | None = Query(None, description="按备注文本模糊搜索"),
+):
+    """查询每日失败记录（从物化表 daily_failure_records 直查）"""
+    stmt = select(DailyFailureRecord)
+
+    # 日期范围过滤
+    if start_date:
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start_date 格式须为 YYYY-MM-DD")
+        stmt = stmt.where(DailyFailureRecord.report_date >= start_date)
+    if end_date:
+        try:
+            datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date 格式须为 YYYY-MM-DD")
+        stmt = stmt.where(DailyFailureRecord.report_date <= end_date)
+
+    if workflow_name:
+        stmt = stmt.where(DailyFailureRecord.workflow_name == workflow_name)
+    if processing_status:
+        stmt = stmt.where(DailyFailureRecord.processing_status == processing_status)
+    if notes_search:
+        stmt = stmt.where(DailyFailureRecord.notes.like(f"%{notes_search}%"))
+
+    stmt = stmt.order_by(DailyFailureRecord.report_date.desc())
+    if not start_date and not end_date:
+        stmt = stmt.limit(10000)
+
+    result = await db.execute(stmt)
+    records = result.scalars().all()
+
+    # 按日期分组
+    grouped: dict[str, list[DailyFailureJob]] = {}
+    for rec in records:
+        date_str = str(rec.report_date)
+        grouped.setdefault(date_str, []).append(DailyFailureJob(
+            id=rec.id,
+            job_id=rec.job_id or 0,
+            run_id=rec.run_id,
+            workflow_name=rec.workflow_name,
+            job_name=rec.job_name,
+            conclusion=rec.conclusion,
+            started_at=rec.started_at,
+            completed_at=rec.completed_at,
+            duration_seconds=rec.duration_seconds,
+            hardware=rec.hardware,
+            owner=rec.owner,
+            owner_email=None,
+            display_name=rec.display_name,
+            test_model=rec.test_model,
+            model_fo=rec.model_fo,
+            deployment_type=rec.deployment_type,
+            processing_status=rec.processing_status or "未处理",
+            notes=rec.notes,
+            updated_by=rec.updated_by,
+            status_updated_at=rec.status_updated_at,
+            github_job_url=rec.github_job_url,
+        ))
+
+    response: list[DailyFailureListResponse] = []
+    for date_str in sorted(grouped.keys(), reverse=True):
+        jobs = grouped[date_str]
+        response.append(DailyFailureListResponse(
+            date=date_str,
+            stats=DailyFailureStats(
+                date=date_str,
+                total_failed_jobs=len(jobs),
+                unprocessed=sum(1 for j in jobs if j.processing_status == "未处理"),
+                processing=sum(1 for j in jobs if j.processing_status == "处理中"),
+                fixed=sum(1 for j in jobs if j.processing_status == "已修复"),
+                closed=sum(1 for j in jobs if j.processing_status == "已关闭"),
+            ),
+            jobs=jobs,
+        ))
+
+    return response
+
+
+@router.put("/daily-failures/{record_id}/status", response_model=DailyFailureJob)
+async def update_failure_status(
+    record_id: int,
+    update: DailyFailureUpdateRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """更新失败记录的处理状态和备注（责任人 + 管理员可操作）"""
+    stmt = select(DailyFailureRecord).where(DailyFailureRecord.id == record_id)
+    result = await db.execute(stmt)
+    rec = result.scalar_one_or_none()
+
+    if not rec:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="记录不存在")
+
+    # 权限检查：责任人 或 admin/super_admin
+    if current_user.role not in ("admin", "super_admin"):
+        if not rec.owner or rec.owner != current_user.username:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="只有责任人、管理员或超级管理员可以更新处理状态",
+            )
+
+    rec.processing_status = update.processing_status
+    rec.notes = update.notes
+    rec.updated_by = current_user.username
+    rec.status_updated_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(rec)
+
+    return DailyFailureJob(
+        id=rec.id,
+        job_id=rec.job_id or 0,
+        run_id=rec.run_id,
+        workflow_name=rec.workflow_name,
+        job_name=rec.job_name,
+        conclusion=rec.conclusion,
+        started_at=rec.started_at,
+        completed_at=rec.completed_at,
+        duration_seconds=rec.duration_seconds,
+        hardware=rec.hardware,
+        owner=rec.owner,
+        owner_email=None,
+        display_name=rec.display_name,
+        test_model=rec.test_model,
+        model_fo=rec.model_fo,
+        deployment_type=rec.deployment_type,
+        processing_status=rec.processing_status or "未处理",
+        notes=rec.notes,
+        updated_by=rec.updated_by,
+        status_updated_at=rec.status_updated_at,
+        github_job_url=rec.github_job_url,
+    )
+
+
+# ============ Nightly Test Case CRUD ============
+
+@router.get("/nightly-test-cases", response_model=list[NightlyTestCaseResponse])
+async def list_nightly_test_cases(
+    db: DbSession,
+    workflow_name: str | None = Query(None, description="按 workflow 筛选"),
+    enabled: bool | None = Query(None, description="按启用状态筛选"),
+):
+    """列出所有 Nightly 用例"""
+    stmt = select(NightlyTestCase).order_by(NightlyTestCase.workflow_name, NightlyTestCase.job_name)
+    if workflow_name:
+        stmt = stmt.where(NightlyTestCase.workflow_name == workflow_name)
+    if enabled is not None:
+        stmt = stmt.where(NightlyTestCase.enabled == enabled)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+@router.post("/nightly-test-cases", response_model=NightlyTestCaseResponse, status_code=status.HTTP_201_CREATED)
+async def create_nightly_test_case(
+    data: NightlyTestCaseCreate,
+    current_user: CurrentAdminUser,
+    db: DbSession,
+):
+    """创建 Nightly 用例（需 admin）"""
+    existing = await db.execute(
+        select(NightlyTestCase).where(
+            NightlyTestCase.workflow_name == data.workflow_name,
+            NightlyTestCase.job_name == data.job_name,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该用例已存在")
+    tc = NightlyTestCase(**data.model_dump())
+    db.add(tc)
+    await db.commit()
+    await db.refresh(tc)
+    return tc
+
+
+@router.put("/nightly-test-cases/{tc_id}", response_model=NightlyTestCaseResponse)
+async def update_nightly_test_case(
+    tc_id: int,
+    data: NightlyTestCaseUpdate,
+    current_user: CurrentAdminUser,
+    db: DbSession,
+):
+    """更新 Nightly 用例（需 admin）"""
+    stmt = select(NightlyTestCase).where(NightlyTestCase.id == tc_id)
+    result = await db.execute(stmt)
+    tc = result.scalar_one_or_none()
+    if not tc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用例不存在")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(tc, field, value)
+    await db.commit()
+    await db.refresh(tc)
+    return tc
+
+
+@router.delete("/nightly-test-cases/{tc_id}")
+async def delete_nightly_test_case(
+    tc_id: int,
+    current_user: CurrentAdminUser,
+    db: DbSession,
+):
+    """删除 Nightly 用例（需 admin）"""
+    stmt = select(NightlyTestCase).where(NightlyTestCase.id == tc_id)
+    result = await db.execute(stmt)
+    tc = result.scalar_one_or_none()
+    if not tc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用例不存在")
+    await db.delete(tc)
+    await db.commit()
+    return {"message": "已删除"}

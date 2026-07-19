@@ -300,6 +300,103 @@ class CIDailyReport(BaseModel):
     markdown_report: str
 
 
+# ============ Daily Failure Tracking Schemas ============
+
+class DailyFailureJob(BaseModel):
+    """每日失败 Job（JOIN CIJob + JobOwner + processing_status）"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    job_id: int
+    run_id: int
+    workflow_name: str
+    job_name: str
+    conclusion: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_seconds: int | None = None
+    hardware: str | None = None
+    # 责任人（来自 JobOwner）
+    owner: str | None = None
+    owner_email: str | None = None
+    display_name: str | None = None
+    # 用例元信息（来自 NightlyTestCase）
+    test_model: str | None = None
+    model_fo: str | None = None
+    deployment_type: str | None = None
+    # 处理状态（来自 CIJob 新字段）
+    processing_status: str = "未处理"
+    notes: str | None = None
+    updated_by: str | None = None
+    status_updated_at: datetime | None = None
+    # GitHub 链接
+    github_job_url: str | None = None
+
+
+class DailyFailureStats(BaseModel):
+    """每日失败统计"""
+    date: str
+    total_failed_jobs: int
+    unprocessed: int
+    processing: int
+    fixed: int
+    closed: int
+
+
+class DailyFailureUpdateRequest(BaseModel):
+    """更新处理状态请求"""
+    processing_status: str = Field(..., pattern="^(未处理|处理中|已修复|已关闭)$")
+    notes: str | None = None
+
+
+class DailyFailureListResponse(BaseModel):
+    """每日失败列表响应"""
+    date: str
+    stats: DailyFailureStats
+    jobs: list[DailyFailureJob]
+
+
+# ============ Nightly Test Case Schemas ============
+
+class NightlyTestCaseBase(BaseModel):
+    """Nightly 用例基础字段"""
+    workflow_name: str = Field(..., max_length=100)
+    job_name: str = Field(..., max_length=500)
+    display_name: str | None = Field(None, max_length=200)
+    test_model: str | None = Field(None, max_length=200)
+    model_fo: str | None = Field(None, max_length=100)
+    owner: str | None = Field(None, max_length=100)
+    deployment_type: str | None = Field(None, max_length=100)
+    notes: str | None = None
+    enabled: bool = True
+
+
+class NightlyTestCaseCreate(NightlyTestCaseBase):
+    """创建用例"""
+    pass
+
+
+class NightlyTestCaseUpdate(BaseModel):
+    """更新用例（所有字段可选）"""
+    workflow_name: str | None = Field(None, max_length=100)
+    job_name: str | None = Field(None, max_length=500)
+    display_name: str | None = Field(None, max_length=200)
+    test_model: str | None = Field(None, max_length=200)
+    model_fo: str | None = Field(None, max_length=100)
+    owner: str | None = Field(None, max_length=100)
+    deployment_type: str | None = Field(None, max_length=100)
+    notes: str | None = None
+    enabled: bool | None = None
+
+
+class NightlyTestCaseResponse(NightlyTestCaseBase):
+    """用例响应"""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
 # ============ Model Schemas ============
 
 class ModelConfigBase(BaseModel):

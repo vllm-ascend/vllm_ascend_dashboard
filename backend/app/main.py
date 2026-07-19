@@ -75,6 +75,7 @@ async def init_db():
         await _migrate_login_log_columns()
         await _migrate_avatar_base64_column()
         await _migrate_failure_analysis_pipeline_columns()
+        await _migrate_ci_job_tracking_columns()
 
         # 初始化 LLM 提供商默认配置
         await _init_llm_provider_configs()
@@ -159,6 +160,42 @@ async def _migrate_failure_analysis_pipeline_columns():
                     await db.commit()
     except Exception as e:
         logger.warning("Failure-analysis pipeline migration skipped (non-fatal): %s", e)
+
+
+async def _migrate_ci_job_tracking_columns():
+    """Add daily failure tracking columns (processing_status, notes, updated_by, status_updated_at) to ci_jobs"""
+    try:
+        from sqlalchemy import inspect, text
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            def _get_columns(sync_session):
+                return {
+                    c["name"]
+                    for c in inspect(sync_session.connection()).get_columns("ci_jobs")
+                }
+
+            existing = await db.run_sync(_get_columns)
+            migrations = {
+                "processing_status": "VARCHAR(20) DEFAULT '未处理'",
+                "notes": "TEXT NULL",
+                "updated_by": "VARCHAR(50) NULL",
+                "status_updated_at": "TIMESTAMP NULL",
+            }
+            for name, sql_type in migrations.items():
+                if name not in existing:
+                    await db.execute(text(f"ALTER TABLE ci_jobs ADD COLUMN {name} {sql_type}"))
+                    await db.commit()
+            # Add index after columns exist (MySQL may not have it from create_all)
+            if "processing_status" not in existing:
+                try:
+                    await db.execute(text("CREATE INDEX ix_ci_jobs_processing_status ON ci_jobs (processing_status)"))
+                    await db.commit()
+                except Exception:
+                    pass  # index may already exist
+    except Exception as e:
+        logger.warning("CI job tracking columns migration skipped (non-fatal): %s", e)
 
 
 async def _migrate_avatar_base64_column():

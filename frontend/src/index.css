@@ -25,6 +25,63 @@ body {
   min-height: 100vh;
 }
 
+html { scroll-behavior: smooth; }
+
+/* Shared product-page rhythm */
+.stripe-page-container,
+.stripe-dashboard-page {
+  container-type: inline-size;
+}
+
+.stripe-page-header,
+.dashboard-hero {
+  min-height: 72px;
+}
+
+.ant-card {
+  overflow: hidden;
+  background: rgba(255,255,255,.94);
+  backdrop-filter: blur(12px);
+}
+
+.ant-card-hoverable:hover {
+  border-color: var(--brand-200);
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+.ant-card-hoverable {
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+
+.ant-alert {
+  border-radius: 11px;
+}
+
+.ant-btn-primary:not(:disabled)::after {
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  content:'';
+  opacity:0;
+  background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.25) 48%,transparent 70%);
+  transform:translateX(-70%);
+  transition:opacity .2s ease,transform .45s ease;
+}
+
+.ant-btn-primary:not(:disabled) { position:relative; overflow:hidden; }
+
+.ant-btn-primary:not(:disabled):hover::after { opacity:1; transform:translateX(70%); }
+
+.ant-pagination .ant-pagination-item-active {
+  border-color: var(--brand-500);
+  box-shadow: 0 4px 12px rgba(91,70,245,.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
 /* Product-wide component finish */
 .ant-typography {
   color: var(--text-primary);

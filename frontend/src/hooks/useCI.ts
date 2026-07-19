@@ -118,3 +118,84 @@ export const useSyncProgress = (enabled: boolean = false) => {
     enabled: enabled,
   })
 }
+
+/**
+ * 获取每日失败 Job 列表
+ */
+export const useDailyFailures = (params?: {
+  start_date?: string
+  end_date?: string
+  workflow_name?: string
+  processing_status?: string
+  notes_search?: string
+}) => {
+  return useQuery({
+    queryKey: ['daily-failures', params],
+    queryFn: () => ciApi.getDailyFailures(params),
+  })
+}
+
+/**
+ * 更新失败 Job 处理状态
+ */
+export const useUpdateFailureStatus = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ jobDbId, data }: { jobDbId: number; data: ciApi.DailyFailureUpdateRequest }) =>
+      ciApi.updateFailureStatus(jobDbId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['daily-failures'] })
+    },
+  })
+}
+
+/**
+ * 获取 Nightly 用例列表
+ */
+export const useNightlyTestCases = (params?: { workflow_name?: string; enabled?: boolean }) => {
+  return useQuery({
+    queryKey: ['nightly-test-cases', params],
+    queryFn: () => ciApi.getNightlyTestCases(params),
+  })
+}
+
+/**
+ * 创建 Nightly 用例
+ */
+export const useCreateNightlyTestCase = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: ciApi.NightlyTestCaseCreate) => ciApi.createNightlyTestCase(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nightly-test-cases'] })
+    },
+  })
+}
+
+/**
+ * 更新 Nightly 用例
+ */
+export const useUpdateNightlyTestCase = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: ciApi.NightlyTestCaseUpdate }) =>
+      ciApi.updateNightlyTestCase(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nightly-test-cases'] })
+    },
+  })
+}
+
+/**
+ * 删除 Nightly 用例
+ */
+export const useDeleteNightlyTestCase = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => ciApi.deleteNightlyTestCase(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['nightly-test-cases'] })
+    },
+  })
+}

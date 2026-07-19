@@ -187,3 +187,138 @@ export const getSyncProgress = async (): Promise<SyncProgress> => {
   const response = await api.get<SyncProgress>('/ci/sync/progress')
   return response.data
 }
+
+// ============ Daily Failure Tracking ============
+
+export interface DailyFailureJob {
+  id: number
+  job_id: number
+  run_id: number
+  workflow_name: string
+  job_name: string
+  conclusion: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number | null
+  hardware: string | null
+  owner: string | null
+  owner_email: string | null
+  display_name: string | null
+  test_model: string | null
+  model_fo: string | null
+  deployment_type: string | null
+  processing_status: string
+  notes: string | null
+  updated_by: string | null
+  status_updated_at: string | null
+  github_job_url: string | null
+}
+
+export interface DailyFailureStats {
+  date: string
+  total_failed_jobs: number
+  unprocessed: number
+  processing: number
+  fixed: number
+  closed: number
+}
+
+export interface DailyFailureListResponse {
+  date: string
+  stats: DailyFailureStats
+  jobs: DailyFailureJob[]
+}
+
+export interface DailyFailureUpdateRequest {
+  processing_status: string
+  notes?: string | null
+}
+
+/**
+ * 获取每日失败 Job 列表（按天分组）
+ * 不传日期范围则返回全部数据
+ */
+export const getDailyFailures = async (params?: {
+  start_date?: string
+  end_date?: string
+  workflow_name?: string
+  processing_status?: string
+  notes_search?: string
+}): Promise<DailyFailureListResponse[]> => {
+  const response = await api.get<DailyFailureListResponse[]>('/ci/daily-failures', { params })
+  return response.data
+}
+
+/**
+ * 更新失败 Job 的处理状态和备注
+ */
+export const updateFailureStatus = async (
+  jobDbId: number,
+  data: DailyFailureUpdateRequest
+): Promise<DailyFailureJob> => {
+  const response = await api.put<DailyFailureJob>(`/ci/daily-failures/${jobDbId}/status`, data)
+  return response.data
+}
+
+// ============ Nightly Test Case Management ============
+
+export interface NightlyTestCase {
+  id: number
+  workflow_name: string
+  job_name: string
+  display_name: string | null
+  test_model: string | null
+  model_fo: string | null
+  owner: string | null
+  deployment_type: string | null
+  notes: string | null
+  enabled: boolean
+  created_at: string
+  updated_at: string | null
+}
+
+export interface NightlyTestCaseCreate {
+  workflow_name: string
+  job_name: string
+  display_name?: string | null
+  test_model?: string | null
+  model_fo?: string | null
+  owner?: string | null
+  deployment_type?: string | null
+  notes?: string | null
+  enabled?: boolean
+}
+
+export interface NightlyTestCaseUpdate {
+  workflow_name?: string | null
+  job_name?: string | null
+  display_name?: string | null
+  test_model?: string | null
+  model_fo?: string | null
+  owner?: string | null
+  deployment_type?: string | null
+  notes?: string | null
+  enabled?: boolean | null
+}
+
+export const getNightlyTestCases = async (params?: {
+  workflow_name?: string
+  enabled?: boolean
+}): Promise<NightlyTestCase[]> => {
+  const response = await api.get<NightlyTestCase[]>('/ci/nightly-test-cases', { params })
+  return response.data
+}
+
+export const createNightlyTestCase = async (data: NightlyTestCaseCreate): Promise<NightlyTestCase> => {
+  const response = await api.post<NightlyTestCase>('/ci/nightly-test-cases', data)
+  return response.data
+}
+
+export const updateNightlyTestCase = async (id: number, data: NightlyTestCaseUpdate): Promise<NightlyTestCase> => {
+  const response = await api.put<NightlyTestCase>(`/ci/nightly-test-cases/${id}`, data)
+  return response.data
+}
+
+export const deleteNightlyTestCase = async (id: number): Promise<void> => {
+  await api.delete(`/ci/nightly-test-cases/${id}`)
+}
