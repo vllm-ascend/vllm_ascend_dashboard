@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 class TestBoardService:
+    __test__ = False  # Production service, not a pytest test class.
+
     def __init__(self, db: AsyncSession, github_client: GitHubClient | None = None):
         self.db = db
         self.github = github_client
