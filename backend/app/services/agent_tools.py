@@ -10,12 +10,10 @@ Agent 安全工具集
   - 没有 shell / exec / write / delete
   - 所有返回值有长度上限，防止 token 爆炸
 """
-import asyncio
 import contextvars
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -27,7 +25,7 @@ from app.services.memory_manager import MemoryManager
 logger = logging.getLogger(__name__)
 
 # ContextVar：每个 agent run 拥有独立的上下文，并发安全
-_ctx_memory_manager: contextvars.ContextVar[Optional[MemoryManager]] = (
+_ctx_memory_manager: contextvars.ContextVar[MemoryManager | None] = (
     contextvars.ContextVar("memory_manager", default=None)
 )
 _ctx_github_token: contextvars.ContextVar[str] = (
@@ -38,13 +36,22 @@ _ctx_github_token: contextvars.ContextVar[str] = (
 def set_tool_context(
     memory_manager: MemoryManager,
     github_token: str = "",
-) -> None:
+) -> tuple[contextvars.Token, contextvars.Token]:
     """在 Agent 运行前注入运行时上下文（并发安全）"""
-    _ctx_memory_manager.set(memory_manager)
-    _ctx_github_token.set(github_token or settings.GITHUB_TOKEN)
+    return (
+        _ctx_memory_manager.set(memory_manager),
+        _ctx_github_token.set(github_token or settings.GITHUB_TOKEN),
+    )
 
 
-def _get_memory_manager() -> Optional[MemoryManager]:
+def reset_tool_context(tokens: tuple[contextvars.Token, contextvars.Token]) -> None:
+    """Restore the previous context after an agent run."""
+    memory_token, github_token = tokens
+    _ctx_memory_manager.reset(memory_token)
+    _ctx_github_token.reset(github_token)
+
+
+def _get_memory_manager() -> MemoryManager | None:
     return _ctx_memory_manager.get(None)
 
 
@@ -58,14 +65,20 @@ def _safe_data_path(path: str) -> Path:
 
     拒绝包含路径穿越的输入。
     """
-    if ".." in path or path.startswith("/") or path.startswith("\\"):
+    if not isinstance(path, str) or "\x00" in path:
+        raise ValueError("invalid path")
+    candidate = Path(path)
+    if candidate.is_absolute():
         raise ValueError(f"不允许的路径: {path}")
     data_dir = Path(settings.DATA_DIR)
     if not data_dir.is_absolute():
         data_dir = Path.cwd() / data_dir
-    resolved = (data_dir / path).resolve()
-    if not str(resolved).startswith(str(data_dir.resolve())):
-        raise ValueError(f"路径穿越被阻止: {path}")
+    data_dir = data_dir.resolve()
+    resolved = (data_dir / candidate).resolve()
+    try:
+        resolved.relative_to(data_dir)
+    except ValueError:
+        raise ValueError(f"路径穿越被阻止: {path}") from None
     return resolved
 
 
@@ -92,6 +105,8 @@ def read_log_file(path: str) -> str:
         return f"Error: 不是文件: {path}"
 
     try:
+        if full_path.stat().st_size > 5 * 1024 * 1024:
+            return "Error: file is too large to read (limit: 5 MiB)"
         content = full_path.read_text(encoding="utf-8", errors="replace")
         max_len = 50000
         if len(content) > max_len:
@@ -109,7 +124,8 @@ def grep_content(pattern: str, path: str) -> str:
         pattern: 搜索模式（支持正则表达式）
         path: 文件相对于 data/ 目录的路径
     """
-    import re
+    if not pattern or len(pattern) > 200:
+        return "Error: search pattern must contain 1-200 characters"
     try:
         full_path = _safe_data_path(path)
     except ValueError as e:
@@ -119,17 +135,16 @@ def grep_content(pattern: str, path: str) -> str:
         return f"Error: 文件不存在: {path}"
 
     try:
+        if full_path.stat().st_size > 5 * 1024 * 1024:
+            return "Error: file is too large to search (limit: 5 MiB)"
         content = full_path.read_text(encoding="utf-8", errors="replace")
         lines = content.splitlines()
         matched = []
         for i, line in enumerate(lines, 1):
-            try:
-                if re.search(pattern, line):
-                    matched.append(f"{i}: {line[:200]}")
-            except re.error:
-                # 非正则模式，用简单字符串匹配
-                if pattern in line:
-                    matched.append(f"{i}: {line[:200]}")
+            # Literal matching avoids catastrophic backtracking because
+            # Python's regex engine has no execution timeout.
+            if pattern in line:
+                matched.append(f"{i}: {line[:200]}")
 
         if not matched:
             return f"未找到匹配 '{pattern}' 的行"
@@ -176,7 +191,17 @@ def fetch_github_api(url: str) -> str:
         url: GitHub API URL，例如 https://api.github.com/repos/vllm-project/vllm-ascend/issues/42
     """
     parsed = urlparse(url)
-    if parsed.netloc != "api.github.com":
+    try:
+        port = parsed.port
+    except ValueError:
+        return "Error: invalid GitHub API port"
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "api.github.com"
+        or port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         return f"Error: 仅允许 api.github.com 域名，不支持: {parsed.netloc}"
 
     token = _get_github_token()

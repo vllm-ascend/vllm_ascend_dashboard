@@ -47,15 +47,28 @@ def hash_ip(ip_address: str) -> str:
     return hashlib.sha256(ip_address.encode()).hexdigest()
 
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+def create_access_token(
+    data: dict,
+    expires_delta: timedelta | None = None,
+    token_type: str = "access",
+) -> str:
     to_encode = data.copy()
     expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire, "iat": datetime.now(UTC), "jti": str(uuid.uuid4())})
+    to_encode.update({
+        "exp": expire,
+        "iat": datetime.now(UTC),
+        "jti": str(uuid.uuid4()),
+        "token_type": token_type,
+    })
     return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
 def create_refresh_token(data: dict) -> str:
-    return create_access_token(data, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+    return create_access_token(
+        data,
+        timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        token_type="refresh",
+    )
 
 
 def decode_token(token: str) -> dict | None:
@@ -64,7 +77,9 @@ def decode_token(token: str) -> dict | None:
     except ExpiredSignatureError:
         return None
     except JWTError as e:
-        _logger.warning(f"JWT decode error: {e}, token: {token[:20]}...")
+        # Tokens are credentials.  Never include even a prefix in logs because
+        # logs are commonly exported to third-party observability systems.
+        _logger.warning("JWT decode error: %s", e)
         return None
     except Exception as e:
         _logger.error(f"Unexpected error during token decoding: {e}")

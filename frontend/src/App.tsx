@@ -50,6 +50,7 @@ const queryClient = new QueryClient({
 // 需要登录的路由保护组件
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('access_token')
+  const { data: currentUser, isLoading, error } = useCurrentUser()
 
   // 首先检查 token 是否存在
   if (!token) {
@@ -57,10 +58,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   // 使用 React Query 获取最新用户信息
-  const { data: currentUser, isLoading, error } = useCurrentUser()
-
   // 加载中，显示加载状态
-  if (isLoading || !currentUser) {
+  if (isLoading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
         <div>加载中...</div>
@@ -81,6 +80,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 // 仅管理员路由需要登录和权限
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('access_token')
+  const { data: currentUser, isLoading, error } = useCurrentUser()
 
   // 首先检查 token 是否存在
   if (!token) {
@@ -88,10 +88,8 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   }
 
   // 使用 React Query 获取最新用户信息
-  const { data: currentUser, isLoading, error } = useCurrentUser()
-
   // 加载中，显示加载状态
-  if (isLoading || !currentUser) {
+  if (isLoading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
         <div>加载中...</div>

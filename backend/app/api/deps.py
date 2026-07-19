@@ -33,6 +33,13 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if payload.get("token_type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="必须使用访问Token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     jti = payload.get("jti")
     if jti:
         try:

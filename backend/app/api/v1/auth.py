@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 def _client_ip(request: Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        # nginx appends the actual peer address. Taking the last value prevents
+        # clients from bypassing rate limits with a forged leading entry.
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 
@@ -109,6 +111,8 @@ async def refresh_token(request: Request, db: DbSession):
     payload = decode_token(auth_header.split(" ")[1])
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新Token无效或已过期")
+    if payload.get("token_type") != "refresh":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="必须使用刷新Token")
 
     jti = payload.get("jti")
     if jti:
@@ -116,6 +120,8 @@ async def refresh_token(request: Request, db: DbSession):
             blacklist_result = await db.execute(select(TokenBlacklist).where(TokenBlacklist.token_jti == jti))
             if blacklist_result.scalar_one_or_none():
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token已被撤销")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.warning(f"Token blacklist check failed, skipping: {e}")
 

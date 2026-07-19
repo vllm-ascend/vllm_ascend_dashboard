@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import aiohttp
 
@@ -72,7 +73,7 @@ def _build_config_yaml(model_list: list[dict]) -> str:
     """生成完整 LiteLLM 配置"""
     models_yaml = _model_to_yaml(model_list)
     return f"""general_settings:
-  master_key: sk-litellm-master-key-change-me
+  master_key: os.environ/LITELLM_MASTER_KEY
 
 {models_yaml}
 
@@ -158,10 +159,11 @@ class LiteLLMSync:
         socket_path = "/var/run/docker.sock"
         if os.path.exists(socket_path):
             try:
+                container_name = os.environ.get("LITELLM_CONTAINER_NAME", "vllm-dashboard-litellm")
                 conn = aiohttp.UnixConnector(path=socket_path)
                 async with aiohttp.ClientSession(connector=conn) as s:
                     async with s.post(
-                        "http://localhost/containers/vllm-dashboard-litellm/restart",
+                        f"http://localhost/containers/{quote(container_name, safe='')}/restart",
                         timeout=aiohttp.ClientTimeout(total=10),
                     ) as r:
                         if r.status in (204, 200):
@@ -185,7 +187,7 @@ class LiteLLMSync:
         except Exception as e:
             logger.debug("LiteLLM API reload failed: %s", e)
 
-        logger.warning("LiteLLM needs manual restart to pick up new config: docker restart vllm-dashboard-litellm")
+        logger.warning("LiteLLM needs a manual restart to pick up the new config")
         return False
 
 

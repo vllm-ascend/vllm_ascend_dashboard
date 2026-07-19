@@ -17,6 +17,8 @@ SUITE_SNAPSHOT_RETENTION_DAYS = 365
 
 
 class TestHealthCalculator:
+    __test__ = False  # Production service, not a pytest test class.
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
