@@ -218,7 +218,7 @@ async def _migrate_avatar_base64_column():
             if 'author_email' not in existing_cols:
                 pending_columns.append(("author_email", "VARCHAR(200)"))
             if 'author_avatar_base64' not in existing_cols:
-            pending_columns.append(("author_avatar_base64", "LONGTEXT"))
+                pending_columns.append(("author_avatar_base64", "LONGTEXT"))
 
             for col_name, col_type in pending_columns:
                 logger.info("Adding missing column '%s' to pull_requests", col_name)
