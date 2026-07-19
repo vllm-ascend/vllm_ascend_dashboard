@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     GITHUB_REPO: str = "vllm-ascend"
 
     # 数据库配置
-    DATABASE_URL: str = "sqlite+aiosqlite:///./app.db"
+    DATABASE_URL: str = "mysql+aiomysql://dashboard:dashboard123@localhost:3306/vllm_dashboard"
 
     # JWT 配置
     JWT_SECRET: str

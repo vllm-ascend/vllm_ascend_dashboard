@@ -8,6 +8,27 @@
    ============================================ */
 
 :root {
+  /* Product semantic tokens */
+  --brand-50: #f1efff;
+  --brand-100: #e4e0ff;
+  --brand-200: #cac2ff;
+  --brand-500: #6f5cff;
+  --brand-600: #5b46f5;
+  --brand-700: #4933d1;
+  --surface-canvas: #f4f7fb;
+  --surface-raised: #ffffff;
+  --surface-subtle: #f8fafc;
+  --text-primary: #132238;
+  --text-secondary: #526178;
+  --text-tertiary: #8491a5;
+  --border-subtle: #e3e9f1;
+  --border-strong: #cdd7e4;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.025), 0 8px 28px rgba(15, 23, 42, 0.045);
+  --shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.04), 0 18px 42px rgba(15, 23, 42, 0.08);
+  --success-surface: #ecfdf3;
+  --warning-surface: #fff8e6;
+  --danger-surface: #fff1f2;
+
   /* Primary Colors */
   --stripe-purple: #533afd;
   --stripe-purple-hover: #4434d4;
@@ -78,10 +99,10 @@
 
   /* Border Radius */
   --radius-micro: 1px;
-  --radius-standard: 4px;
-  --radius-comfortable: 5px;
-  --radius-relaxed: 6px;
-  --radius-large: 8px;
+  --radius-standard: 8px;
+  --radius-comfortable: 10px;
+  --radius-relaxed: 12px;
+  --radius-large: 16px;
 
   /* Typography Sizes */
   --text-display-hero: 56px;
@@ -142,7 +163,7 @@ body {
   font-weight: var(--weight-light);
   line-height: var(--lh-normal);
   color: var(--color-body);
-  background-color: #ffffff;
+  background-color: var(--surface-canvas);
   overflow-x: hidden;
   font-feature-settings: "ss01" on;
 }

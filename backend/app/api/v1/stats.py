@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select, func, distinct, text, inspect
 
 from app.api.deps import CurrentAdminUser, DbSession
-from app.db.base import _is_sqlite, engine
+from app.db.base import engine
 from app.models import User, UserLoginLog, FeatureUsageLog, Base
 from app.schemas import LoginStatsResponse, FeatureUsageStatsResponse, FeatureUsageTrendPoint
 
@@ -18,8 +18,6 @@ TZ = ZoneInfo("Asia/Shanghai")
 
 def _date_expr(column):
     """返回按上海时区分组的日期表达式"""
-    if _is_sqlite:
-        return func.date(column, '+8 hours')
     return func.date(func.convert_tz(column, '+00:00', '+08:00'))
 
 

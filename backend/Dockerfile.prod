@@ -77,7 +77,7 @@ COPY scripts/ ./scripts/
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh
 
 # Create data and logs directories for persistent storage
 # Note: Permissions will be fixed by entrypoint script after volume mount

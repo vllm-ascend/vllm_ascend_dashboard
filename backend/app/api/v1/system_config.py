@@ -80,7 +80,7 @@ async def get_system_config(
             "github_cache_dir": settings.GITHUB_CACHE_DIR,
         },
         "database_config": {
-            "type": "sqlite" if "sqlite" in settings.DATABASE_URL else "mysql",
+            "type": "mysql",
             "configured": bool(settings.DATABASE_URL),
         },
     }
@@ -529,7 +529,7 @@ async def get_system_status(
         },
         "database": {
             "connected": True,  # 如果能响应说明数据库连接正常
-            "type": "sqlite" if "sqlite" in settings.DATABASE_URL else "mysql",
+            "type": "mysql",
         },
         "github": {
             "configured": bool(settings.GITHUB_TOKEN),
