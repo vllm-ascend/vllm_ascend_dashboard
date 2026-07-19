@@ -51,7 +51,7 @@ scope: daily_report
 - 正向亮点：{{positive_highlight}}
 
 ## 🔧 Nightly 流水线
-**{{conclusion}}**（{{total}} 次运行，成功 {{success}} / 失败 {{failure}}，成功率 {{rate}}%）
+**{{conclusion}}**（Nightly A2/A3 共运行 {{total}} 个用例，通过 {{success}} / 失败 {{failure}}，用例通过率 {{rate}}%）
 - 平均耗时 {{avg_duration}}
 {{#if failed_workflows}}
 - 失败任务：{{failed_list}}
@@ -116,9 +116,10 @@ vLLM Ascend Dashboard | 详细数据见 {{dashboard_url}}
   "report_date": "2026-07-05",
   "yesterday": {
     "ci": {
-      "total_runs": 4, "success_runs": 2, "failure_runs": 2, "success_rate": 50.0,
-      "avg_duration_seconds": 14400,
-      "failed_workflows": [{"workflow_name": "Nightly-A2", "run_number": 123, "duration_seconds": 14000, "hardware": "A2"}]
+      "total_cases": 100, "passed_cases": 95, "failed_cases": 5, "pass_rate": 95.0,
+      "by_hardware": [{"hardware": "A2", "total_cases": 60, "passed_cases": 58, "failed_cases": 2, "pass_rate": 96.67}],
+      "avg_duration_seconds": 120.0,
+      "failed_workflows": [{"workflow_name": "Nightly A2", "total_cases": 60, "failed_cases": 2, "pass_rate": 96.67, "hardware": "A2"}]
     },
     "pr_pipeline": {
       "open_count": 336, "merged_count": 12, "closed_count": 8,

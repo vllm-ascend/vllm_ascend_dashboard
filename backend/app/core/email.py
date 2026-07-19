@@ -7,8 +7,12 @@ SMTP 邮件发送工具（异步）
 
 SMTP 配置统一存储在 ProjectDashboardConfig 表，config_key='smtp_config'。
 通过 get_smtp_config(db) 获取，供每日报告和告警规则共用。
+
+支持 CID 内嵌图片：传入 images={cid_name: png_bytes}，邮件结构自动切换为
+multipart/related，HTML 中可通过 <img src="cid:xxx"> 引用。
 """
 import logging
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -50,22 +54,42 @@ async def send_email(
     smtp_password: str = "",
     smtp_use_tls: bool = True,
     from_email: str = "",
+    images: dict[str, bytes] | None = None,
 ) -> dict:
+    """发送 HTML 邮件，可选附带 CID 内嵌图片。
+
+    Args:
+        images: {cid_name: png_bytes}，HTML 中通过 <img src="cid:cid_name"> 引用。
+                为空时使用传统的 multipart/alternative 结构。
+    """
     if not smtp_host:
         return {"success": False, "error": "SMTP_HOST not configured"}
 
     if not recipients:
         return {"success": False, "error": "No recipients configured"}
 
-    msg = MIMEMultipart("alternative")
+    if images:
+        # multipart/related：HTML 正文 + 内嵌图片（CID 引用）
+        msg = MIMEMultipart("related")
+        alt_block = MIMEMultipart("alternative")
+        alt_block.attach(MIMEText(html_content, "html", "utf-8"))
+        msg.attach(alt_block)
+
+        for cid, png_bytes in images.items():
+            img = MIMEImage(png_bytes, _subtype="png")
+            img.add_header("Content-ID", f"<{cid}>")
+            img.add_header("Content-Disposition", "inline", filename=f"{cid}.png")
+            msg.attach(img)
+    else:
+        # 无图片时保持传统 multipart/alternative 结构，向后兼容
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(html_content, "html", "utf-8"))
+
     msg["Subject"] = subject
     msg["From"] = from_email
     msg["To"] = ", ".join(recipients)
     if cc_recipients:
         msg["Cc"] = ", ".join(cc_recipients)
-
-    html_part = MIMEText(html_content, "html", "utf-8")
-    msg.attach(html_part)
 
     all_recipients = recipients + (cc_recipients or [])
 

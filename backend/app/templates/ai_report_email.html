@@ -52,6 +52,17 @@
     </div>
   </div>
 
+  {% if chart_cids %}
+  <div class="section">
+    <div class="section-header">📈 数据图表</div>
+    <div class="section-body">
+      {% for cid in chart_cids %}
+      <img src="cid:{{ cid }}" alt="{{ cid }}" style="max-width:100%; margin-bottom:16px; border-radius:6px; display:block;">
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="footer">
     <p>vLLM Ascend Dashboard · <a href="{{ dashboard_url }}">查看完整看板</a></p>
   </div>
