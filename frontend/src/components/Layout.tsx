@@ -192,9 +192,6 @@ function Layout() {
       >
         <div className="app-brand">
           <BrandMark title="vLLM Ascend" className="app-brand-logo" />
-          <div className="app-brand-copy">
-            <span>Community Ops</span>
-          </div>
         </div>
 
         <nav className="app-nav" aria-label="主导航">

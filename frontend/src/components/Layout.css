@@ -43,8 +43,8 @@
   height: 76px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 20px;
+  padding: 14px 18px;
+  overflow: hidden;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -56,35 +56,9 @@
   border-radius: 10px;
 }
 
-.app-brand-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-.app-brand-copy strong {
-  color: #fff;
-  font-size: 15px;
-  letter-spacing: -0.01em;
-}
-
-.app-brand-copy span {
-  margin-top: 4px;
-  color: #8fa2c6;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
 .ant-layout-sider-collapsed .app-brand {
   justify-content: center;
   padding-inline: 12px;
-}
-
-.ant-layout-sider-collapsed .app-brand-copy {
-  display: none;
 }
 
 .app-nav {
