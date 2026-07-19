@@ -205,7 +205,7 @@ class TestSendDailyReportJobSmtpDedup:
         try:
             import app.services.scheduler as sched_mod
             sched_mod.settings.REPORT_ENABLED = True
-            sched_mod.settings.DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+            sched_mod.settings.DATABASE_URL = "mysql+aiomysql://dashboard:dashboard123@localhost:3306/vllm_dashboard_test"
 
             await scheduler._send_daily_report_job()
         finally:
@@ -236,7 +236,7 @@ class TestSendDailyReportJobSmtpDedup:
         try:
             import app.services.scheduler as sched_mod
             sched_mod.settings.REPORT_ENABLED = True
-            sched_mod.settings.DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+            sched_mod.settings.DATABASE_URL = "mysql+aiomysql://dashboard:dashboard123@localhost:3306/vllm_dashboard_test"
 
             await scheduler._send_daily_report_job()
         finally:

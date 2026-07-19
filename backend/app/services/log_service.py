@@ -4,7 +4,7 @@ Log Service — multi-source log aggregation, search, and pagination.
 Sources:
   - claude_cli:       file system logs under data/claude_logs/
   - failure_analysis: file system reports under data/failure-analysis/
-  - app / scheduler:  MySQL/SQLite app_logs table
+  - app / scheduler:  MySQL app_logs table
 """
 import logging
 import os
