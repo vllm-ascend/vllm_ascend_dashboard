@@ -3,15 +3,11 @@
 配置的小时为北京时间（UTC+8），存储的 started_at 为 UTC。
 通过将配置小时转换为 UTC 小时后比较，避免数据库时区函数依赖。
 """
-from sqlalchemy import Integer, and_, cast, func, or_
-
-from app.db.base import _is_sqlite
+from sqlalchemy import and_, func, or_
 
 
 def _hour_expr(col):
-    """提取 UTC 小时，兼容 MySQL 和 SQLite。"""
-    if _is_sqlite:
-        return cast(func.strftime('%H', col), Integer)
+    """提取 UTC 小时（MySQL）。"""
     return func.hour(col)
 
 

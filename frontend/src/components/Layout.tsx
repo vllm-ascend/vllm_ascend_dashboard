@@ -1,30 +1,41 @@
-import { useState } from 'react'
-import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout as AntLayout, Menu, Button, Avatar, Dropdown, Space, Tag, Drawer } from 'antd'
+import { useMemo, useState } from 'react'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
-  BellOutlined,
-  DashboardOutlined,
-  CheckCircleOutlined,
-  ExperimentOutlined,
-  SettingOutlined,
-  LogoutOutlined,
-  UserOutlined,
-  LoginOutlined,
-  LockOutlined,
-  GithubOutlined,
-  PullRequestOutlined,
-  MenuOutlined,
-  CloudServerOutlined,
-  MailOutlined,
-  SendOutlined,
-  SearchOutlined,
+  Avatar,
+  Button,
+  Drawer,
+  Dropdown,
+  Layout as AntLayout,
+  Menu,
+  Space,
+  Tag,
+  Tooltip,
+  message,
+} from 'antd'
+import {
+  AlertOutlined,
   BarChartOutlined,
-  ReadOutlined,
+  BellOutlined,
+  CheckCircleOutlined,
+  CloudServerOutlined,
   CodeOutlined,
+  DashboardOutlined,
+  ExperimentOutlined,
+  GithubOutlined,
+  LeftOutlined,
+  LockOutlined,
+  LogoutOutlined,
+  MailOutlined,
+  MenuOutlined,
+  PullRequestOutlined,
+  ReadOutlined,
+  RightOutlined,
+  SearchOutlined,
+  SendOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { logout } from '../services/auth'
-import { message } from 'antd'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import vllmAscendLogo from '../assets/vllm-ascend-logo.png'
 import ChangePasswordModal from './ChangePasswordModal'
@@ -32,99 +43,101 @@ import './Layout.css'
 
 const { Header, Sider, Content } = AntLayout
 
-const menuItems: MenuProps['items'] = [
+type NavigationItem = NonNullable<MenuProps['items']>[number]
+
+const primaryNavigation: NavigationItem[] = [
+  { key: '/', icon: <DashboardOutlined />, label: '运营总览' },
   {
-    key: '/',
-    icon: <DashboardOutlined />,
-    label: '首页',
+    type: 'group',
+    label: '研发交付',
+    children: [
+      { key: '/project', icon: <GithubOutlined />, label: '项目动态' },
+      { key: '/pr-pipeline', icon: <PullRequestOutlined />, label: 'PR 流水线' },
+      { key: '/ci', icon: <CheckCircleOutlined />, label: 'CI 运行' },
+    ],
   },
   {
-    key: '/project',
-    icon: <GithubOutlined />,
-    label: '项目看板',
+    type: 'group',
+    label: '质量与模型',
+    children: [
+      { key: '/test-board', icon: <DashboardOutlined />, label: '测试质量' },
+      { key: '/models', icon: <ExperimentOutlined />, label: '模型验证' },
+      { key: '/code-metrics', icon: <CodeOutlined />, label: '代码健康' },
+    ],
   },
   {
-    key: '/pr-pipeline',
-    icon: <PullRequestOutlined />,
-    label: 'PR 流水线',
+    type: 'group',
+    label: '资源与响应',
+    children: [
+      { key: '/resources', icon: <CloudServerOutlined />, label: '算力资源' },
+      { key: '/alert-rules', icon: <BellOutlined />, label: '告警规则' },
+      { key: '/issue-diagnosis', icon: <SearchOutlined />, label: 'AI 问题定位' },
+      ...(import.meta.env.DEV
+        ? [{ key: '/logs', icon: <ReadOutlined />, label: '日志中心' }]
+        : []),
+    ],
   },
-  {
-    key: '/ci',
-    icon: <CheckCircleOutlined />,
-    label: 'CI 看板',
-  },
-  {
-    key: '/models',
-    icon: <ExperimentOutlined />,
-    label: '模型看板',
-  },
-  {
-    key: '/resources',
-    icon: <CloudServerOutlined />,
-    label: '资源看板',
-  },
-  {
-    key: '/alert-rules',
-    icon: <BellOutlined />,
-    label: '告警规则',
-  },
-  {
-    key: '/test-board',
-    icon: <DashboardOutlined />,
-    label: '测试看板',
-  },
-  {
-    key: '/issue-diagnosis',
-    icon: <SearchOutlined />,
-    label: '问题定位',
-  },
-  {
-    key: '/code-metrics',
-    icon: <CodeOutlined />,
-    label: '代码度量',
-  },
-  ...(import.meta.env.DEV
-    ? [{ key: '/logs', icon: <ReadOutlined />, label: '日志中心' }]
-    : []),
 ]
 
-// 仅管理员可见的菜单项
-const adminMenuItems: MenuProps['items'] = [
-  {
-    key: '/user-stats',
-    icon: <BarChartOutlined />,
-    label: '用户统计',
-  },
-  {
-    key: '/admin',
-    icon: <SettingOutlined />,
-    label: '系统管理',
-  },
-  {
-    key: '/admin/smtp-config',
-    icon: <MailOutlined />,
-    label: '邮件服务器',
-  },
-  {
-    key: '/admin/daily-report',
-    icon: <SendOutlined />,
-    label: '每日报告',
-  },
+const adminNavigation: NavigationItem = {
+  type: 'group',
+  label: '管理中心',
+  children: [
+    { key: '/user-stats', icon: <BarChartOutlined />, label: '用户统计' },
+    { key: '/admin', icon: <SettingOutlined />, label: '系统配置' },
+    { key: '/admin/smtp-config', icon: <MailOutlined />, label: '邮件服务' },
+    { key: '/admin/daily-report', icon: <SendOutlined />, label: '每日运行报告' },
+  ],
+}
+
+const routeMeta = [
+  { prefix: '/issue-diagnosis', title: 'AI 问题定位', section: '资源与响应' },
+  { prefix: '/code-metrics', title: '代码健康', section: '质量与模型' },
+  { prefix: '/pr-pipeline', title: 'PR 流水线', section: '研发交付' },
+  { prefix: '/test-board', title: '测试质量', section: '质量与模型' },
+  { prefix: '/resources', title: '算力资源', section: '资源与响应' },
+  { prefix: '/alert-rules', title: '告警规则', section: '资源与响应' },
+  { prefix: '/models', title: '模型验证', section: '质量与模型' },
+  { prefix: '/project', title: '项目动态', section: '研发交付' },
+  { prefix: '/ci', title: 'CI 运行', section: '研发交付' },
+  { prefix: '/logs', title: '日志中心', section: '资源与响应' },
+  { prefix: '/user-stats', title: '用户统计', section: '管理中心' },
+  { prefix: '/admin/smtp-config', title: '邮件服务', section: '管理中心' },
+  { prefix: '/admin/daily-report', title: '每日运行报告', section: '管理中心' },
+  { prefix: '/admin/ci-board-config', title: 'CI 看板配置', section: '管理中心' },
+  { prefix: '/admin/model-board-config', title: '模型看板配置', section: '管理中心' },
+  { prefix: '/admin/project-board-config', title: '项目看板配置', section: '管理中心' },
+  { prefix: '/admin/resource-dashboard-config', title: '资源看板配置', section: '管理中心' },
+  { prefix: '/admin', title: '系统配置', section: '管理中心' },
 ]
+
+function getSelectedNavigation(pathname: string) {
+  if (pathname === '/') return '/'
+  // 匹配最长前缀，避免 /admin 吞掉所有 /admin/xxx 子路由
+  const match = routeMeta
+    .filter((item) => pathname.startsWith(item.prefix))
+    .sort((a, b) => b.prefix.length - a.prefix.length)[0]
+  return match?.prefix || pathname
+}
 
 function Layout() {
   const [changePasswordModalOpen, setChangePasswordModalOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
   const { data: currentUser } = useCurrentUser()
   const hasAdminRole = currentUser?.role === 'admin' || currentUser?.role === 'super_admin'
-  const isLoggedIn = !!localStorage.getItem('access_token')
 
-  // 合并菜单项（根据权限）
-  const allMenuItems: MenuProps['items'] = hasAdminRole
-    ? [...(menuItems || []), ...(adminMenuItems || [])]
-    : menuItems || []
+  const navigationItems = useMemo(
+    () => (hasAdminRole ? [...primaryNavigation, adminNavigation] : primaryNavigation),
+    [hasAdminRole],
+  )
+  const selectedKey = getSelectedNavigation(location.pathname)
+  const currentPage = routeMeta.find((item) => location.pathname.startsWith(item.prefix)) || {
+    title: '运营总览',
+    section: '社区运维',
+  }
 
   const handleLogout = async () => {
     try {
@@ -135,7 +148,7 @@ function Layout() {
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
       localStorage.removeItem('user_info')
-      message.success('已成功登出')
+      message.success('已安全退出')
       navigate('/login')
     }
   }
@@ -147,172 +160,140 @@ function Layout() {
       label: '修改密码',
       onClick: () => setChangePasswordModalOpen(true),
     },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'logout',
-      icon: <LogoutOutlined />,
-      label: '退出登录',
-      onClick: handleLogout,
-    },
+    { type: 'divider' },
+    { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: handleLogout },
   ]
 
-  // 获取用户头像首字母
-  const getUserInitial = () => {
-    if (currentUser?.username) {
-      return currentUser.username.charAt(0).toUpperCase()
-    }
-    return 'U'
+  const roleLabel: Record<string, string> = {
+    super_admin: '超级管理员',
+    admin: '管理员',
+    user: '社区成员',
   }
 
-  // 获取角色标签
-  const getRoleTag = () => {
-    if (!currentUser?.role) return null
-
-    const roleConfig: Record<string, { color: string; label: string }> = {
-      super_admin: { color: 'red', label: '超级管理员' },
-      admin: { color: 'orange', label: '管理员' },
-      user: { color: 'blue', label: '用户' },
-    }
-
-    const config = roleConfig[currentUser.role] || { color: 'default', label: currentUser.role }
-    return <Tag color={config.color}>{config.label}</Tag>
+  const handleNavigate: MenuProps['onClick'] = ({ key }) => {
+    navigate(key)
+    setMobileMenuOpen(false)
   }
-
-  // 移动端菜单项
-  const mobileMenuItems = [
-    { key: '/', icon: <DashboardOutlined />, label: '首页' },
-    { key: '/project', icon: <GithubOutlined />, label: '项目看板' },
-    { key: '/pr-pipeline', icon: <PullRequestOutlined />, label: 'PR 流水线' },
-    { key: '/ci', icon: <CheckCircleOutlined />, label: 'CI 看板' },
-    { key: '/models', icon: <ExperimentOutlined />, label: '模型看板' },
-    { key: '/resources', icon: <CloudServerOutlined />, label: '资源看板' },
-    { key: '/test-board', icon: <DashboardOutlined />, label: '测试看板' },
-    { key: '/issue-diagnosis', icon: <SearchOutlined />, label: '问题定位' },
-    { key: '/code-metrics', icon: <CodeOutlined />, label: '代码度量' },
-    ...(import.meta.env.DEV ? [{ key: '/logs', icon: <ReadOutlined />, label: '日志中心' }] : []),
-    ...(hasAdminRole ? [
-      { key: '/user-stats', icon: <BarChartOutlined />, label: '用户统计' },
-      { key: '/admin', icon: <SettingOutlined />, label: '系统管理' },
-      { key: '/admin/daily-report', icon: <MailOutlined />, label: '每日报告' },
-    ] : []),
-  ]
 
   return (
-    <AntLayout className="stripe-layout">
-      {/* Desktop Sider */}
-      <Sider 
-        className="stripe-sider"
-        width={240}
+    <AntLayout className="app-shell">
+      <a className="skip-link" href="#main-content">跳到主要内容</a>
+      <Sider
+        className="app-sider"
+        width={264}
+        collapsedWidth={80}
+        collapsed={collapsed}
+        trigger={null}
         theme="dark"
       >
-        <div className="stripe-logo-container">
-          <img
-            src={vllmAscendLogo}
-            alt="vLLM Ascend"
-            className="stripe-logo"
-          />
+        <div className="app-brand">
+          <img src={vllmAscendLogo} alt="vLLM Ascend" className="app-brand-logo" />
+          <div className="app-brand-copy">
+            <strong>vLLM Ascend</strong>
+            <span>Community Ops</span>
+          </div>
         </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={allMenuItems}
-          onClick={({ key }) => navigate(key)}
-          className="stripe-menu"
-        />
+
+        <nav className="app-nav" aria-label="主导航">
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={[selectedKey]}
+            items={navigationItems}
+            onClick={handleNavigate}
+            inlineCollapsed={collapsed}
+            className="app-menu"
+          />
+        </nav>
+
+        <div className="app-sider-footer">
+          {!collapsed && (
+            <div className="environment-status">
+              <span className="status-dot" />
+              <div>
+                <strong>社区服务运行中</strong>
+                <span>Production workspace</span>
+              </div>
+            </div>
+          )}
+          <Tooltip title={collapsed ? '展开导航' : '收起导航'} placement="right">
+            <Button
+              type="text"
+              icon={collapsed ? <RightOutlined /> : <LeftOutlined />}
+              onClick={() => setCollapsed((value) => !value)}
+              className="sider-collapse-button"
+              aria-label={collapsed ? '展开导航' : '收起导航'}
+            />
+          </Tooltip>
+        </div>
       </Sider>
-      
-      <AntLayout>
-        {/* Stripe-style Header */}
-        <Header className="stripe-header">
-          <div className="stripe-header-content">
-            {/* Mobile menu toggle */}
+
+      <AntLayout className="app-main-layout">
+        <Header className="app-header">
+          <div className="app-header-left">
             <Button
               type="text"
               icon={<MenuOutlined />}
               onClick={() => setMobileMenuOpen(true)}
               className="mobile-menu-toggle"
-              style={{
-                fontSize: 18,
-                color: 'var(--deep-navy)',
-              }}
+              aria-label="打开导航菜单"
             />
-            
-            {/* Logo for mobile */}
-            <div className="stripe-header-logo">
-              <img src={vllmAscendLogo} alt="vLLM Ascend" />
+            <div className="mobile-brand">
+              <img src={vllmAscendLogo} alt="" />
             </div>
-
-            <div style={{ flex: 1 }} />
-
-            <Space className="stripe-header-actions" size="middle">
-              {isLoggedIn ? (
-                <Dropdown
-                  menu={{ items: userMenuItems }}
-                  placement="bottomRight"
-                  arrow
-                  className="stripe-user-dropdown"
-                >
-                  <Space className="stripe-user-info" style={{ marginLeft: 'auto' }}>
-                    <Avatar
-                      style={{
-                        backgroundColor: 'var(--stripe-purple)',
-                        cursor: 'pointer',
-                        fontFamily: 'var(--font-primary)',
-                        fontWeight: 'var(--weight-medium)',
-                      }}
-                      icon={<UserOutlined />}
-                      size="large"
-                    >
-                      {getUserInitial()}
-                    </Avatar>
-                    <span className="stripe-username">
-                      {currentUser?.username || '用户'}
-                    </span>
-                    {getRoleTag()}
-                  </Space>
-                </Dropdown>
-              ) : (
-                <Button
-                  type="primary"
-                  icon={<LoginOutlined />}
-                  onClick={() => navigate('/login')}
-                  className="stripe-btn-primary stripe-btn-sm"
-                >
-                  登录
-                </Button>
-              )}
-            </Space>
+            <div className="page-context">
+              <span>{currentPage.section}</span>
+              <strong>{currentPage.title}</strong>
+            </div>
           </div>
+
+          <Space className="app-header-actions" size={10}>
+            <Tooltip title="进入 AI 问题定位">
+              <Button
+                icon={<AlertOutlined />}
+                onClick={() => navigate('/issue-diagnosis')}
+                className="header-action-button"
+                aria-label="进入 AI 问题定位"
+              >
+                快速诊断
+              </Button>
+            </Tooltip>
+            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" arrow>
+              <Button type="text" className="user-menu-trigger" aria-label="打开用户菜单">
+                <Avatar className="user-avatar">
+                  {(currentUser?.username || 'U').charAt(0).toUpperCase()}
+                </Avatar>
+                <span className="user-copy">
+                  <strong>{currentUser?.username || '用户'}</strong>
+                  <span>{roleLabel[currentUser?.role || 'user'] || currentUser?.role}</span>
+                </span>
+              </Button>
+            </Dropdown>
+          </Space>
         </Header>
-        
-        {/* Main Content */}
-        <Content className="stripe-content">
+
+        <Content id="main-content" className="app-content">
           <Outlet />
         </Content>
       </AntLayout>
-      
-      {/* Mobile Drawer Menu */}
+
       <Drawer
-        title="菜单"
+        title={<span className="drawer-title">vLLM Ascend · 导航</span>}
         placement="left"
+        width={304}
         onClose={() => setMobileMenuOpen(false)}
         open={mobileMenuOpen}
-        className="stripe-mobile-drawer"
+        className="app-mobile-drawer"
       >
         <Menu
-          mode="vertical"
-          selectedKeys={[location.pathname]}
-          items={mobileMenuItems}
-          onClick={({ key }) => {
-            navigate(key)
-            setMobileMenuOpen(false)
-          }}
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          items={navigationItems}
+          onClick={handleNavigate}
         />
+        <Tag className="drawer-environment-tag" color="success">Production · 服务运行中</Tag>
       </Drawer>
-      
+
       <ChangePasswordModal
         open={changePasswordModalOpen}
         onClose={() => setChangePasswordModalOpen(false)}

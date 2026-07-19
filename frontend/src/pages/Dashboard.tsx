@@ -1,9 +1,12 @@
-import { Card, Col, Row, Tag, Typography, Space, Skeleton, Tooltip, Progress, Timeline, Button, Divider } from 'antd'
+import { Card, Col, Row, Tag, Typography, Space, Skeleton, Progress, Timeline, Button, Divider } from 'antd'
 import {
+  AlertOutlined,
+  ArrowRightOutlined,
+  CheckCircleFilled,
+  ClockCircleOutlined,
   GithubOutlined,
   SyncOutlined,
   FileTextOutlined,
-  ExportOutlined,
   ExperimentOutlined,
   DashboardOutlined,
 } from '@ant-design/icons'
@@ -85,7 +88,12 @@ function Dashboard() {
   }, [progress])
 
   // 获取每个 workflow 最近一次的 job 结果
-  const { data: workflowResults, isLoading: resultsLoading } = useQuery<WorkflowLatestResult[]>({
+  const {
+    data: workflowResults,
+    isLoading: resultsLoading,
+    isError: resultsError,
+    refetch: refetchWorkflowResults,
+  } = useQuery<WorkflowLatestResult[]>({
     queryKey: ['workflow-latest-results'],
     queryFn: async () => {
       const response = await api.get<WorkflowLatestResult[]>('/ci/workflows/latest')
@@ -94,7 +102,12 @@ function Dashboard() {
   })
 
   // 获取模型最新结果
-  const { data: modelResults, isLoading: modelResultsLoading } = useQuery<ModelLatestResult[]>({
+  const {
+    data: modelResults,
+    isLoading: modelResultsLoading,
+    isError: modelResultsError,
+    refetch: refetchModelResults,
+  } = useQuery<ModelLatestResult[]>({
     queryKey: ['models-latest-results'],
     queryFn: async () => {
       const response = await api.get<ModelLatestResult[]>('/models/latest-results')
@@ -128,18 +141,80 @@ function Dashboard() {
 
   // 获取今日日期 (YYYY-MM-DD 格式)
   const today = dayjs().format('YYYY-MM-DD')
+  const failedConclusions = new Set(['failure', 'timed_out', 'startup_failure', 'action_required'])
+  const workflowTotal = workflowResults?.length || 0
+  const workflowSuccess = workflowResults?.filter((item) => item.latest_run?.conclusion === 'success').length || 0
+  const workflowFailures = workflowResults?.filter((item) => failedConclusions.has(item.latest_run?.conclusion || '')).length || 0
+  const workflowRunning = workflowResults?.filter((item) => item.latest_run?.status === 'in_progress').length || 0
+  const modelTotal = modelResults?.length || 0
+  const modelSuccess = modelResults?.filter((item) => item.status === 'success').length || 0
+  const healthScore = workflowTotal ? Math.round((workflowSuccess / workflowTotal) * 100) : null
+  const nextSync = systemStatus?.scheduler.tasks.ci_sync.next_sync
+  const lastUpdated = systemStatus?.timestamp
 
   return (
     <div className="stripe-dashboard-page">
-      {/* Page Header */}
-      <div className="stripe-dashboard-header">
-        <Title level={3} className="stripe-dashboard-title">
-          <DashboardOutlined className="stripe-dashboard-icon" />
-          仪表盘
-        </Title>
-        <Text className="stripe-dashboard-subtitle">
-          欢迎使用 vLLM Ascend 社区看板管理系统
-        </Text>
+      <div className="dashboard-hero">
+        <div>
+          <div className="dashboard-eyebrow">COMMUNITY OPERATIONS</div>
+          <Title level={2} className="stripe-dashboard-title">社区运营总览</Title>
+          <Text className="stripe-dashboard-subtitle">
+            聚焦当前风险、交付质量与模型验证状态，快速决定下一步行动。
+          </Text>
+        </div>
+        <div className="dashboard-hero-meta">
+          <span className={`system-health-pill ${systemStatus?.database.connected ? 'is-healthy' : 'is-warning'}`}>
+            {systemStatus?.database.connected ? <CheckCircleFilled /> : <AlertOutlined />}
+            {systemStatus?.database.connected ? '核心服务正常' : '服务状态待确认'}
+          </span>
+          <span className="dashboard-updated-at">
+            <ClockCircleOutlined />
+            {lastUpdated ? `更新于 ${dayjs(lastUpdated).fromNow()}` : '正在获取最新状态'}
+          </span>
+        </div>
+      </div>
+
+      <section className="executive-summary" aria-label="关键运营指标">
+        <button className="executive-metric executive-metric-primary" onClick={() => navigate('/ci')}>
+          <span className="executive-metric-label">CI 健康度</span>
+          <strong>{healthScore === null ? '—' : `${healthScore}%`}</strong>
+          <span>{workflowSuccess}/{workflowTotal || 0} 个 Workflow 最近运行成功</span>
+          <ArrowRightOutlined className="executive-metric-arrow" />
+        </button>
+        <button className={`executive-metric ${workflowFailures ? 'executive-metric-danger' : ''}`} onClick={() => navigate('/ci')}>
+          <span className="executive-metric-label">需要关注</span>
+          <strong>{workflowFailures}</strong>
+          <span>{workflowFailures ? '失败或阻塞的 CI 运行' : '当前没有阻塞项'}</span>
+          <ArrowRightOutlined className="executive-metric-arrow" />
+        </button>
+        <button className="executive-metric" onClick={() => navigate('/models')}>
+          <span className="executive-metric-label">模型验证</span>
+          <strong>{modelSuccess}<small> / {modelTotal}</small></strong>
+          <span>最新验证成功的模型</span>
+          <ArrowRightOutlined className="executive-metric-arrow" />
+        </button>
+        <button className="executive-metric" onClick={() => navigate('/ci')}>
+          <span className="executive-metric-label">运行态</span>
+          <strong>{workflowRunning}</strong>
+          <span>{nextSync ? `下次同步 ${dayjs(nextSync).format('HH:mm')}` : '等待同步计划'}</span>
+          <ArrowRightOutlined className="executive-metric-arrow" />
+        </button>
+      </section>
+
+      <div className={`attention-banner ${workflowFailures ? 'has-risk' : 'is-clear'}`}>
+        <div className="attention-banner-icon">
+          {workflowFailures ? <AlertOutlined /> : <CheckCircleFilled />}
+        </div>
+        <div className="attention-banner-copy">
+          <strong>{workflowFailures ? `${workflowFailures} 个交付风险需要处理` : '当前交付链路保持稳定'}</strong>
+          <span>{workflowFailures ? '建议先检查失败 CI，再进入 AI 问题定位完成根因分析。' : '可以继续关注 PR 推进和模型验证趋势。'}</span>
+        </div>
+        <Button
+          type={workflowFailures ? 'primary' : 'default'}
+          onClick={() => navigate(workflowFailures ? '/issue-diagnosis' : '/pr-pipeline')}
+        >
+          {workflowFailures ? '开始诊断' : '查看 PR 流水线'}
+        </Button>
       </div>
 
       {/* Sync Progress Card */}
@@ -213,15 +288,6 @@ function Dashboard() {
         </Col>
       </Row>
 
-      {/* GitHub Activity Section */}
-      <div className="stripe-dashboard-section">
-        <Title level={4} className="stripe-section-title">
-          <GithubOutlined className="stripe-section-icon" />
-          项目动态
-        </Title>
-        <GitHubActivityPanel />
-      </div>
-
       {/* CI Latest Results */}
       <div className="stripe-dashboard-section">
         <Title level={4} className="stripe-section-title">
@@ -246,10 +312,16 @@ function Dashboard() {
             </Space>
           </div>
 
-        {resultsLoading ? (
+        {resultsError ? (
+          <div className="dashboard-error-state" role="alert">
+            <AlertOutlined />
+            <div><strong>CI 数据暂时不可用</strong><span>这不是“暂无数据”，请重试或检查后端服务。</span></div>
+            <Button onClick={() => refetchWorkflowResults()}>重新加载</Button>
+          </div>
+        ) : resultsLoading ? (
           <Row gutter={16} className="stripe-results-grid">
             {[1, 2, 3, 4].map((i) => (
-              <Col span={6} key={i}>
+              <Col xs={24} sm={12} xl={6} key={i}>
                 <Skeleton active />
               </Col>
             ))}
@@ -269,7 +341,7 @@ function Dashboard() {
               const accentColor = getAccentColor(result.latest_run?.conclusion)
 
               return (
-                <Col span={6} key={result.workflow_name}>
+                <Col xs={24} sm={12} xl={6} key={result.workflow_name}>
                   <Card
                     hoverable
                     size="small"
@@ -388,10 +460,16 @@ function Dashboard() {
             </Space>
           </div>
 
-        {modelResultsLoading ? (
+        {modelResultsError ? (
+          <div className="dashboard-error-state" role="alert">
+            <AlertOutlined />
+            <div><strong>模型结果暂时不可用</strong><span>服务请求失败，请稍后重试。</span></div>
+            <Button onClick={() => refetchModelResults()}>重新加载</Button>
+          </div>
+        ) : modelResultsLoading ? (
           <Row gutter={[16, 16]} className="stripe-results-grid">
             {[1, 2, 3, 4].map((i) => (
-              <Col span={6} key={i}>
+              <Col xs={24} sm={12} xl={6} key={i}>
                 <Skeleton active />
               </Col>
             ))}
@@ -410,7 +488,7 @@ function Dashboard() {
               const accentColor = getAccentColor(model.status)
 
               return (
-                <Col span={6} key={model.model_id}>
+                <Col xs={24} sm={12} xl={6} key={model.model_id}>
                   <Card
                     hoverable
                     size="small"
@@ -502,6 +580,14 @@ function Dashboard() {
           </div>
         )}
         </Card>
+      </div>
+
+      <div className="stripe-dashboard-section dashboard-activity-section">
+        <Title level={4} className="stripe-section-title">
+          <GithubOutlined className="stripe-section-icon" />
+          社区项目动态
+        </Title>
+        <GitHubActivityPanel />
       </div>
     </div>
   )

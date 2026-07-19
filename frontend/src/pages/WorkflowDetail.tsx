@@ -440,7 +440,7 @@ function WorkflowDetail() {
             pageSize: 20,
             showSizeChanger: false,
           }}
-          scroll={{ x: 1800 }}
+          scroll={{ x: 'max-content' }}
           onChange={(_, filters) => {
             if (filters.conclusion) {
               setConclusionFilter(filters.conclusion as string[])
