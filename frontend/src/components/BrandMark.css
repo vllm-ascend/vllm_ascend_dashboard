@@ -1,0 +1,24 @@
+.brand-logo-image {
+  display: block;
+  width: 142px;
+  height: auto;
+  max-width: none;
+  object-fit: contain;
+}
+
+.landing-logo .brand-logo-image { width: 164px; height: auto; }
+.preview-brand .brand-logo-image { width: 98px; height: auto; }
+.signal-core .brand-logo-image { width: 46px; height: auto; }
+.login-brand .brand-logo-image { width: 154px; height: auto; }
+.app-brand .brand-logo-image { width: 144px; height: auto; }
+.mobile-brand .brand-logo-image { width: 110px; height: auto; }
+
+.ant-layout-sider-collapsed .app-brand .brand-logo-image {
+  width: 56px;
+  transform: scale(.76);
+}
+
+@media (max-width: 680px) {
+  .landing-logo .brand-logo-image { width: 126px; }
+  .login-brand .brand-logo-image { width: 138px; }
+}

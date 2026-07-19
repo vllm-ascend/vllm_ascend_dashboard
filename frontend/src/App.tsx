@@ -1,9 +1,10 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ConfigProvider, Spin } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 
 import Login from './pages/Login'
+import Landing from './pages/Landing'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import CIBoard from './pages/CIBoard'
@@ -36,6 +37,7 @@ import TestObservabilityDashboard from './pages/TestObservabilityDashboard'
 import LogCenter from './pages/LogCenter'
 import ShareReport from './pages/ShareReport'
 import { useCurrentUser } from './hooks/useCurrentUser'
+import { appBasePath } from './utils/basePath'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -48,12 +50,14 @@ const queryClient = new QueryClient({
 })
 
 // 需要登录的路由保护组件
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedRoute({ children, allowLanding = false }: { children: React.ReactNode; allowLanding?: boolean }) {
   const token = localStorage.getItem('access_token')
+  const location = useLocation()
   const { data: currentUser, isLoading, error } = useCurrentUser()
 
   // 首先检查 token 是否存在
   if (!token) {
+    if (allowLanding && location.pathname === '/') return <Landing />
     return <Navigate to="/login" replace />
   }
 
@@ -142,7 +146,7 @@ function App() {
           },
         }}
       >
-        <BrowserRouter>
+        <BrowserRouter basename={appBasePath}>
           <Routes>
             {/* 公开分享页面 */}
             <Route path="/share/:token" element={<ShareReport />} />
@@ -153,7 +157,7 @@ function App() {
 
             {/* 需要登录的路由（默认） */}
             <Route path="/" element={
-              <ProtectedRoute>
+              <ProtectedRoute allowLanding>
                 <Layout />
               </ProtectedRoute>
             }>

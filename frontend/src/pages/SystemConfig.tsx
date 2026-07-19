@@ -101,6 +101,15 @@ function AgentAnalysisConfigTab() {
   return (
     <Card title={<Space><CodeOutlined />Agent 分析配置</Space>} size="small">
       <Form form={form} layout="inline" onFinish={(v) => mutation.mutate(v)}>
+        <Form.Item name="runtime" label="运行方式" rules={[{ required: true }]}>
+          <Select
+            style={{ width: 180 }}
+            options={[
+              { value: 'claude_cli', label: 'Claude Code CLI' },
+              { value: 'custom_agent', label: '自定义 Agent' },
+            ]}
+          />
+        </Form.Item>
         <Form.Item name="max_turns" label="最大轮次" rules={[{ required: true }]}>
           <InputNumber min={3} max={100} style={{ width: 100 }} />
         </Form.Item>
@@ -112,7 +121,7 @@ function AgentAnalysisConfigTab() {
         </Form.Item>
       </Form>
       <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
-        修改后下次分析生效。当前值：最大 {config?.max_turns ?? 80} 轮，超时 {(config?.timeout_seconds ?? 1800) / 60} 分钟。Agent 使用 Docker LiteLLM / formatproxy，不使用本地 Claude CLI。
+        修改后下次分析生效。当前运行方式：{config?.runtime === 'custom_agent' ? '自定义 Agent' : 'Claude Code CLI'}；最大 {config?.max_turns ?? 80} 轮，超时 {(config?.timeout_seconds ?? 1800) / 60} 分钟。升级后默认保持 Claude Code CLI，只有手动选择后才启用自定义 Agent。
       </div>
     </Card>
   )
@@ -2919,4 +2928,3 @@ function SystemConfig() {
 }
 
 export default SystemConfig
-

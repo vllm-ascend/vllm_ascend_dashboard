@@ -5,6 +5,8 @@ import {
   GithubOutlined,
   BarChartOutlined,
   RobotOutlined,
+  ExclamationCircleOutlined,
+  SettingOutlined,
 } from '@ant-design/icons'
 import { useCIStats, useRuns, useCITrends } from '../hooks/useCI'
 import { useAnalyzeBatch } from '../hooks/useFailureAnalysis'
@@ -17,6 +19,8 @@ import { renderStatusTag, renderConclusionTag, formatDuration, renderHardwareTag
 import { CIResult } from '../services/ci'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts'
 import JobBoard from './JobBoard'
+import DailyFailureTracking from './DailyFailureTracking'
+import NightlyTestCaseConfig from './NightlyTestCaseConfig'
 import './CIBoard.css'
 
 dayjs.extend(relativeTime)
@@ -45,7 +49,11 @@ function CIBoard() {
 
   // 根据 URL 参数设置默认 Tab
   const [activeTab, setActiveTab] = useState(() => {
-    return searchParams.get('tab') === 'job' ? 'job' : 'workflow'
+    const tab = searchParams.get('tab')
+    if (tab === 'job') return 'job'
+    if (tab === 'daily-failure') return 'daily-failure'
+    if (tab === 'test-case-config') return 'test-case-config'
+    return 'workflow'
   })
 
   // 获取启用的 workflow 列表
@@ -384,6 +392,26 @@ function CIBoard() {
               </Space>
             ),
             children: <JobBoard />,
+          },
+          {
+            key: 'daily-failure',
+            label: (
+              <Space>
+                <ExclamationCircleOutlined />
+                <span>每日失败追踪</span>
+              </Space>
+            ),
+            children: <DailyFailureTracking />,
+          },
+          {
+            key: 'test-case-config',
+            label: (
+              <Space>
+                <SettingOutlined />
+                <span>用例配置</span>
+              </Space>
+            ),
+            children: <NightlyTestCaseConfig />,
           },
         ]}
       />

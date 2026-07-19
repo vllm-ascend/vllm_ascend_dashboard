@@ -56,9 +56,12 @@
   align-items: center;
   gap: 13px;
   margin-bottom: clamp(72px, 11vh, 132px);
+  color: inherit;
+  text-decoration: none;
 }
 
-.login-brand img {
+.login-brand img,
+.login-brand svg {
   width: 46px;
   height: 46px;
   object-fit: contain;
@@ -179,6 +182,26 @@
 .login-card .ant-card-body {
   padding: 0;
 }
+
+.auth-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 34px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color .18s ease, transform .18s ease;
+}
+
+.auth-back-link:hover { color: var(--brand-600); transform: translateX(-2px); }
+
+.auth-progress { display: flex; align-items: center; gap: 12px; margin-top: 52px; color: #8293b2; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.auth-progress span { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.auth-progress i { display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 50%; font-style: normal; }
+.auth-progress .is-active { color: #fff; }.auth-progress .is-active i { color: #fff; background: var(--brand-600); border-color: var(--brand-500); }
+.auth-progress b { width: 24px; height: 1px; background: rgba(255,255,255,.15); }
 
 .login-card-header {
   display: flex;
@@ -306,7 +329,8 @@
   }
 
   .login-value-list,
-  .login-system-status {
+  .login-system-status,
+  .auth-progress {
     display: none;
   }
 

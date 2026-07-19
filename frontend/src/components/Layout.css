@@ -217,7 +217,22 @@
 
 .app-main-layout {
   min-width: 0;
-  background: var(--surface-canvas) !important;
+  position: relative;
+  background:
+    radial-gradient(circle at 78% -8%, rgba(111,92,255,.09), transparent 30rem),
+    radial-gradient(circle at 18% 105%, rgba(56,189,248,.05), transparent 26rem),
+    var(--surface-canvas) !important;
+}
+
+.app-main-layout::before {
+  position: fixed;
+  inset: 72px 0 0 264px;
+  pointer-events: none;
+  content: '';
+  opacity: .18;
+  background-image: linear-gradient(rgba(80,92,125,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(80,92,125,.08) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(to bottom, #000, transparent 55%);
 }
 
 .app-header {
@@ -227,9 +242,10 @@
   height: 72px;
   padding: 0 28px;
   line-height: normal;
-  background: rgba(244, 247, 251, 0.82) !important;
+  background: rgba(247, 249, 253, 0.74) !important;
   border-bottom: 1px solid rgba(218, 226, 238, 0.88);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 0 1px 0 rgba(255,255,255,.85), 0 10px 32px rgba(25,35,68,.035);
 }
 
 .app-header,
@@ -328,10 +344,13 @@
 
 .app-content {
   width: 100%;
+  max-width: 1720px;
   min-height: calc(100vh - 72px);
   margin: 0 auto;
   padding: 28px 32px 48px;
   background: transparent;
+  position: relative;
+  z-index: 1;
 }
 
 .app-content > * {
@@ -385,7 +404,8 @@
     display: inline-flex;
   }
 
-  .mobile-brand img {
+  .mobile-brand img,
+  .mobile-brand svg {
     width: 32px;
     height: 32px;
     object-fit: contain;
@@ -394,6 +414,8 @@
   .app-content {
     padding-inline: 22px;
   }
+
+  .app-main-layout::before { left: 0; }
 }
 
 @media (max-width: 640px) {

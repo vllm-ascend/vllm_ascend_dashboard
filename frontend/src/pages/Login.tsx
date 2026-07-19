@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Button, Card, Form, Input, message } from 'antd'
 import {
+  ArrowLeftOutlined,
   ArrowRightOutlined,
   CheckCircleFilled,
   LockOutlined,
@@ -8,9 +9,10 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { login } from '../services/auth'
-import vllmAscendLogo from '../assets/vllm-ascend-logo.png'
+import BrandMark from '../components/BrandMark'
 import './Login.css'
 
 interface LoginFormValues {
@@ -52,13 +54,12 @@ function Login() {
     <main className="login-page">
       <section className="login-story" aria-label="产品介绍">
         <div className="login-story-inner">
-          <div className="login-brand">
-            <img src={vllmAscendLogo} alt="vLLM Ascend" />
+          <Link className="login-brand" to="/" aria-label="返回 vLLM Ascend 首页">
+            <BrandMark title="vLLM Ascend" />
             <div>
-              <strong>vLLM Ascend</strong>
               <span>Community Operations</span>
             </div>
-          </div>
+          </Link>
 
           <div className="login-story-copy">
             <span className="login-kicker">COMMUNITY INTELLIGENCE</span>
@@ -80,7 +81,8 @@ function Login() {
       </section>
 
       <section className="login-access" aria-label="账号登录">
-        <Card className="login-card" bordered={false}>
+        <Card className="login-card" variant="borderless">
+          <Link className="auth-back-link" to="/"><ArrowLeftOutlined /> 返回首页</Link>
           <div className="login-card-header">
             <div className="login-security-icon"><SafetyCertificateOutlined /></div>
             <span>安全访问</span>

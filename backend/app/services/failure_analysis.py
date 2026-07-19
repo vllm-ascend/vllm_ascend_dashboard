@@ -60,16 +60,18 @@ class FailureAnalysisService:
         result = await db.execute(stmt)
         row = result.scalar_one_or_none()
         if row and row.config_value:
-            return dict(row.config_value)
-        # One-time compatibility with the former UI storage key. This reads
-        # runtime limits only; no Claude CLI execution path is reintroduced.
+            return {"runtime": "claude_cli", **dict(row.config_value)}
+        # One-time compatibility with the former UI storage key. Legacy rows
+        # contain only limits and therefore intentionally stay on Claude CLI.
         legacy_stmt = select(ProjectDashboardConfig).where(
             ProjectDashboardConfig.config_key == "claude_code_cli_config"
         )
         legacy = (await db.execute(legacy_stmt)).scalar_one_or_none()
         if legacy and legacy.config_value:
-            return dict(legacy.config_value)
-        return {"max_turns": 80, "timeout_seconds": 1800}
+            return {"runtime": "claude_cli", **dict(legacy.config_value)}
+        # Safe upgrade default: keep the established Claude Code CLI path until
+        # an administrator explicitly enables the custom evidence Agent.
+        return {"runtime": "claude_cli", "max_turns": 80, "timeout_seconds": 1800}
 
     def _get_default_prompt(self) -> str:
         from app.services.skill_registry import get_skill_registry
@@ -227,6 +229,10 @@ class FailureAnalysisService:
 
         # 浠庢暟鎹簱璇诲彇 CLI 閰嶇疆锛堥粯璁ゅ€煎厹搴曪級
         agent_config = await self._get_agent_config(db)
+        runtime = str(agent_config.get("runtime", "claude_cli")).strip().lower()
+        if runtime not in {"claude_cli", "custom_agent"}:
+            logger.warning("Unknown failure-analysis runtime %r; using claude_cli", runtime)
+            runtime = "claude_cli"
         max_turns_val = max(3, min(int(agent_config.get("max_turns", 80)), 100))
         timeout_val = max(60, min(int(agent_config.get("timeout_seconds", 1800)), 7200))
         system_prompt = await self._get_system_prompt(db)
@@ -255,22 +261,37 @@ class FailureAnalysisService:
         await db.refresh(analysis)
 
         try:
-            # Failure analysis is Agent-only. AgentService enforces the Docker
-            # LiteLLM proxy and fails closed; there is no local CLI fallback.
-            llm_result = await self._run_evidence_pipeline(
-                job_context=user_prompt,
-                provider_config={
-                    "provider": llm_config.provider,
-                    "api_key": llm_config.decrypted_api_key,
-                    "api_base_url": llm_config.api_base_url,
-                    "default_model": llm_config.default_model,
-                },
-                system_prompt=system_prompt,
-                analysis=analysis,
-                db=db,
-                max_steps=max_turns_val,
-                timeout_seconds=timeout_val,
-            )
+            provider_config = {
+                "provider": llm_config.provider,
+                "api_key": llm_config.decrypted_api_key,
+                "api_base_url": llm_config.api_base_url,
+                "default_model": llm_config.default_model,
+            }
+            if runtime == "custom_agent":
+                llm_result = await self._run_evidence_pipeline(
+                    job_context=user_prompt,
+                    provider_config=provider_config,
+                    system_prompt=system_prompt,
+                    analysis=analysis,
+                    db=db,
+                    max_steps=max_turns_val,
+                    timeout_seconds=timeout_val,
+                )
+                executed_steps = llm_result.steps
+            else:
+                from app.services.claude_code_cli import run_with_fallback
+
+                logger.info("Failure analysis job %s routed to claude-code-cli", job_id)
+                analysis.analysis_phase = "claude_cli"
+                llm_result = await run_with_fallback(
+                    prompt=user_prompt,
+                    provider_config=provider_config,
+                    system_prompt=system_prompt,
+                    max_turns=max_turns_val,
+                    timeout_seconds=timeout_val,
+                    output_format="json",
+                )
+                executed_steps = llm_result.turns
             # 娓呮礂 GLM-5.1 鐨?<think> 鍜?tool call 鍣煶
             raw = llm_result.content
             raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
@@ -279,10 +300,10 @@ class FailureAnalysisService:
             raw = re.sub(r'LOGS=\$.*?(?=\n\n|\n#|\Z)', '', raw, flags=re.DOTALL)
 
             # CLI 娌℃湁瀹為檯杩愯锛坱urns=0 鎴栬緭鍑哄お鐭級
-            if llm_result.steps == 0 and len(raw.strip()) < 50:
+            if executed_steps == 0 and len(raw.strip()) < 50:
                 raise RuntimeError(
-                    "Agent did not produce a valid analysis: "
-                    f"steps={llm_result.steps}, content_len={len(raw)}"
+                    f"{runtime} did not produce a valid analysis: "
+                    f"steps={executed_steps}, content_len={len(raw)}"
                 )
 
             # 妫€娴?LLM/API 灞傞敊璇細CLI 浼氭妸涓婃父 API 閿欒锛堝 400 Invalid model name锛?
@@ -308,7 +329,7 @@ class FailureAnalysisService:
                 )
 
             parsed = self.parse_llm_response(raw)
-            if (
+            if runtime == "custom_agent" and (
                 (analysis.validation_result or {}).get("verdict") not in {"pass", "likely"}
                 and not any(
                     marker in parsed.get("root_cause_summary", "").lower()
