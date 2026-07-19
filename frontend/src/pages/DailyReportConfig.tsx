@@ -12,8 +12,8 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import {
-  useReportConfig, useUpdateReportConfig, useTriggerReport,
-  useReportHistory, useLatestReport,
+  useReportConfig, useUpdateReportConfig,
+  useReportHistory, useLatestReport, useGenerateReportDraft, useSendReportDraft,
 } from '../hooks/useDailyReport'
 import type { DailyReportConfigUpdate, DailyReportHistoryItem } from '../services/dailyReport'
 import { useCurrentUser } from '../hooks/useCurrentUser'
@@ -23,13 +23,22 @@ import './DailyReportConfig.tsx.css'
 
 const { Text, Title } = Typography
 
+const reportStatusLabel = (status: string) => ({
+  generating: '生成中',
+  draft: '草稿待确认',
+  sending: '发送中',
+  sent: '已发送',
+  failed: '失败',
+}[status] || status)
+
 function DailyReportConfigPage() {
   const { data: currentUser } = useCurrentUser()
   const isSuperAdmin = currentUser?.role === 'super_admin'
 
   const { data: config, isLoading: configLoading } = useReportConfig()
   const updateConfig = useUpdateReportConfig()
-  const triggerReport = useTriggerReport()
+  const generateDraft = useGenerateReportDraft()
+  const sendDraft = useSendReportDraft()
   const { data: historyData, isLoading: historyLoading } = useReportHistory(20, 0)
   const { data: latestData, isLoading: latestLoading } = useLatestReport()
 
@@ -38,6 +47,33 @@ function DailyReportConfigPage() {
   const [triggering, setTriggering] = useState(false)
   const [triggerResult, setTriggerResult] = useState<{ success: boolean; message: string } | null>(null)
   const [triggerDate, setTriggerDate] = useState<string>('')
+
+  const handleGenerateDraft = async () => {
+    setTriggering(true)
+    setTriggerResult(null)
+    try {
+      const result = await generateDraft.mutateAsync(triggerDate || undefined)
+      setTriggerResult({ success: result.success, message: result.message })
+      if (result.success) Modal.success({ title: '草稿已生成', content: '请检查最新报告，确认内容后再发送。' })
+    } catch (err: unknown) {
+      setTriggerResult({ success: false, message: err instanceof Error ? err.message : '生成草稿失败' })
+    } finally {
+      setTriggering(false)
+    }
+  }
+
+  const handleSendDraft = (reportId: number) => {
+    Modal.confirm({
+      title: '确认发送这份日报？',
+      content: '邮件将使用当前预览内容，不会重新调用 AI 生成。',
+      okText: '确认发送',
+      cancelText: '继续检查',
+      onOk: async () => {
+        const result = await sendDraft.mutateAsync(reportId)
+        if (!result.success) throw new Error(result.message)
+      },
+    })
+  }
 
   const handleSaveConfig = async () => {
     try {
@@ -65,25 +101,6 @@ function DailyReportConfigPage() {
     }
   }
 
-  const handleTrigger = async () => {
-    setTriggering(true)
-    setTriggerResult(null)
-    try {
-      const result = await triggerReport.mutateAsync(triggerDate || undefined)
-      setTriggerResult({ success: result.success, message: result.message })
-      if (result.success) {
-        Modal.success({ title: '发送成功', content: `报告已发送，日期: ${result.report_date}` })
-      } else {
-        Modal.error({ title: '发送失败', content: result.message })
-      }
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : '未知错误'
-      setTriggerResult({ success: false, message: errMsg })
-    } finally {
-      setTriggering(false)
-    }
-  }
-
   const renderSummaryCard = (label: string, value: string | number, className = '') => (
     <div className={`report-summary-card ${className}`}>
       <div className="value">{value}</div>
@@ -105,7 +122,7 @@ function DailyReportConfigPage() {
           <Descriptions.Item label="报告日期">{report.report_date}</Descriptions.Item>
           <Descriptions.Item label="状态">
             <Tag color={report.status === 'sent' ? 'green' : report.status === 'failed' ? 'red' : 'orange'}>
-              {report.status === 'sent' ? '已发送' : report.status === 'failed' ? '发送失败' : '待发送'}
+              {reportStatusLabel(report.status)}
             </Tag>
           </Descriptions.Item>
         </Descriptions>
@@ -205,7 +222,7 @@ function DailyReportConfigPage() {
         <Space size={4}>
           <span className={`report-status-dot ${status}`} />
           <Tag color={status === 'sent' ? 'green' : status === 'failed' ? 'red' : 'orange'}>
-            {status === 'sent' ? '已发送' : status === 'failed' ? '失败' : '待发送'}
+            {reportStatusLabel(status)}
           </Tag>
         </Space>
       ),
@@ -243,26 +260,42 @@ function DailyReportConfigPage() {
   return (
     <div className="stripe-page-container">
       <div className="stripe-page-header">
-        <Title level={3} className="stripe-page-title">
-          <MailOutlined className="stripe-page-icon" />
-          每日运行报告
-        </Title>
+        <div className="report-page-heading">
+          <span className="report-page-kicker">REPORTING OPERATIONS</span>
+          <Title level={3} className="stripe-page-title">每日运行报告</Title>
+          <Text>把分散的工程信号整理成可审核、可行动、可追踪的社区日报。</Text>
+        </div>
         {isSuperAdmin && (
           <Space>
-            <Tooltip title="手动触发报告生成和发送">
+            <Tooltip title="生成草稿，不会立即发送邮件">
               <Button
                 type="primary"
                 icon={<SendOutlined />}
                 loading={triggering}
-                onClick={handleTrigger}
+                onClick={handleGenerateDraft}
                 className="stripe-btn-primary"
               >
-                手动发送
+                生成日报草稿
               </Button>
             </Tooltip>
           </Space>
         )}
       </div>
+
+      <section className="report-overview" aria-label="日报运行状态">
+        <div className="report-overview-item">
+          <span className="report-overview-icon"><ClockCircleOutlined /></span>
+          <div><small>计划发送</small><strong>{config?.report_enabled ? `${String(config.report_schedule_hour).padStart(2, '0')}:${String(config.report_schedule_minute).padStart(2, '0')}` : '未启用'}</strong><em>Asia / Shanghai</em></div>
+        </div>
+        <div className="report-overview-item">
+          <span className="report-overview-icon"><MailOutlined /></span>
+          <div><small>收件范围</small><strong>{config?.report_recipients ? config.report_recipients.split(',').filter(Boolean).length : 0} 人</strong><em>{config?.report_cc_recipients ? '包含抄送人' : '无抄送'}</em></div>
+        </div>
+        <div className="report-overview-item">
+          <span className="report-overview-icon"><HistoryOutlined /></span>
+          <div><small>最新报告</small><strong>{latestData && !('message' in latestData) ? reportStatusLabel(latestData.status) : '暂无记录'}</strong><em>{latestData && !('message' in latestData) ? latestData.report_date : '等待首次生成'}</em></div>
+        </div>
+      </section>
 
       {config?.report_enabled && (
         <Alert
@@ -357,8 +390,8 @@ function DailyReportConfigPage() {
         </Card>
       )}
 
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={isSuperAdmin ? 14 : 24}>
+      <Row gutter={[20, 20]} className="report-workspace">
+        <Col xs={24} xl={isSuperAdmin ? 14 : 24}>
           <Card
             className="stripe-card"
             title={<Space><HistoryOutlined />发送历史</Space>}
@@ -376,7 +409,7 @@ function DailyReportConfigPage() {
           </Card>
         </Col>
         {isSuperAdmin && (
-          <Col span={10}>
+          <Col xs={24} xl={10}>
             <Space direction="vertical" style={{ width: '100%' }} size={16}>
               <Card className="stripe-card" title={<Space><SendOutlined />手动触发</Space>} size="small">
                 <Form layout="inline">
@@ -392,16 +425,29 @@ function DailyReportConfigPage() {
                       type="primary"
                       icon={<SendOutlined />}
                       loading={triggering}
-                      onClick={handleTrigger}
+                      onClick={handleGenerateDraft}
                     >
-                      发送
+                      生成草稿
                     </Button>
                   </Form.Item>
                 </Form>
                 <div className="smtp-password-hint" style={{ marginTop: 8 }}>
-                  <InfoCircleOutlined /> 手动触发会立即生成报告并发送邮件
+                  <InfoCircleOutlined /> 先生成草稿并检查内容，确认后才会发送邮件
                 </div>
               </Card>
+              {latestData && !('message' in latestData) && latestData.status === 'draft' && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="草稿等待确认"
+                  description="请检查下方数据和 AI 内容。发送时会使用当前预览，不会重新生成正文。"
+                  action={
+                    <Button type="primary" icon={<SendOutlined />} loading={sendDraft.isPending} onClick={() => handleSendDraft(latestData.id)}>
+                      确认并发送
+                    </Button>
+                  }
+                />
+              )}
               {renderLatestReport()}
             </Space>
           </Col>
