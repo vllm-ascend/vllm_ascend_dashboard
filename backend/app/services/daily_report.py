@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.email import get_smtp_config, send_email
-from app.models import CIResult, ModelConfig, ModelReport, PerformanceData, ProjectDashboardConfig, DailyReportHistory
+from app.models import ModelConfig, ModelReport, PerformanceData, ProjectDashboardConfig, DailyReportHistory
+from app.models.test_board import TestRun
 from app.services.daily_data_file_store import DailyDataFileStore
 
 logger = logging.getLogger(__name__)
@@ -108,48 +109,84 @@ class DailyReportService:
             }
 
             if window_key == "yesterday":
-                report_data[window_key]["resource"] = await self._collect_resource_data()
-                report_data[window_key]["test"] = await self._collect_test_data()
-                report_data[window_key]["pr_pipeline"] = await self._collect_pr_pipeline_data()
+                report_data[window_key]["resource"] = await self._collect_resource_data(start_dt, end_dt)
+                report_data[window_key]["test"] = await self._collect_test_data(start_dt, end_dt)
+                report_data[window_key]["pr_pipeline"] = await self._collect_pr_pipeline_data(start_dt, end_dt)
                 report_data[window_key]["diagnosis_stats"] = await self._collect_diagnosis_stats(start_dt, end_dt)
 
-        return {"report_date": report_date.isoformat(), **report_data}
+        return {
+            "report_date": report_date.isoformat(),
+            "timezone": "Asia/Shanghai",
+            "report_window": {
+                "start": f"{report_date.isoformat()}T00:00:00+08:00",
+                "end": f"{report_date.isoformat()}T23:59:59.999999+08:00",
+            },
+            **report_data,
+        }
 
     async def _collect_ci_data(self, start_dt, end_dt) -> dict:
-        """采集 CI 运行概况"""
-        stmt = select(CIResult).where(
-            CIResult.started_at >= start_dt,
-            CIResult.started_at <= end_dt,
-            CIResult.status == "completed",
+        """Collect executed test-case results from the Nightly A2/A3 workflows."""
+        stmt = select(TestRun).where(
+            TestRun.started_at >= start_dt,
+            TestRun.started_at <= end_dt,
+            TestRun.workflow_name.isnot(None),
         )
         result = await self.db.execute(stmt)
-        runs = result.scalars().all()
+        nightly_cases = []
+        for run in result.scalars().all():
+            workflow = run.workflow_name.lower().replace("_", "-").replace(" ", "-")
+            hardware = "A2" if "a2" in workflow else "A3" if "a3" in workflow else None
+            if "nightly" not in workflow or hardware is None:
+                continue
+            normalized_result = (run.result or "").lower()
+            if normalized_result not in {"passed", "pass", "success", "failed", "fail", "failure", "error"}:
+                continue
+            nightly_cases.append((run, hardware, normalized_result))
 
-        total = len(runs)
-        success = sum(1 for r in runs if r.conclusion == "success")
-        failure = sum(1 for r in runs if r.conclusion == "failure")
-        rate = (success / total * 100) if total > 0 else 0.0
-        avg_dur = (
-            sum(r.duration_seconds or 0 for r in runs) / total if total > 0 else None
-        )
+        total = len(nightly_cases)
+        passed = sum(1 for _, _, value in nightly_cases if value in {"passed", "pass", "success"})
+        failed = total - passed
+        rate = (passed / total * 100) if total else 0.0
+        durations = [run.duration_seconds for run, _, _ in nightly_cases if run.duration_seconds is not None]
+        avg_dur = sum(durations) / len(durations) if durations else None
 
-        failed_wfs = []
-        for r in runs:
-            if r.conclusion == "failure":
-                failed_wfs.append({
-                    "workflow_name": r.workflow_name,
-                    "run_number": r.run_number,
-                    "duration_seconds": r.duration_seconds or 0,
-                    "hardware": r.hardware,
-                })
+        hardware_stats = []
+        for hardware in ("A2", "A3"):
+            cases = [item for item in nightly_cases if item[1] == hardware]
+            hardware_passed = sum(1 for _, _, value in cases if value in {"passed", "pass", "success"})
+            hardware_stats.append({
+                "hardware": hardware,
+                "total_cases": len(cases),
+                "passed_cases": hardware_passed,
+                "failed_cases": len(cases) - hardware_passed,
+                "pass_rate": (hardware_passed / len(cases) * 100) if cases else 0.0,
+            })
+
+        failed_workflows = [
+            {
+                "workflow_name": f"Nightly {item['hardware']}",
+                "hardware": item["hardware"],
+                "total_cases": item["total_cases"],
+                "failed_cases": item["failed_cases"],
+                "pass_rate": item["pass_rate"],
+            }
+            for item in hardware_stats
+            if item["failed_cases"] > 0
+        ]
 
         return {
+            "total_cases": total,
+            "passed_cases": passed,
+            "failed_cases": failed,
+            "pass_rate": rate,
+            "by_hardware": hardware_stats,
+            # Compatibility aliases for existing charts/templates and stored reports.
             "total_runs": total,
-            "success_runs": success,
-            "failure_runs": failure,
+            "success_runs": passed,
+            "failure_runs": failed,
             "success_rate": rate,
             "avg_duration_seconds": avg_dur,
-            "failed_workflows": failed_wfs,
+            "failed_workflows": failed_workflows,
         }
 
     async def _collect_model_data(self, start_dt, end_dt) -> dict:
@@ -274,12 +311,14 @@ class DailyReportService:
             "avg_p99_latency": sum(p99_latencies) / len(p99_latencies) if p99_latencies else None,
         }
 
-    async def _collect_resource_data(self) -> dict:
+    async def _collect_resource_data(self, start_dt, end_dt) -> dict:
         """采集资源看板 NPU 利用率概况"""
         try:
             from app.services.resource_metrics import ResourceMetricsService
             svc = ResourceMetricsService(self.db)
-            data = await svc.query_npu_metrics(time_range="24h")
+            data = await svc.query_npu_metrics(
+                time_range="24h", start_time=start_dt, end_time=end_dt
+            )
             clusters = []
             for c in data.get("clusters", []):
                 metrics = c.get("metrics", [])
@@ -299,28 +338,54 @@ class DailyReportService:
             logger.warning(f"Failed to collect resource data: {e}")
             return {"clusters": []}
 
-    async def _collect_test_data(self) -> dict:
+    async def _collect_test_data(self, start_dt, end_dt) -> dict:
         """采集测试看板概况"""
         try:
-            from app.services.test_board_service import TestBoardService
-            svc = TestBoardService(self.db)
-            overview = await svc.get_overview(days=1)
+            from app.models.test_board import TestRun
+
+            rows = list((await self.db.execute(
+                select(TestRun).where(
+                    TestRun.started_at >= start_dt,
+                    TestRun.started_at <= end_dt,
+                )
+            )).scalars().all())
+            passed = sum(1 for row in rows if row.result in {"passed", "pass", "success"})
+            flaky_cases = len({row.test_case_id for row in rows if row.flip_detected})
             return {
-                "health_score": overview.get("health_score", {}),
-                "total_cases": overview.get("total_cases", 0),
-                "pass_rate_7d": overview.get("pass_rate_7d", 0),
-                "flaky_case_count": overview.get("flaky_case_count", 0),
+                "health_score": {},
+                "total_cases": len(rows),
+                "pass_rate_7d": round(passed / len(rows), 3) if rows else 0,
+                "flaky_case_count": flaky_cases,
             }
         except Exception as e:
             logger.warning(f"Failed to collect test data: {e}")
             return {}
 
-    async def _collect_pr_pipeline_data(self) -> dict:
+    async def _collect_pr_pipeline_data(self, start_dt, end_dt) -> dict:
         """采集 PR 流水线概况"""
         try:
+            from app.models import PullRequest
             from app.services.pr_pipeline_service import PRPipelineService
             svc = PRPipelineService()
             overview = await svc.get_overview(self.db, settings.GITHUB_OWNER, settings.GITHUB_REPO, days=1)
+            base_conditions = (
+                PullRequest.owner == settings.GITHUB_OWNER,
+                PullRequest.repo == settings.GITHUB_REPO,
+            )
+            opened_count = (await self.db.execute(
+                select(func.count(PullRequest.id)).where(
+                    *base_conditions,
+                    PullRequest.created_at >= start_dt,
+                    PullRequest.created_at <= end_dt,
+                )
+            )).scalar() or 0
+            merged_count = (await self.db.execute(
+                select(func.count(PullRequest.id)).where(
+                    *base_conditions,
+                    PullRequest.merged_at >= start_dt,
+                    PullRequest.merged_at <= end_dt,
+                )
+            )).scalar() or 0
             return {
                 "open_count": overview.open_count,
                 "merged_count": overview.merged_count,
@@ -329,8 +394,8 @@ class DailyReportService:
                 "backlog_level": overview.backlog_level,
                 "merge_rate": overview.merge_rate,
                 "avg_time_to_merge_hours": overview.avg_time_to_merge_hours,
-                "recent_opened_count": overview.recent_opened_count,
-                "recent_merged_count": overview.recent_merged_count,
+                "recent_opened_count": opened_count,
+                "recent_merged_count": merged_count,
             }
         except Exception as e:
             logger.warning(f"Failed to collect PR pipeline data: {e}")
@@ -361,7 +426,7 @@ class DailyReportService:
             logger.warning(f"Failed to collect diagnosis stats: {e}")
             return {}
 
-    def build_email_html(self, report_data: dict) -> str:
+    def build_email_html(self, report_data: dict, chart_cids: list[str] | None = None) -> str:
         """使用 Jinja2 渲染 HTML 邮件（旧模板，降级时使用）"""
         env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
         template = env.get_template("daily_report.html")
@@ -372,9 +437,11 @@ class DailyReportService:
             report_data=report_data,
             report_date=report_data["report_date"],
             dashboard_url=dashboard_url,
+            chart_cids=chart_cids or [],
         )
 
-    def build_ai_email_html(self, ai_report_markdown: str, report_date: str) -> str:
+    def build_ai_email_html(self, ai_report_markdown: str, report_date: str,
+                            chart_cids: list[str] | None = None) -> str:
         """使用 Jinja2 渲染 LLM 报告 HTML 邮件（新模板）"""
         import markdown as md_lib
         ai_report_html = md_lib.markdown(ai_report_markdown, extensions=['tables', 'fenced_code'])
@@ -388,6 +455,7 @@ class DailyReportService:
             report_date=report_date,
             ai_report_html=ai_report_html,
             dashboard_url=dashboard_url,
+            chart_cids=chart_cids or [],
         )
 
     async def _generate_ai_report(self, report_data: dict) -> str | None:
@@ -420,10 +488,11 @@ class DailyReportService:
             )
 
             # 构造 user prompt（全量数据 JSON）
+            prompt_data = self._build_ai_prompt_data(report_data)
             user_prompt = (
                 f"请根据以下全量看板数据生成 {report_data.get('report_date', '昨日')} 的每日运行报告。\n\n"
                 f"以下是各时间窗口的聚合数据（JSON 格式）：\n\n"
-                f"```json\n{json.dumps(report_data, ensure_ascii=False, default=str)[:8000]}\n```\n\n"
+                f"```json\n{json.dumps(prompt_data, ensure_ascii=False, default=str)}\n```\n\n"
                 f"请严格按照系统提示词的板块结构输出 Markdown 格式的报告。"
             )
 
@@ -445,6 +514,107 @@ class DailyReportService:
         except Exception as e:
             logger.error(f"AI report generation failed: {e}", exc_info=True)
             return None
+
+    @staticmethod
+    def _build_ai_prompt_data(report_data: dict) -> dict:
+        """Build a bounded, valid LLM payload without truncating serialized JSON."""
+        def compact(value, depth=0):
+            if depth > 5:
+                return None
+            if isinstance(value, dict):
+                return {key: compact(item, depth + 1) for key, item in value.items()}
+            if isinstance(value, list):
+                return [compact(item, depth + 1) for item in value[:20]]
+            if isinstance(value, str) and len(value) > 800:
+                return value[:800] + "…"
+            return value
+
+        return compact(report_data)
+
+    async def generate_draft(self, report_date: date) -> DailyReportHistory:
+        """Generate and persist a reviewable report without sending email."""
+        report_config = await self._get_report_config()
+        subject_template = report_config.get("report_subject_template", settings.REPORT_SUBJECT_TEMPLATE)
+        history = DailyReportHistory(
+            report_date=report_date.isoformat(),
+            recipients=report_config.get("report_recipients", ""),
+            subject=subject_template.format(date=report_date.isoformat()),
+            status="generating",
+        )
+        self.db.add(history)
+        await self.db.flush()
+        try:
+            report_data = await self.generate_report(report_date)
+            history.ci_summary = report_data["yesterday"]["ci"]
+            history.model_summary = report_data["yesterday"]["model"]
+            history.github_summary = report_data["yesterday"]["github"]
+            history.performance_summary = report_data["yesterday"]["performance"]
+            history.ai_report_content = await self._generate_ai_report(report_data)
+            history.status = "draft"
+            if not history.ai_report_content:
+                history.error_message = "AI generation unavailable; aggregate data is ready for review"
+            await self.db.commit()
+            await self.db.refresh(history)
+            return history
+        except Exception as exc:
+            history.status = "failed"
+            history.error_message = str(exc)
+            await self.db.commit()
+            logger.error("Failed to generate daily report draft: %s", exc, exc_info=True)
+            return history
+
+    async def send_draft(self, report_id: int) -> DailyReportHistory:
+        """Send the reviewed draft without regenerating its AI content."""
+        history = (await self.db.execute(
+            select(DailyReportHistory).where(DailyReportHistory.id == report_id)
+        )).scalar_one_or_none()
+        if not history:
+            raise ValueError("Report draft not found")
+        if history.status != "draft":
+            raise ValueError(f"Report is not sendable in status '{history.status}'")
+        if not history.ai_report_content:
+            raise ValueError("Report draft has no generated content")
+
+        report_config = await self._get_report_config()
+        smtp_config = await get_smtp_config(self.db)
+        recipients = [item.strip() for item in report_config.get("report_recipients", "").split(",") if item.strip()]
+        cc_recipients = [item.strip() for item in report_config.get("report_cc_recipients", "").split(",") if item.strip()]
+        if not recipients:
+            raise ValueError("No recipients configured")
+        if not smtp_config.get("smtp_host"):
+            raise ValueError("SMTP host not configured")
+
+        history.status = "sending"
+        await self.db.commit()
+        html_content = self.build_ai_email_html(history.ai_report_content, history.report_date, [])
+        try:
+            result = await send_email(
+                subject=history.subject,
+                html_content=html_content,
+                recipients=recipients,
+                cc_recipients=cc_recipients,
+                smtp_host=smtp_config.get("smtp_host", ""),
+                smtp_port=int(smtp_config.get("smtp_port", 587)),
+                smtp_username=smtp_config.get("smtp_username", ""),
+                smtp_password=smtp_config.get("smtp_password", ""),
+                smtp_use_tls=bool(smtp_config.get("smtp_use_tls", True)),
+                from_email=smtp_config.get("from_email", ""),
+            )
+        except Exception as exc:
+            history.status = "failed"
+            history.error_message = str(exc)
+            await self.db.commit()
+            raise
+        if result["success"]:
+            history.status = "sent"
+            history.sent_at = _now_shanghai()
+            history.error_message = None
+        else:
+            history.status = "failed"
+            history.error_message = result.get("error", "Unknown email error")
+        await self.db.commit()
+        await self.db.refresh(history)
+        return history
 
     async def send_report(self, report_date: date) -> DailyReportHistory:
         """
@@ -488,6 +658,12 @@ class DailyReportService:
         try:
             report_data = await self.generate_report(report_date)
 
+            # 生成图表 PNG（CID 内嵌图片）
+            from app.services.chart_renderer import render_charts
+            chart_images = render_charts(report_data)
+            chart_cids = list(chart_images.keys())
+            logger.info(f"Charts rendered: {chart_cids}")
+
             # 用 LLM 生成洞察式报告
             ai_report = await self._generate_ai_report(report_data)
             if ai_report:
@@ -496,14 +672,16 @@ class DailyReportService:
                 # 同时保留 ai_summary_snippet 供前端兼容
                 report_data["yesterday"]["github"]["ai_summary_snippet"] = ai_report
                 try:
-                    html_content = self.build_ai_email_html(ai_report, report_data["report_date"])
+                    html_content = self.build_ai_email_html(
+                        ai_report, report_data["report_date"], chart_cids
+                    )
                     logger.info("AI report generated, used as email body with new template")
                 except Exception as e:
                     logger.warning(f"Failed to build AI email HTML, falling back to old template: {e}")
-                    html_content = self.build_email_html(report_data)
+                    html_content = self.build_email_html(report_data, chart_cids)
             else:
                 # 降级到旧模板
-                html_content = self.build_email_html(report_data)
+                html_content = self.build_email_html(report_data, chart_cids)
                 logger.info("AI report generation skipped or failed, using original template")
 
             history.ci_summary = report_data["yesterday"]["ci"]
@@ -534,6 +712,7 @@ class DailyReportService:
                 smtp_password=smtp_password,
                 smtp_use_tls=smtp_use_tls,
                 from_email=from_email,
+                images=chart_images if chart_images else None,
             )
 
             if result["success"]:

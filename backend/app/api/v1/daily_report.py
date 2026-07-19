@@ -145,6 +145,59 @@ async def update_report_config(
         )
 
 
+def _resolve_report_date(report_date: Optional[str]) -> DateType:
+    target_date = DateType.fromisoformat(report_date) if report_date else _today_shanghai() - timedelta(days=1)
+    if target_date > _today_shanghai():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="报告日期不能是未来日期")
+    return target_date
+
+
+@router.post("/draft", response_model=DailyReportTriggerResponse)
+async def generate_report_draft(
+    current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
+    db: AsyncSession = Depends(get_db),
+    report_date: Optional[str] = Query(None),
+):
+    """Generate a reviewable draft. This endpoint never sends email."""
+    try:
+        history = await DailyReportService(db).generate_draft(_resolve_report_date(report_date))
+        return DailyReportTriggerResponse(
+            success=history.status == "draft",
+            message="日报草稿已生成，请预览确认后发送" if history.status == "draft" else f"草稿生成失败：{history.error_message}",
+            report_date=history.report_date,
+            report_id=history.id,
+        )
+    except HTTPException:
+        raise
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Failed to generate report draft: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="生成日报草稿失败") from exc
+
+
+@router.post("/draft/{report_id}/send", response_model=DailyReportTriggerResponse)
+async def send_report_draft(
+    report_id: int,
+    current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Send the exact report content that was reviewed as a draft."""
+    try:
+        history = await DailyReportService(db).send_draft(report_id)
+        return DailyReportTriggerResponse(
+            success=history.status == "sent",
+            message="日报发送成功" if history.status == "sent" else f"日报发送失败：{history.error_message}",
+            report_date=history.report_date,
+            report_id=history.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Failed to send report draft: %s", exc, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="发送日报草稿失败") from exc
+
+
 @router.post("/trigger", response_model=DailyReportTriggerResponse)
 async def trigger_report(
     current_user: Annotated[User, Depends(get_current_active_super_admin_user)],

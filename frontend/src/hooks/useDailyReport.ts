@@ -42,3 +42,25 @@ export const useLatestReport = () => {
     queryFn: api.getLatestReport,
   })
 }
+
+export const useGenerateReportDraft = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: api.generateReportDraft,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['daily-report-history'] })
+      queryClient.invalidateQueries({ queryKey: ['daily-report-latest'] })
+    },
+  })
+}
+
+export const useSendReportDraft = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: api.sendReportDraft,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['daily-report-history'] })
+      queryClient.invalidateQueries({ queryKey: ['daily-report-latest'] })
+    },
+  })
+}
