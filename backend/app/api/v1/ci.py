@@ -1284,8 +1284,8 @@ async def get_failure_analysis_agent_config(
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
     if row and row.config_value:
-        return dict(row.config_value)
-    return {"max_turns": 80, "timeout_seconds": 1800}
+        return {"runtime": "claude_cli", **dict(row.config_value)}
+    return {"runtime": "claude_cli", "max_turns": 80, "timeout_seconds": 1800}
 
 
 @router.put("/agent-config")
@@ -1299,15 +1299,22 @@ async def update_failure_analysis_agent_config(
     from app.models import ProjectDashboardConfig
 
     try:
+        runtime = str(data.get("runtime", "claude_cli")).strip().lower()
         max_turns = int(data.get("max_turns", 80))
         timeout_seconds = int(data.get("timeout_seconds", 1800))
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="轮次和超时必须是整数") from exc
+    if runtime not in {"claude_cli", "custom_agent"}:
+        raise HTTPException(status_code=422, detail="运行方式必须是 claude_cli 或 custom_agent")
     if not 3 <= max_turns <= 100:
         raise HTTPException(status_code=422, detail="最大轮次必须在 3 到 100 之间")
     if not 60 <= timeout_seconds <= 7200:
         raise HTTPException(status_code=422, detail="超时必须在 60 到 7200 秒之间")
-    config_value = {"max_turns": max_turns, "timeout_seconds": timeout_seconds}
+    config_value = {
+        "runtime": runtime,
+        "max_turns": max_turns,
+        "timeout_seconds": timeout_seconds,
+    }
 
     stmt = select(ProjectDashboardConfig).where(
         ProjectDashboardConfig.config_key == "failure_analysis_agent_config"

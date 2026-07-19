@@ -106,6 +106,7 @@ export const triggerConfigReload = async (): Promise<{ success: boolean; message
 
 // Failure analysis agent config
 export interface AgentAnalysisConfig {
+  runtime: 'claude_cli' | 'custom_agent'
   max_turns: number
   timeout_seconds: number
 }

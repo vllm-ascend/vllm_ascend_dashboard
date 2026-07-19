@@ -16,7 +16,7 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
       LITELLM_CONFIG_FILE: /app/litellm_config.yaml
       LITELLM_CONTAINER_NAME: vllm-litellm-dev
-      AGENT_SERVICE_ENABLED: "true"
+      AGENT_SERVICE_ENABLED: "false"
       AGENT_PROXY_ONLY: "true"
       AGENT_PROXY_ALLOWED_HOSTS: vllm-litellm-dev
     volumes:
