@@ -1052,9 +1052,32 @@ async def get_file_heatmap_detail(
 
 # ===========================================================================
 # 下钻明细：文件列表 / 函数列表 / 维度聚合
+#
+# 注意：以下 _KNOWN_MODULES 与前端 CodeMetricsBoard.tsx 的 KNOWN_MODULE_SEGMENTS
+# 保持同步，新增模块时请同时修改两端。
 # ===========================================================================
 
 _KNOWN_MODULES = ("vllm_ascend", "csrc", "tests", "benchmarks", "tools", "docs", "examples", "configs")
+
+
+def _infer_language_from_path(file_path: str) -> str:
+    """根据扩展名推断语言。"""
+    if not file_path:
+        return "Unknown"
+    lower = file_path.lower()
+    if lower.endswith(".py"):
+        return "Python"
+    if lower.endswith((".cpp", ".cc", ".cxx", ".c++")):
+        return "C++"
+    if lower.endswith(".c"):
+        return "C"
+    if lower.endswith((".h", ".hpp", ".hxx")):
+        return "C/C++ Header"
+    if lower.endswith(".cmake") or lower.endswith("cmakelists.txt"):
+        return "CMake"
+    if lower.endswith(".sh"):
+        return "Shell"
+    return "Unknown"
 
 
 def _derive_module(file_path: str) -> str:
@@ -1083,54 +1106,18 @@ def _derive_module(file_path: str) -> str:
     return first
 
 
-async def _get_latest_snapshot_id(db) -> int | None:
-    latest = await db.execute(
-        select(CodeMetricsSnapshot.id).order_by(
-            CodeMetricsSnapshot.snapshot_date.desc()
-        ).limit(1)
-    )
-    return latest.scalar_one_or_none()
+def _aggregate_by_file(rows) -> dict[str, dict]:
+    """将 CodeComplexityDetail 行列表按 file_path 聚合。
 
-
-@router.get("/files", summary="文件列表（下钻）")
-async def list_files(
-    current_user: CurrentUser,
-    db: DbSession,
-    language: str | None = Query(None, description="按语言过滤"),
-    module: str | None = Query(None, description="按模块过滤"),
-    search: str | None = Query(None, description="文件路径模糊搜索"),
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-):
-    """获取最新快照的文件列表（基于复杂度明细聚合）。
-
-    返回每个文件的：语言、模块、函数数、总复杂度、最大复杂度、函数行数总和。
+    返回 {file_path: {file_path, language, module, function_count,
+    total_complexity, max_complexity, total_function_lines}}。
+    供 list_files / get_drilldown 复用，避免重复逻辑。
     """
-    snapshot_id = await _get_latest_snapshot_id(db)
-    if not snapshot_id:
-        return {"items": [], "total": 0, "limit": limit, "offset": offset}
-
-    base = select(CodeComplexityDetail).where(
-        CodeComplexityDetail.snapshot_id == snapshot_id
-    )
-
-    # 先取全部（受 500 条上限），再在 Python 层聚合（数据量可控）
-    result = await db.execute(base)
-    rows = result.scalars().all()
-
     agg: dict[str, dict] = {}
     for r in rows:
         fp = r.file_path or ""
-        lang = r.language or (_infer_language_from_path(fp))
+        lang = r.language or _infer_language_from_path(fp)
         mod = _derive_module(fp)
-
-        # 应用过滤
-        if language and lang.lower() != language.lower():
-            continue
-        if module and mod.lower() != module.lower():
-            continue
-        if search and search.lower() not in fp.lower():
-            continue
 
         bucket = agg.setdefault(
             fp,
@@ -1150,8 +1137,65 @@ async def list_files(
         if cc > bucket["max_complexity"]:
             bucket["max_complexity"] = cc
         bucket["total_function_lines"] += r.function_lines or 0
+    return agg
 
-    items = list(agg.values())
+
+async def _get_latest_snapshot_id(db) -> int | None:
+    """获取最新快照 ID。同日多快照时按 id 降序取最新（确定性 tiebreaker）。"""
+    latest = await db.execute(
+        select(CodeMetricsSnapshot.id).order_by(
+            CodeMetricsSnapshot.snapshot_date.desc(),
+            CodeMetricsSnapshot.id.desc(),
+        ).limit(1)
+    )
+    return latest.scalar_one_or_none()
+
+
+@router.get("/files", summary="文件列表（下钻）")
+async def list_files(
+    current_user: CurrentUser,
+    db: DbSession,
+    language: str | None = Query(None, description="按语言过滤（下推 SQL）"),
+    module: str | None = Query(None, description="按模块过滤（Python 层，派生自 file_path）"),
+    search: str | None = Query(None, description="文件路径模糊搜索（Python 层）"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """获取最新快照的文件列表（基于复杂度明细聚合）。
+
+    返回每个文件的：语言、模块、函数数、总复杂度、最大复杂度、函数行数总和。
+
+    性能说明：
+    - ``language`` 过滤下推到 SQL（``CodeComplexityDetail.language`` 是存储列）。
+    - ``module`` / ``search`` 非存储列，在 Python 层过滤。
+    - ``limit`` / ``offset`` 仅对**聚合后**的结果分页，不限制 DB 扫描量。
+      若需限制内部扫描量，请先通过 ``language`` 收窄。
+    """
+    snapshot_id = await _get_latest_snapshot_id(db)
+    if not snapshot_id:
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
+    # 基础查询：snapshot_id + language 下推 SQL
+    stmt = select(CodeComplexityDetail).where(
+        CodeComplexityDetail.snapshot_id == snapshot_id
+    )
+    if language:
+        stmt = stmt.where(CodeComplexityDetail.language == language)
+
+    rows = (await db.execute(stmt)).scalars().all()
+
+    # 聚合（复用共享辅助函数）
+    agg = _aggregate_by_file(rows)
+
+    # Python 层过滤 module / search（非存储列）
+    items = []
+    for item in agg.values():
+        if module and item["module"].lower() != module.lower():
+            continue
+        if search and search.lower() not in item["file_path"].lower():
+            continue
+        items.append(item)
+
     items.sort(key=lambda x: x["total_complexity"], reverse=True)
     total = len(items)
     paged = items[offset : offset + limit]
@@ -1162,15 +1206,21 @@ async def list_files(
 async def list_functions(
     current_user: CurrentUser,
     db: DbSession,
-    language: str | None = Query(None, description="按语言过滤"),
-    module: str | None = Query(None, description="按模块过滤"),
-    file_path: str | None = Query(None, description="按文件路径过滤（精确匹配）"),
-    search: str | None = Query(None, description="函数名/文件路径模糊搜索"),
-    min_complexity: int | None = Query(None, ge=0, description="最小圈复杂度"),
+    language: str | None = Query(None, description="按语言过滤（下推 SQL）"),
+    module: str | None = Query(None, description="按模块过滤（Python 层，派生自 file_path）"),
+    file_path: str | None = Query(None, description="按文件路径过滤（精确匹配，下推 SQL）"),
+    search: str | None = Query(None, description="函数名/文件路径模糊搜索（Python 层）"),
+    min_complexity: int | None = Query(None, ge=0, description="最小圈复杂度（下推 SQL）"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """获取最新快照的函数列表，支持多维度过滤。"""
+    """获取最新快照的函数列表，支持多维度过滤。
+
+    性能说明：
+    - ``language`` / ``file_path`` / ``min_complexity`` 下推到 SQL。
+    - ``module`` / ``search`` 在 Python 层过滤。
+    - ``limit`` / ``offset`` 仅对过滤后的结果分页；先用 SQL 可下推的参数收窄可减少内存负载。
+    """
     snapshot_id = await _get_latest_snapshot_id(db)
     if not snapshot_id:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
@@ -1178,13 +1228,14 @@ async def list_functions(
     stmt = select(CodeComplexityDetail).where(
         CodeComplexityDetail.snapshot_id == snapshot_id
     )
+    if language:
+        stmt = stmt.where(CodeComplexityDetail.language == language)
     if file_path:
         stmt = stmt.where(CodeComplexityDetail.file_path == file_path)
     if min_complexity is not None:
         stmt = stmt.where(CodeComplexityDetail.cyclomatic_complexity >= min_complexity)
 
-    result = await db.execute(stmt)
-    rows = result.scalars().all()
+    rows = (await db.execute(stmt)).scalars().all()
 
     filtered = []
     for r in rows:
@@ -1192,8 +1243,6 @@ async def list_functions(
         lang = r.language or _infer_language_from_path(fp)
         mod = _derive_module(fp)
 
-        if language and lang.lower() != language.lower():
-            continue
         if module and mod.lower() != module.lower():
             continue
         if search:
@@ -1225,14 +1274,16 @@ async def list_functions(
 async def get_drilldown(
     current_user: CurrentUser,
     db: DbSession,
-    language: str | None = Query(None, description="按语言下钻"),
-    module: str | None = Query(None, description="按模块下钻"),
+    language: str | None = Query(None, description="按语言下钻（下推 SQL）"),
+    module: str | None = Query(None, description="按模块下钻（Python 层）"),
     top_n: int = Query(10, ge=1, le=50),
 ):
     """聚合指定维度（语言或模块）的明细统计。
 
     返回：文件数、函数数、函数总行数、平均/最大复杂度、Top 文件、Top 复杂函数。
     结合快照中的 language_loc / module_loc 提供 LOC 信息。
+
+    性能说明：``language`` 下推 SQL；``module`` 在 Python 层过滤。
     """
     snapshot_id = await _get_latest_snapshot_id(db)
     if not snapshot_id:
@@ -1247,10 +1298,12 @@ async def get_drilldown(
     loc_map = snap.language_loc or {}
     mod_loc_map = snap.module_loc or {}
 
-    # 过滤复杂度明细
+    # 过滤复杂度明细：language 下推 SQL
     detail_stmt = select(CodeComplexityDetail).where(
         CodeComplexityDetail.snapshot_id == snapshot_id
     )
+    if language:
+        detail_stmt = detail_stmt.where(CodeComplexityDetail.language == language)
     rows = (await db.execute(detail_stmt)).scalars().all()
 
     file_set: set[str] = set()
@@ -1266,8 +1319,7 @@ async def get_drilldown(
         lang = r.language or _infer_language_from_path(fp)
         mod = _derive_module(fp)
 
-        if language and lang.lower() != language.lower():
-            continue
+        # module 在 Python 层过滤（派生自 file_path，非存储列）
         if module and mod.lower() != module.lower():
             continue
 
@@ -1307,12 +1359,12 @@ async def get_drilldown(
             }
         )
 
-    # LOC 信息
+    # LOC 信息：language/module 均带大小写回退（map key 可能是 "Python"/"python" 或 "csrc"/"CSRC"）
     loc = 0
     if language:
         loc = loc_map.get(language, 0) or loc_map.get(language.capitalize(), 0)
     elif module:
-        loc = mod_loc_map.get(module, 0)
+        loc = mod_loc_map.get(module, 0) or mod_loc_map.get(module.lower(), 0) or mod_loc_map.get(module.capitalize(), 0)
 
     top_files = sorted(
         file_agg.values(), key=lambda x: x["total_complexity"], reverse=True
@@ -1333,23 +1385,3 @@ async def get_drilldown(
         "top_files": top_files,
         "top_functions": top_functions,
     }
-
-
-def _infer_language_from_path(file_path: str) -> str:
-    """根据扩展名推断语言。"""
-    if not file_path:
-        return "Unknown"
-    lower = file_path.lower()
-    if lower.endswith(".py"):
-        return "Python"
-    if lower.endswith((".cpp", ".cc", ".cxx", ".c++")):
-        return "C++"
-    if lower.endswith(".c"):
-        return "C"
-    if lower.endswith((".h", ".hpp", ".hxx")):
-        return "C/C++ Header"
-    if lower.endswith(".cmake") or lower.endswith("CMakeLists.txt".lower()):
-        return "CMake"
-    if lower.endswith(".sh"):
-        return "Shell"
-    return "Unknown"

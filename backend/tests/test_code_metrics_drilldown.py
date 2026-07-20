@@ -280,3 +280,40 @@ async def test_files_pagination(client):
     assert r2.status_code == 200
     body2 = r2.json()
     assert len(body2["items"]) == 1  # 第三页只剩 1 个
+
+
+@pytest.mark.asyncio
+async def test_drilldown_module_loc_case_insensitive(client):
+    """维度聚合下钻：module LOC 查找应大小写不敏感（CSRC → csrc）。"""
+    # module_loc key 是小写 "csrc"，前端可能传大写 "CSRC"
+    r = await client.get("/api/v1/code-metrics/drilldown", params={"module": "CSRC"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_data"] is True
+    assert body["loc"] == 2000  # 应该命中 mod_loc_map["csrc"]
+    assert body["file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_files_language_case_sensitive_sql(client):
+    """文件列表：language 下推 SQL 后，大小写需匹配存储值（Python/C++）。
+
+    存储的 language 是 "Python"（首字母大写）。SQL WHERE language = 'Python' 能命中；
+    传 'python'（全小写）不命中（SQL 大小写敏感，取决于 DB 排序规则）。
+    此测试验证传正确大小写能命中。
+    """
+    r = await client.get("/api/v1/code-metrics/files", params={"language": "Python"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2  # vllm_ascend/core/__init__.py + tests/unit/test_foo.py
+
+
+@pytest.mark.asyncio
+async def test_list_functions_language_pushed_to_sql(client):
+    """函数列表：language 过滤下推 SQL，返回的函数语言一致。"""
+    r = await client.get("/api/v1/code-metrics/functions", params={"language": "C++"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1  # Kernel::run
+    assert body["items"][0]["language"] == "C++"
+    assert body["items"][0]["function_name"] == "Kernel::run"

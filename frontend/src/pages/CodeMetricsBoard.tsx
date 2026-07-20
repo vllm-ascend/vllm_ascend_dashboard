@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react'
-import { Card, Tabs, Table, Statistic, Row, Col, Tag, Empty, Typography, Select, Spin, message, Button, Input, Space, Alert, Modal, Breadcrumb, Segmented, Tooltip, Popover } from 'antd'
+import { Card, Tabs, Table, Statistic, Row, Col, Tag, Empty, Typography, Select, Spin, message, Button, Input, Space, Alert, Modal, Breadcrumb, Tooltip, Popover } from 'antd'
 import { CodeOutlined, DownloadOutlined, SyncOutlined, ArrowRightOutlined, ThunderboltOutlined, FileTextOutlined, FunctionOutlined, BarsOutlined, GithubOutlined, LinkOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -24,7 +24,12 @@ const PIE_COLORS = ['#1677ff', '#52c41a', '#faad14', '#ff4d4f', '#722ed1', '#13c
 
 // vllm-ascend 仓库 GitHub 配置
 const GITHUB_REPO_URL = 'https://github.com/vllm-project/vllm-ascend'
+// TODO(follow-up): 当前硬编码 main 分支。若 snapshot 采集自非 main 分支或文件被改/删，
+// #L<line> 锚点会指向错误位置。待 CodeMetricsSnapshot 增加 commit_sha 字段后，
+// 可改用 `${repo}/blob/${sha}/${path}#L${line}` 实现精确锚点。
 const GITHUB_DEFAULT_BRANCH = 'main'
+// 注意：与后端 backend/app/api/v1/code_metrics.py:_KNOWN_MODULES 保持同步，
+// 新增模块时请同时修改两端。
 const KNOWN_MODULE_SEGMENTS = ['vllm_ascend', 'csrc', 'tests', 'benchmarks', 'tools', 'docs', 'examples', 'configs']
 
 /**
