@@ -6,6 +6,7 @@ SMTP 配置存储在数据库（ProjectDashboardConfig 表，config_key='smtp_co
 报告推送配置存储在 config_key='daily_report_config'
 与 LLMProviderConfig 设计一致：敏感凭据不放在 .env 文件中
 """
+import base64
 import json
 import logging
 from datetime import date, timedelta, timezone
@@ -443,8 +444,12 @@ class DailyReportService:
     def build_ai_email_html(self, ai_report_markdown: str, report_date: str,
                             chart_cids: list[str] | None = None) -> str:
         """使用 Jinja2 渲染 LLM 报告 HTML 邮件（新模板）"""
-        import markdown as md_lib
-        ai_report_html = md_lib.markdown(ai_report_markdown, extensions=['tables', 'fenced_code'])
+        try:
+            import markdown as md_lib
+            ai_report_html = md_lib.markdown(ai_report_markdown, extensions=['tables', 'fenced_code'])
+        except ModuleNotFoundError:
+            from markdown_it import MarkdownIt
+            ai_report_html = MarkdownIt("commonmark", {"html": False}).enable("table").render(ai_report_markdown)
 
         env = Environment(loader=FileSystemLoader(str(TEMPLATES_DIR)), autoescape=True)
         template = env.get_template("ai_report_email.html")
@@ -548,7 +553,12 @@ class DailyReportService:
             history.ci_summary = report_data["yesterday"]["ci"]
             history.model_summary = report_data["yesterday"]["model"]
             history.github_summary = report_data["yesterday"]["github"]
-            history.performance_summary = report_data["yesterday"]["performance"]
+            # Persist the exact aggregate snapshot used by the preview.  This is
+            # stored inside the existing JSON column to avoid a schema migration.
+            history.performance_summary = {
+                **report_data["yesterday"]["performance"],
+                "_report_snapshot": report_data,
+            }
             history.ai_report_content = await self._generate_ai_report(report_data)
             history.status = "draft"
             if not history.ai_report_content:
@@ -586,8 +596,8 @@ class DailyReportService:
 
         history.status = "sending"
         await self.db.commit()
-        html_content = self.build_ai_email_html(history.ai_report_content, history.report_date, [])
         try:
+            html_content, chart_images = self.build_draft_email(history)
             result = await send_email(
                 subject=history.subject,
                 html_content=html_content,
@@ -599,6 +609,7 @@ class DailyReportService:
                 smtp_password=smtp_config.get("smtp_password", ""),
                 smtp_use_tls=bool(smtp_config.get("smtp_use_tls", True)),
                 from_email=smtp_config.get("from_email", ""),
+                images=chart_images or None,
             )
         except Exception as exc:
             history.status = "failed"
@@ -615,6 +626,57 @@ class DailyReportService:
         await self.db.commit()
         await self.db.refresh(history)
         return history
+
+    def build_draft_email(
+        self, history: DailyReportHistory, *, inline_images: bool = False
+    ) -> tuple[str, dict[str, bytes]]:
+        """Render the final draft email; preview and delivery must share this path."""
+        if not history.ai_report_content:
+            raise ValueError("Report draft has no generated content")
+        from app.services.chart_renderer import render_charts
+
+        report_data = self._get_draft_report_snapshot(history)
+        chart_images = render_charts(report_data)
+        html = self.build_ai_email_html(
+            history.ai_report_content, history.report_date, list(chart_images)
+        )
+        if inline_images:
+            for cid, image in chart_images.items():
+                encoded = base64.b64encode(image).decode("ascii")
+                html = html.replace(
+                    f'src="cid:{cid}"', f'src="data:image/png;base64,{encoded}"'
+                )
+        return html, chart_images
+
+    async def get_draft_preview_html(self, report_id: int) -> str:
+        """Return the browser-safe representation of the exact outgoing email."""
+        history = (await self.db.execute(
+            select(DailyReportHistory).where(DailyReportHistory.id == report_id)
+        )).scalar_one_or_none()
+        if not history:
+            raise ValueError("Report draft not found")
+        html, _ = self.build_draft_email(history, inline_images=True)
+        return html
+
+    @staticmethod
+    def _get_draft_report_snapshot(history: DailyReportHistory) -> dict:
+        """Return the exact draft snapshot, with a fallback for legacy drafts."""
+        performance = dict(history.performance_summary or {})
+        snapshot = performance.pop("_report_snapshot", None)
+        if isinstance(snapshot, dict):
+            return snapshot
+        return {
+            "report_date": history.report_date,
+            "timezone": "Asia/Shanghai",
+            "yesterday": {
+                "ci": history.ci_summary or {},
+                "model": history.model_summary or {},
+                "github": history.github_summary or {},
+                "performance": performance,
+            },
+            "last_week": {},
+            "last_month": {},
+        }
 
     async def send_report(self, report_date: date) -> DailyReportHistory:
         """

@@ -107,3 +107,8 @@ export const sendReportDraft = async (reportId: number): Promise<DailyReportTrig
   const response = await longTimeoutApiClient.post<DailyReportTriggerResponse>(`/daily-report/draft/${reportId}/send`)
   return response.data
 }
+
+export const getReportDraftPreview = async (reportId: number): Promise<string> => {
+  const response = await api.get<string>(`/daily-report/draft/${reportId}/preview`, { responseType: 'text' })
+  return response.data
+}
