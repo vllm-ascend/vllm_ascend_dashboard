@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -172,14 +172,33 @@ async def get_trends(days: int = 30, db: AsyncSession = Depends(get_db), user: U
     return {"health_trend": health_trend, "pass_rate_trend": pass_rate_trend}
 
 
+async def _run_derivation_background():
+    """后台执行发现问题数推导，使用独立 DB session 避免与请求 session 冲突。"""
+    try:
+        from app.db.base import SessionLocal
+        from app.services.issues_found_derivator import IssuesFoundDerivator
+        async with SessionLocal() as db:
+            result = await IssuesFoundDerivator(db).derive_all()
+            logger.info("background derivation done: %s", result)
+    except Exception as e:
+        logger.error("background derivation failed: %s", e, exc_info=True)
+
+
 @router.post("/sync")
-async def trigger_sync(request: TestBoardSyncRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def trigger_sync(
+    request: TestBoardSyncRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     if user.role not in ("admin", "super_admin"):
         return {"error": "Admin access required"}
     gh = get_github()
     svc = TestBoardService(db, gh)
     count = await svc.parse_ci_results(days_back=request.days_back, force=request.force)
-    return {"success": True, "message": f"Parsed {count} test results", "count": count}
+    # CI 同步后在后台跑发现问题数推导，避免 HTTP 超时
+    background_tasks.add_task(_run_derivation_background)
+    return {"success": True, "message": f"Parsed {count} test results", "count": count, "derivation": "scheduled in background"}
 
 
 @router.post("/annotate")
@@ -221,9 +240,11 @@ async def update_case(
     if request.issues_found is not None:
         _record("issues_found", request.issues_found)
         case.issues_found = request.issues_found
+        case.issues_found_override = True
     if request.suspected_test_issue_count is not None:
         _record("suspected_test_issue_count", request.suspected_test_issue_count)
         case.suspected_test_issue_count = request.suspected_test_issue_count
+        case.issues_found_override = True
     if request.is_flaky_manual is not None:
         _record("is_flaky_manual", request.is_flaky_manual)
         case.is_flaky_manual = request.is_flaky_manual
@@ -243,6 +264,10 @@ async def update_case(
         new_email = request.owner_email or None
         _record("owner_email", new_email)
         case.owner_email = new_email
+    if request.use_auto_issues is True:
+        _record("issues_found_override", False)
+        case.issues_found_override = False
+        # 保留原人工值不清零，effective 计算时不取它即可；用户误操作后可恢复
 
     await db.commit()
     await db.refresh(case)
@@ -255,3 +280,30 @@ async def update_case(
             {k: {"from": v[0], "to": v[1]} for k, v in changes.items()},
         )
     return case
+
+
+@router.post("/derive-issues")
+async def trigger_derive_issues(
+    background_tasks: BackgroundTasks,
+    case_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """触发"发现问题数"自动推导。
+
+    - 不传 case_id：全量推导（后台执行，立即返回 202）
+    - 传 case_id：仅推导指定用例（同步返回结果）
+    需 admin/super_admin 权限。
+    """
+    if user.role not in ("admin", "super_admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    from app.services.issues_found_derivator import IssuesFoundDerivator
+    if case_id:
+        derivator = IssuesFoundDerivator(db)
+        result = await derivator.derive_single(case_id)
+        if not result:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用例不存在")
+        return {"success": True, "result": result}
+    else:
+        background_tasks.add_task(_run_derivation_background)
+        return {"success": True, "result": "full derivation scheduled in background"}
