@@ -35,7 +35,13 @@ export interface TestCaseItem {
   health_level: string | null
   last_result: string | null
   last_run_at: string | null
+  first_seen_at: string | null
   total_runs: number
+  lifetime_runs: number
+  lifetime_failures: number
+  issues_found: number
+  suspected_test_issue_count: number
+  is_flaky_manual: boolean
 }
 
 export interface TestRunItem {
@@ -243,5 +249,19 @@ export const triggerSync = async (params: { days_back: number; force: boolean })
 
 export const annotateFailure = async (params: { test_run_id: number; annotated_category: string; annotated_by: string }): Promise<{ success: boolean; message: string }> => {
   const response = await api.post('/test-board/annotate', params)
+  return response.data
+}
+
+export interface TestCaseUpdatePayload {
+  issues_found?: number
+  suspected_test_issue_count?: number
+  is_flaky?: boolean
+  is_flaky_manual?: boolean
+  owner?: string
+  owner_email?: string
+}
+
+export const updateCase = async (caseId: number, payload: TestCaseUpdatePayload): Promise<TestCaseItem> => {
+  const response = await api.patch<TestCaseItem>(`/test-board/cases/${caseId}`, payload)
   return response.data
 }

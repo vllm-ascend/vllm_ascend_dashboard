@@ -4,18 +4,20 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, CurrentSuperAdminUser, DbSession
 from app.db.base import SessionLocal
 from app.models import User
+from app.models.test_board import TestCase
 from app.schemas import Message
 from app.schemas.test_board import (
     TestOverviewResponse, TestCaseResponse, TestRunResponse,
     TestSuiteResponse, FlakyCaseDetail, FailureCategoryBreakdown,
     OwnerMatrixItem, ModuleHealthItem, TestBoardSyncRequest,
-    FailureAnnotationRequest,
+    FailureAnnotationRequest, TestCaseUpdateRequest,
 )
 from app.services.test_board_service import TestBoardService
 from app.services.test_health_calculator import TestHealthCalculator
@@ -190,3 +192,66 @@ async def annotate_failure(request: FailureAnnotationRequest, db: AsyncSession =
     db.add(annotation)
     await db.commit()
     return {"success": True, "message": "Annotation saved"}
+
+
+@router.patch("/cases/{case_id}", response_model=TestCaseResponse)
+async def update_case(
+    case_id: int,
+    request: TestCaseUpdateRequest,
+    db: DbSession,
+    user: CurrentSuperAdminUser,
+):
+    """超级管理员维护测试用例元数据。
+
+    可维护字段：发现问题数、疑似用例问题次数、Flaky 标记（含人工锁定）、负责人。
+    所有变更写入审计日志（app_logs），记录操作人、用例 ID 与变更前后值。
+    """
+    case = (await db.execute(select(TestCase).where(TestCase.id == case_id))).scalar_one_or_none()
+    if not case:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试用例不存在")
+
+    # 记录变更前后值，用于审计
+    changes: dict[str, tuple] = {}
+
+    def _record(field: str, new_val):
+        old_val = getattr(case, field)
+        if new_val != old_val:
+            changes[field] = (old_val, new_val)
+
+    if request.issues_found is not None:
+        _record("issues_found", request.issues_found)
+        case.issues_found = request.issues_found
+    if request.suspected_test_issue_count is not None:
+        _record("suspected_test_issue_count", request.suspected_test_issue_count)
+        case.suspected_test_issue_count = request.suspected_test_issue_count
+    if request.is_flaky_manual is not None:
+        _record("is_flaky_manual", request.is_flaky_manual)
+        case.is_flaky_manual = request.is_flaky_manual
+    if request.is_flaky is not None:
+        _record("is_flaky", request.is_flaky)
+        case.is_flaky = request.is_flaky
+        # 仅当显式标记为 Flaky 且未指定锁定时，默认锁定为人工维护；
+        # 标记为稳定（False）不自动锁定，保留自动检测继续观察
+        if request.is_flaky_manual is None and request.is_flaky is True:
+            _record("is_flaky_manual", True)
+            case.is_flaky_manual = True
+    if request.owner is not None:
+        new_owner = request.owner or None
+        _record("owner", new_owner)
+        case.owner = new_owner
+    if request.owner_email is not None:
+        new_email = request.owner_email or None
+        _record("owner_email", new_email)
+        case.owner_email = new_email
+
+    await db.commit()
+    await db.refresh(case)
+
+    # 审计日志：谁、何时、改了什么（持久化到 app_logs，满足 requirements §10.3）
+    if changes:
+        logger.info(
+            "test_case_metadata_updated: user=%s case_id=%s changes=%s",
+            user.username, case_id,
+            {k: {"from": v[0], "to": v[1]} for k, v in changes.items()},
+        )
+    return case

@@ -54,6 +54,13 @@ class TestCase(Base):
     total_runs = Column(Integer, default=0)
     total_passed = Column(Integer, default=0)
     total_failed = Column(Integer, default=0)
+    # 全生命周期累计计数（自用例上线以来），不受 30 天滑动窗口和 90 天数据清理影响
+    lifetime_runs = Column(Integer, default=0)
+    lifetime_failures = Column(Integer, default=0)
+    # 超级管理员可维护字段
+    issues_found = Column(Integer, default=0)  # 发现问题数（该用例发现的真实产品问题数）
+    suspected_test_issue_count = Column(Integer, default=0)  # 被怀疑为用例自身问题的次数
+    is_flaky_manual = Column(Boolean, default=False, index=True)  # 为 True 时 is_flaky 由人工维护，自动检测不再覆盖
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 

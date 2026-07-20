@@ -65,6 +65,7 @@ __all__ = [
     "FlakyCaseDetail", "FailureCategoryBreakdown",
     "OwnerMatrixItem", "ModuleHealthItem",
     "TestBoardSyncRequest", "FailureAnnotationRequest",
+    "TestCaseUpdateRequest",
     # Common
     "Message", "PaginatedResponse",
     # Log Center
@@ -1061,6 +1062,7 @@ from .test_board import (
     ModuleHealthItem,
     TestBoardSyncRequest,
     FailureAnnotationRequest,
+    TestCaseUpdateRequest,
 )
 
 from .logs import (

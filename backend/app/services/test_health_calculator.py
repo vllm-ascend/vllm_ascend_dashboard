@@ -40,7 +40,9 @@ class TestHealthCalculator:
                 case.avg_duration_seconds = self._calc_avg_duration(runs)
                 case.duration_p90_seconds = self._calc_p90_duration(runs)
                 is_flaky, flip_rate, evidence_count = self._detect_flaky(case, runs)
-                case.is_flaky = is_flaky
+                # 人工标记的 is_flaky 不被自动检测覆盖
+                if not case.is_flaky_manual:
+                    case.is_flaky = is_flaky
                 case.flaky_rate = flip_rate
                 case.flaky_evidence_count = evidence_count
                 case.flip_count_30d = self._calc_flip_count(runs)
