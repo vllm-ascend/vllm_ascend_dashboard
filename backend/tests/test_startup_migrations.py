@@ -1,41 +1,16 @@
-"""Regression tests for compatibility migrations on existing databases."""
+"""Schema compatibility changes must live in the explicit MySQL migration."""
 
-import pytest
-from sqlalchemy import inspect, text
-from sqlalchemy.ext.asyncio import create_async_engine
-
-from app import main
+from scripts.migrate_mysql_schema import INDEX_MIGRATIONS, TABLE_COLUMN_MIGRATIONS
 
 
-@pytest.mark.asyncio
-async def test_column_migrations_inspect_session_connection(monkeypatch):
-    """Existing tables are altered instead of silently skipping inspection."""
-    engine = create_async_engine(
-        "mysql+aiomysql://dashboard:dashboard123@localhost:3306/vllm_dashboard_test",
-    )
-    async with engine.begin() as connection:
-        await connection.execute(text("CREATE TABLE pull_requests (id INTEGER PRIMARY KEY)"))
-        await connection.execute(text("CREATE TABLE user_login_logs (id INTEGER PRIMARY KEY)"))
-
-    monkeypatch.setattr(main, "engine", engine)
-
-    await main._migrate_login_log_columns()
-    await main._migrate_avatar_base64_column()
-
-    async with engine.connect() as connection:
-        login_columns = await connection.run_sync(
-            lambda sync_connection: {
-                column["name"]
-                for column in inspect(sync_connection).get_columns("user_login_logs")
-            }
-        )
-        pr_columns = await connection.run_sync(
-            lambda sync_connection: {
-                column["name"]
-                for column in inspect(sync_connection).get_columns("pull_requests")
-            }
-        )
-
-    assert {"ip_address_hashed", "login_method", "user_agent", "created_at"} <= login_columns
-    assert "author_avatar_base64" in pr_columns
-    await engine.dispose()
+def test_explicit_migration_contains_all_compatibility_columns():
+    assert set(TABLE_COLUMN_MIGRATIONS) == {
+        "user_login_logs",
+        "job_failure_analysis",
+        "ci_jobs",
+        "pull_requests",
+        "test_cases",
+    }
+    assert "lifetime_runs" in TABLE_COLUMN_MIGRATIONS["test_cases"]
+    assert "author_avatar_base64" in TABLE_COLUMN_MIGRATIONS["pull_requests"]
+    assert INDEX_MIGRATIONS["ci_jobs"]["ix_ci_jobs_processing_status"] == "processing_status"
