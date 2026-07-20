@@ -36,7 +36,7 @@ COLORS = [BLUE, GREEN, YELLOW, RED]
 
 # 中文字体设置
 CN_FONT = "Microsoft YaHei"
-_FALLBACK_FONTS = ["SimHei", "Noto Sans SC", "sans-serif"]
+_FALLBACK_FONTS = ["SimHei", "Noto Sans CJK SC", "sans-serif"]
 
 plt.rcParams.update({
     "font.family": "sans-serif",
