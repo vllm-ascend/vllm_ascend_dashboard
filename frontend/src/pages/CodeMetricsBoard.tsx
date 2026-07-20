@@ -28,6 +28,28 @@ const GITHUB_REPO_URL = 'https://github.com/vllm-project/vllm-ascend'
 // #L<line> 锚点会指向错误位置。待 CodeMetricsSnapshot 增加 commit_sha 字段后，
 // 可改用 `${repo}/blob/${sha}/${path}#L${line}` 实现精确锚点。
 const GITHUB_DEFAULT_BRANCH = 'main'
+
+const LANG_GROUP_ORDER = ['C/C++', 'Python', 'CMake/Shell/YAML', 'JavaScript', 'Go', 'Java', 'Others'] as const
+
+function groupLanguageLoc(loc: Record<string, number>): Record<string, number> {
+  const groups: Record<string, number> = {}
+  LANG_GROUP_ORDER.forEach((k) => { groups[k] = 0 })
+  for (const [lang, val] of Object.entries(loc)) {
+    const lower = lang.toLowerCase()
+    let key: string
+    if (['c++', 'c', 'c/c++ header', 'c header'].includes(lower)) key = 'C/C++'
+    else if (lower === 'python') key = 'Python'
+    else if (['cmake', 'shell', 'bourne shell', 'c shell', 'fish shell', 'yaml', 'make'].includes(lower)) key = 'CMake/Shell/YAML'
+    else if (['javascript', 'typescript'].includes(lower)) key = 'JavaScript'
+    else if (lower === 'go') key = 'Go'
+    else if (lower === 'java') key = 'Java'
+    else key = 'Others'
+    groups[key] += val
+  }
+  const result: Record<string, number> = {}
+  LANG_GROUP_ORDER.forEach((k) => { if (groups[k] > 0) result[k] = groups[k] })
+  return result
+}
 // 注意：与后端 backend/app/api/v1/code_metrics.py:_KNOWN_MODULES 保持同步，
 // 新增模块时请同时修改两端。
 const KNOWN_MODULE_SEGMENTS = ['vllm_ascend', 'csrc', 'tests', 'benchmarks', 'tools', 'docs', 'examples', 'configs']
@@ -192,9 +214,10 @@ function LocBreakdownView({
   onDrillLanguage: (lang: string) => void
   onDrillModule: (mod: string) => void
 }) {
-  const totalLang = Object.values(languageLoc).reduce((a, b) => a + b, 0) || 1
+  const groupedLang = groupLanguageLoc(languageLoc)
+  const totalLang = Object.values(groupedLang).reduce((a, b) => a + b, 0) || 1
   const totalMod = Object.values(moduleLoc).reduce((a, b) => a + b, 0) || 1
-  const langRows = Object.entries(languageLoc)
+  const langRows = Object.entries(groupedLang)
     .map(([name, value]) => ({ name, value, pct: (value / totalLang) * 100 }))
     .sort((a, b) => b.value - a.value)
   const modRows = Object.entries(moduleLoc)
@@ -847,27 +870,9 @@ function CodeMetricsBoard() {
     { dimension: 'Lint', score: overview.health_scores.lint || 0 },
   ] : []
 
-  const languagePieData = (() => {
-    if (!overview?.language_loc) return []
-    const groups: Record<string, { name: string; value: number }> = {}
-    const order = ['C/C++', 'Python', 'CMake/Shell/YAML', 'JavaScript', 'Go', 'Java', 'Others']
-    const init = (name: string) => { groups[name] = { name, value: 0 } }
-    order.forEach(init)
-    for (const [lang, val] of Object.entries(overview.language_loc)) {
-      const v = val as number
-      const lower = lang.toLowerCase()
-      let key: string
-      if (['c++', 'c', 'c/c++ header', 'c header'].includes(lower)) key = 'C/C++'
-      else if (lower === 'python') key = 'Python'
-      else if (['cmake', 'shell', 'bourne shell', 'c shell', 'fish shell', 'yaml', 'make'].includes(lower)) key = 'CMake/Shell/YAML'
-      else if (['javascript', 'typescript'].includes(lower)) key = 'JavaScript'
-      else if (lower === 'go') key = 'Go'
-      else if (lower === 'java') key = 'Java'
-      else key = 'Others'
-      groups[key].value += v
-    }
-    return order.map(k => groups[k]).filter(g => g.value > 0)
-  })()
+  const languagePieData = overview?.language_loc
+    ? Object.entries(groupLanguageLoc(overview.language_loc)).map(([name, value]) => ({ name, value }))
+    : []
 
   const modulePieData = overview?.module_loc
     ? Object.entries(overview.module_loc).map(([name, value]) => ({ name, value }))
