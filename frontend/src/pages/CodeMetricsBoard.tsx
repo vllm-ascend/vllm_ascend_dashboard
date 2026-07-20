@@ -847,9 +847,27 @@ function CodeMetricsBoard() {
     { dimension: 'Lint', score: overview.health_scores.lint || 0 },
   ] : []
 
-  const languagePieData = overview?.language_loc
-    ? Object.entries(overview.language_loc).map(([name, value]) => ({ name, value }))
-    : []
+  const languagePieData = (() => {
+    if (!overview?.language_loc) return []
+    const groups: Record<string, { name: string; value: number }> = {}
+    const order = ['C/C++', 'Python', 'CMake/Shell/YAML', 'JavaScript', 'Go', 'Java', 'Others']
+    const init = (name: string) => { groups[name] = { name, value: 0 } }
+    order.forEach(init)
+    for (const [lang, val] of Object.entries(overview.language_loc)) {
+      const v = val as number
+      const lower = lang.toLowerCase()
+      let key: string
+      if (['c++', 'c', 'c/c++ header', 'c header'].includes(lower)) key = 'C/C++'
+      else if (lower === 'python') key = 'Python'
+      else if (['cmake', 'shell', 'bourne shell', 'c shell', 'fish shell', 'yaml', 'make'].includes(lower)) key = 'CMake/Shell/YAML'
+      else if (['javascript', 'typescript'].includes(lower)) key = 'JavaScript'
+      else if (lower === 'go') key = 'Go'
+      else if (lower === 'java') key = 'Java'
+      else key = 'Others'
+      groups[key].value += v
+    }
+    return order.map(k => groups[k]).filter(g => g.value > 0)
+  })()
 
   const modulePieData = overview?.module_loc
     ? Object.entries(overview.module_loc).map(([name, value]) => ({ name, value }))
@@ -948,7 +966,7 @@ function CodeMetricsBoard() {
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card title="语言分布" size="small" extra={<Text type="secondary" style={{ fontSize: 12 }}>点击下钻</Text>}>
+                  <Card title="语言分布" size="small">
                     <ResponsiveContainer width="100%" height={300}>
                       <PieChart>
                         <Pie
@@ -971,7 +989,7 @@ function CodeMetricsBoard() {
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card title="模块分布" size="small" extra={<Text type="secondary" style={{ fontSize: 12 }}>点击下钻</Text>}>
+                  <Card title="模块分布" size="small">
                     <ResponsiveContainer width="100%" height={300}>
                       <PieChart>
                         <Pie
