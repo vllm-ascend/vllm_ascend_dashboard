@@ -141,7 +141,32 @@ class TestTestPrLinkage:
         assert case.auto_issues_found == 0
 
 
-class TestDistinctCount:
+class TestDualPrefixPr:
+    """同时匹配 BugFix 和 Test 前缀的 PR（如 [BugFix][Test]）。
+
+    预期行为：同时计入 auto_issues_found 和 auto_suspected_test_issue_count，
+    因为该 PR 既是 BugFix 又涉及测试基础设施。
+    """
+
+    @pytest.mark.asyncio
+    async def test_dual_prefix_counts_both(self, rich_db):
+        now = datetime.now(UTC)
+        case = make_test_case(test_name="test_dual")
+        rich_db.add(case)
+        await rich_db.flush()
+        rich_db.add(make_test_run(
+            test_case_id=case.id, result="failed", head_sha="sha_dual", started_at=now,
+        ))
+        rich_db.add(_make_pr(
+            801, "[BugFix][Test] Fix test infra for X", "sha_dual", merged_at=now,
+        ))
+        await rich_db.commit()
+
+        await IssuesFoundDerivator(rich_db).derive_all()
+        await rich_db.refresh(case)
+        # 双前缀 PR 同时计入两个计数器（预期行为：BugFix+Test 都匹配）
+        assert case.auto_issues_found == 1
+        assert case.auto_suspected_test_issue_count == 1
     """同一 PR 被多次失败执行关联时，只计 1 次。"""
 
     @pytest.mark.asyncio

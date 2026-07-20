@@ -971,7 +971,7 @@ function CodeMetricsBoard() {
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card title="语言分布" size="small">
+                  <Card title="语言分布" size="small" hoverable>
                     <ResponsiveContainer width="100%" height={300}>
                       <PieChart>
                         <Pie
@@ -994,7 +994,7 @@ function CodeMetricsBoard() {
                   </Card>
                 </Col>
                 <Col span={6}>
-                  <Card title="模块分布" size="small">
+                  <Card title="模块分布" size="small" hoverable>
                     <ResponsiveContainer width="100%" height={300}>
                       <PieChart>
                         <Pie

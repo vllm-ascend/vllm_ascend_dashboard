@@ -31,9 +31,9 @@ from app.models.test_board import TestCase, TestRun
 logger = logging.getLogger(__name__)
 
 # BugFix PR 标题正则（vllm-ascend 社区约定：[BugFix]/[Bugfix]/[bugfix]）
-BUGFIX_TITLE_RE = re.compile(r"^\s*\[bugfix\]", re.IGNORECASE)
-# Test PR 标题正则（[Test]/[TEST]/[test]）
-TEST_TITLE_RE = re.compile(r"^\s*\[test\]", re.IGNORECASE)
+BUGFIX_TITLE_RE = re.compile(r"\[bugfix\]", re.IGNORECASE)
+# Test PR 标题正则（[Test]/[TEST]/[test]，可出现在标题任意位置如 [BugFix][Test]）
+TEST_TITLE_RE = re.compile(r"\[test\]", re.IGNORECASE)
 # schedule 运行失败后，N 天内合入的 BugFix PR 视为弱关联
 WEAK_LINK_WINDOW_DAYS = 7
 
@@ -58,10 +58,24 @@ class IssuesFoundDerivator:
 
         # 3. 加载所有测试用例
         cases = list((await self.db.execute(select(TestCase))).scalars().all())
+
+        # 4. 一次性加载所有失败 runs，按 test_case_id 分组（避免 N+1 查询）
+        all_failed_runs = list(
+            (await self.db.execute(
+                select(TestRun)
+                .where(TestRun.result == "failed")
+                .order_by(TestRun.test_case_id, TestRun.started_at.desc())
+            )).scalars().all()
+        )
+        failed_runs_by_case: dict[int, list[TestRun]] = {}
+        for run in all_failed_runs:
+            failed_runs_by_case.setdefault(run.test_case_id, []).append(run)
+
         updated = 0
         skipped_override = 0
         issues_total = 0
         suspected_total = 0
+        batch_count = 0
 
         for case in cases:
             # 人工覆盖标记为 True 时，跳过自动推导（人工值优先）
@@ -69,8 +83,7 @@ class IssuesFoundDerivator:
                 skipped_override += 1
                 continue
 
-            # 4. 查询该用例所有失败执行
-            failed_runs = await self._get_failed_runs(case.id)
+            failed_runs = failed_runs_by_case.get(case.id, [])
             if not failed_runs:
                 case.auto_issues_found = 0
                 case.auto_suspected_test_issue_count = 0
@@ -107,6 +120,11 @@ class IssuesFoundDerivator:
             issues_total += case.auto_issues_found
             suspected_total += case.auto_suspected_test_issue_count
             updated += 1
+            batch_count += 1
+
+            # 分批 commit（每 50 个用例），避免大事务回滚风险
+            if batch_count % 50 == 0:
+                await self.db.commit()
 
         await self.db.commit()
         logger.info(
@@ -184,9 +202,9 @@ class IssuesFoundDerivator:
                 continue
             sha = sha.strip()
             cats: set[str] = set()
-            if title and BUGFIX_TITLE_RE.match(title):
+            if title and BUGFIX_TITLE_RE.search(title):
                 cats.add("bugfix")
-            if title and TEST_TITLE_RE.match(title):
+            if title and TEST_TITLE_RE.search(title):
                 cats.add("test")
             # 补充：PR body 中明确提到 fix bug 的，也视为 bugfix（次级信号）
             if "bugfix" not in cats and data_json:
@@ -209,7 +227,7 @@ class IssuesFoundDerivator:
         rows = (await self.db.execute(stmt)).all()
         timeline: list[tuple[datetime, str, str]] = []
         for merged_at, title, sha in rows:
-            if merged_at and title and BUGFIX_TITLE_RE.match(title):
+            if merged_at and title and BUGFIX_TITLE_RE.search(title):
                 timeline.append((merged_at, title, sha or ""))
         timeline.sort(key=lambda x: x[0])
         return timeline

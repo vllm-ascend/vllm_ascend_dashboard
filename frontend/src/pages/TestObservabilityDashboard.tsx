@@ -712,7 +712,33 @@ function TestObservabilityDashboard() {
           if (!editingCase) return
           try {
             const values = await editForm.validateFields()
-            await updateCaseMutation.mutateAsync({ caseId: editingCase.id, payload: values })
+            const payload: Record<string, unknown> = {}
+            if (values.use_auto_issues) {
+              payload.use_auto_issues = true
+            }
+            if (values.issues_found !== (editingCase.effective_issues_found ?? 0)) {
+              payload.issues_found = values.issues_found
+            }
+            if (values.suspected_test_issue_count !== (editingCase.effective_suspected_test_issue_count ?? 0)) {
+              payload.suspected_test_issue_count = values.suspected_test_issue_count
+            }
+            if (values.is_flaky !== editingCase.is_flaky) {
+              payload.is_flaky = values.is_flaky
+            }
+            if (values.is_flaky_manual !== editingCase.is_flaky_manual) {
+              payload.is_flaky_manual = values.is_flaky_manual
+            }
+            if ((values.owner ?? '') !== (editingCase.owner ?? '')) {
+              payload.owner = values.owner
+            }
+            if ((values.owner_email ?? '') !== (editingCase.owner_email ?? '')) {
+              payload.owner_email = values.owner_email
+            }
+            if (Object.keys(payload).length === 0) {
+              setEditingCase(null)
+              return
+            }
+            await updateCaseMutation.mutateAsync({ caseId: editingCase.id, payload })
             message.success('保存成功')
             setEditingCase(null)
             editForm.resetFields()

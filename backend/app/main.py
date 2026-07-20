@@ -72,10 +72,7 @@ async def init_db():
             await conn.run_sync(Base.metadata.create_all, checkfirst=True)
         logger.info("Database tables created successfully")
 
-        await _migrate_login_log_columns()
-        await _migrate_avatar_base64_column()
-        await _migrate_failure_analysis_pipeline_columns()
-        await _migrate_ci_job_tracking_columns()
+        # 列级迁移：test_cases 新增 auto_issues_found 等字段（本 PR 范围）
         await _migrate_test_case_columns()
 
         # 初始化 LLM 提供商默认配置
@@ -91,146 +88,6 @@ async def init_db():
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}", exc_info=True)
         raise
-
-
-# _migrate_email_column 已移除：MySQL 唯一索引由 SQLAlchemy 模型 unique=True 管理，
-# create_all(checkfirst=True) 已处理表级幂等，不再需要手动迁移。
-
-
-async def _migrate_login_log_columns():
-    """Ensure user_login_logs table has all required columns (create_all won't ALTER existing tables)"""
-    try:
-        from sqlalchemy import text, inspect
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as db:
-            def _get_columns(sync_session):
-                return [
-                    c["name"]
-                    for c in inspect(sync_session.connection()).get_columns(
-                        "user_login_logs"
-                    )
-                ]
-
-            existing_cols = await db.run_sync(_get_columns)
-
-            migrations = [
-                ("ip_address_hashed", "VARCHAR(64)"),
-                ("login_method", "VARCHAR(20)"),
-                ("user_agent", "VARCHAR(500)"),
-                ("created_at", "TIMESTAMP"),
-            ]
-
-            for col_name, col_type in migrations:
-                if col_name not in existing_cols:
-                    logger.info(f"Adding missing column '{col_name}' to user_login_logs")
-                    await db.execute(text(f"ALTER TABLE user_login_logs ADD COLUMN {col_name} {col_type}"))
-                    await db.commit()
-                    logger.info(f"Column '{col_name}' added successfully")
-
-    except Exception as e:
-        logger.warning(f"Login log column migration skipped (non-fatal): {e}")
-
-
-async def _migrate_failure_analysis_pipeline_columns():
-    """Add observable evidence-pipeline fields to existing installations."""
-    try:
-        from sqlalchemy import inspect, text
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as db:
-            def _get_columns(sync_session):
-                return {
-                    c["name"]
-                    for c in inspect(sync_session.connection()).get_columns("job_failure_analysis")
-                }
-
-            existing = await db.run_sync(_get_columns)
-            migrations = {
-                "analysis_phase": "VARCHAR(30) NULL",
-                "evidence_ledger": "JSON NULL",
-                "validation_result": "JSON NULL",
-                "agent_trace": "JSON NULL",
-                "agent_steps": "INT DEFAULT 0",
-            }
-            for name, sql_type in migrations.items():
-                if name not in existing:
-                    await db.execute(text(f"ALTER TABLE job_failure_analysis ADD COLUMN {name} {sql_type}"))
-                    await db.commit()
-    except Exception as e:
-        logger.warning("Failure-analysis pipeline migration skipped (non-fatal): %s", e)
-
-
-async def _migrate_ci_job_tracking_columns():
-    """Add daily failure tracking columns (processing_status, notes, updated_by, status_updated_at) to ci_jobs"""
-    try:
-        from sqlalchemy import inspect, text
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as db:
-            def _get_columns(sync_session):
-                return {
-                    c["name"]
-                    for c in inspect(sync_session.connection()).get_columns("ci_jobs")
-                }
-
-            existing = await db.run_sync(_get_columns)
-            migrations = {
-                "processing_status": "VARCHAR(20) DEFAULT '未处理'",
-                "notes": "TEXT NULL",
-                "updated_by": "VARCHAR(50) NULL",
-                "status_updated_at": "TIMESTAMP NULL",
-            }
-            for name, sql_type in migrations.items():
-                if name not in existing:
-                    await db.execute(text(f"ALTER TABLE ci_jobs ADD COLUMN {name} {sql_type}"))
-                    await db.commit()
-            # Add index after columns exist (MySQL may not have it from create_all)
-            if "processing_status" not in existing:
-                try:
-                    await db.execute(text("CREATE INDEX ix_ci_jobs_processing_status ON ci_jobs (processing_status)"))
-                    await db.commit()
-                except Exception:
-                    pass  # index may already exist
-    except Exception as e:
-        logger.warning("CI job tracking columns migration skipped (non-fatal): %s", e)
-
-
-async def _migrate_avatar_base64_column():
-    """Ensure pull_requests has author email/avatar cache columns for PR pipeline."""
-    try:
-        from sqlalchemy import text, inspect
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        async with async_session() as db:
-            def _get_columns(sync_session):
-                return [
-                    c["name"]
-                    for c in inspect(sync_session.connection()).get_columns("pull_requests")
-                ]
-
-            existing_cols = await db.run_sync(_get_columns)
-
-            pending_columns = []
-            if 'author_email' not in existing_cols:
-                pending_columns.append(("author_email", "VARCHAR(200)"))
-            if 'author_avatar_base64' not in existing_cols:
-                pending_columns.append(("author_avatar_base64", "LONGTEXT"))
-
-            for col_name, col_type in pending_columns:
-                logger.info("Adding missing column '%s' to pull_requests", col_name)
-                await db.execute(text(f"ALTER TABLE pull_requests ADD COLUMN {col_name} {col_type}"))
-
-            if pending_columns:
-                await db.commit()
-                logger.info("Added missing pull_requests columns: %s", ", ".join(name for name, _ in pending_columns))
-
-    except Exception as e:
-        logger.warning(f"PR pipeline author column migration skipped (non-fatal): {e}")
 
 
 async def _migrate_test_case_columns():
@@ -299,13 +156,24 @@ async def _migrate_test_case_columns():
                 await db.commit()
                 logger.info("Backfilled lifetime_runs / lifetime_failures from test_runs")
 
-            # 为 is_flaky_manual 创建索引（与 is_flaky 同级语义，便于 WHERE 过滤）
+            # 为 is_flaky_manual 创建索引（MySQL < 8.0.29 不支持 IF NOT EXISTS，先查再建）
             if "is_flaky_manual" in added:
                 try:
-                    await db.execute(text(
-                        "CREATE INDEX IF NOT EXISTS ix_test_cases_is_flaky_manual "
-                        "ON test_cases (is_flaky_manual)"
-                    ))
+                    if _is_sqlite:
+                        await db.execute(text(
+                            "CREATE INDEX IF NOT EXISTS ix_test_cases_is_flaky_manual "
+                            "ON test_cases (is_flaky_manual)"
+                        ))
+                    else:
+                        idx_exists = (await db.execute(text(
+                            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS "
+                            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'test_cases' "
+                            "AND INDEX_NAME = 'ix_test_cases_is_flaky_manual'"
+                        ))).scalar()
+                        if not idx_exists:
+                            await db.execute(text(
+                                "CREATE INDEX ix_test_cases_is_flaky_manual ON test_cases (is_flaky_manual)"
+                            ))
                     await db.commit()
                 except Exception as idx_err:
                     logger.warning("is_flaky_manual index creation skipped (non-fatal): %s", idx_err)
