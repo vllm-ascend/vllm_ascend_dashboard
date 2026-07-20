@@ -10,7 +10,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db.base import SessionLocal, engine
 from app.services.daily_report import DailyReportService, _today_shanghai
-from scripts.generate_real_daily_preview import build_markdown
+
+
+def build_verification_markdown(snapshot: dict) -> str:
+    """Small deterministic body used only to verify renderer equivalence."""
+    ci = snapshot["yesterday"]["ci"]
+    return (
+        "## Nightly A2/A3\n\n"
+        f"实际运行 **{ci['total_cases']}** 个用例，通过 **{ci['passed_cases']}** 个，"
+        f"失败 **{ci['failed_cases']}** 个，通过率 **{ci['pass_rate']:.1f}%**。"
+    )
 
 
 async def main() -> None:
@@ -21,7 +30,7 @@ async def main() -> None:
             snapshot = await service.generate_report(report_date)
             history = SimpleNamespace(
                 report_date=snapshot["report_date"],
-                ai_report_content=build_markdown(snapshot),
+                ai_report_content=build_verification_markdown(snapshot),
                 performance_summary={"_report_snapshot": snapshot},
                 ci_summary=snapshot["yesterday"]["ci"],
                 model_summary=snapshot["yesterday"]["model"],
