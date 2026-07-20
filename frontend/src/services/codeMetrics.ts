@@ -186,3 +186,94 @@ export async function getFileHeatmapDetail(filePath: string): Promise<Record<str
   const { data } = await api.get('/code-metrics/heatmap/file', { params: { file_path: filePath } })
   return data
 }
+
+// ============================================================================
+// 下钻明细：文件列表 / 函数列表 / 维度聚合
+// ============================================================================
+
+export interface FileAggItem {
+  file_path: string
+  language: string
+  module: string
+  function_count: number
+  total_complexity: number
+  max_complexity: number
+  total_function_lines: number
+}
+
+export interface FunctionDetailItem {
+  file_path: string
+  function_name: string
+  language: string
+  module: string
+  cyclomatic_complexity: number | null
+  max_nesting_depth: number | null
+  function_lines: number | null
+  start_line: number | null
+}
+
+export interface PaginatedFiles {
+  items: FileAggItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface PaginatedFunctions {
+  items: FunctionDetailItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface DrilldownResult {
+  has_data: boolean
+  filter: { language: string | null; module: string | null }
+  loc: number
+  file_count: number
+  function_count: number
+  total_function_lines: number
+  avg_complexity: number
+  max_complexity: number
+  top_files: FileAggItem[]
+  top_functions: FunctionDetailItem[]
+}
+
+export interface FileListParams {
+  language?: string
+  module?: string
+  search?: string
+  limit?: number
+  offset?: number
+}
+
+export interface FunctionListParams {
+  language?: string
+  module?: string
+  file_path?: string
+  search?: string
+  min_complexity?: number
+  limit?: number
+  offset?: number
+}
+
+export async function listFiles(params: FileListParams = {}): Promise<PaginatedFiles> {
+  const { data } = await api.get('/code-metrics/files', { params })
+  return data
+}
+
+export async function listFunctions(params: FunctionListParams = {}): Promise<PaginatedFunctions> {
+  const { data } = await api.get('/code-metrics/functions', { params })
+  return data
+}
+
+export async function getDrilldown(
+  language?: string,
+  module?: string,
+  topN?: number,
+): Promise<DrilldownResult> {
+  const { data } = await api.get('/code-metrics/drilldown', {
+    params: { language, module, top_n: topN },
+  })
+  return data
+}

@@ -781,7 +781,7 @@ class CodeComplexityDetail(Base):
     __tablename__ = "code_metrics_complexity_details"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False)
+    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False, index=True)
     file_path = Column(String(500), nullable=False)
     function_name = Column(String(200), nullable=False)
     language = Column(String(20))  # Python/C++
@@ -798,7 +798,7 @@ class CodeDuplicationDetail(Base):
     __tablename__ = "code_metrics_duplication_details"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False)
+    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False, index=True)
     file_a = Column(String(500), nullable=False)
     file_b = Column(String(500), nullable=False)
     lines = Column(Integer, default=0)
@@ -813,7 +813,7 @@ class CodeSecurityDetail(Base):
     __tablename__ = "code_metrics_security_details"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False)
+    snapshot_id = Column(Integer, ForeignKey("code_metrics_snapshots.id"), nullable=False, index=True)
     file_path = Column(String(500), nullable=False)
     line_number = Column(Integer)
     severity = Column(String(20))  # error/warning/info
