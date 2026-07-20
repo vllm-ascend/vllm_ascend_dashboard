@@ -16,6 +16,7 @@ import {
   useReportHistory, useLatestReport, useGenerateReportDraft, useSendReportDraft,
 } from '../hooks/useDailyReport'
 import type { DailyReportConfigUpdate, DailyReportHistoryItem } from '../services/dailyReport'
+import { getReportDraftPreview } from '../services/dailyReport'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -47,6 +48,21 @@ function DailyReportConfigPage() {
   const [triggering, setTriggering] = useState(false)
   const [triggerResult, setTriggerResult] = useState<{ success: boolean; message: string } | null>(null)
   const [triggerDate, setTriggerDate] = useState<string>('')
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState('')
+  const [emailPreviewOpen, setEmailPreviewOpen] = useState(false)
+  const [emailPreviewLoading, setEmailPreviewLoading] = useState(false)
+
+  const handlePreviewDraft = async (reportId: number) => {
+    setEmailPreviewLoading(true)
+    try {
+      setEmailPreviewHtml(await getReportDraftPreview(reportId))
+      setEmailPreviewOpen(true)
+    } catch (err: unknown) {
+      Modal.error({ title: '预览失败', content: err instanceof Error ? err.message : '无法生成最终邮件预览' })
+    } finally {
+      setEmailPreviewLoading(false)
+    }
+  }
 
   const handleGenerateDraft = async () => {
     setTriggering(true)
@@ -441,11 +457,10 @@ function DailyReportConfigPage() {
                   showIcon
                   message="草稿等待确认"
                   description="请检查下方数据和 AI 内容。发送时会使用当前预览，不会重新生成正文。"
-                  action={
-                    <Button type="primary" icon={<SendOutlined />} loading={sendDraft.isPending} onClick={() => handleSendDraft(latestData.id)}>
-                      确认并发送
-                    </Button>
-                  }
+                  action={<Space>
+                    <Button loading={emailPreviewLoading} onClick={() => handlePreviewDraft(latestData.id)}>预览最终邮件</Button>
+                    <Button type="primary" icon={<SendOutlined />} loading={sendDraft.isPending} onClick={() => handleSendDraft(latestData.id)}>确认并发送</Button>
+                  </Space>}
                 />
               )}
               {renderLatestReport()}
@@ -453,6 +468,21 @@ function DailyReportConfigPage() {
           </Col>
         )}
       </Row>
+      <Modal
+        title="最终邮件预览"
+        open={emailPreviewOpen}
+        onCancel={() => setEmailPreviewOpen(false)}
+        footer={null}
+        width={820}
+        destroyOnClose
+      >
+        <iframe
+          title="最终邮件预览"
+          srcDoc={emailPreviewHtml}
+          sandbox=""
+          style={{ width: '100%', height: '72vh', border: 0, background: '#f5f7fa' }}
+        />
+      </Modal>
     </div>
   )
 }

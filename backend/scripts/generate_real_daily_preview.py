@@ -10,8 +10,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.db.base import SessionLocal, engine
 from app.services.daily_report import DailyReportService, _today_shanghai
 from app.services.chart_renderer import render_charts
-from jinja2 import Environment, FileSystemLoader
-from markdown_it import MarkdownIt
 
 
 def pct(value):
@@ -79,15 +77,8 @@ async def main():
             data = await service.generate_report(report_date)
             markdown = build_markdown(data)
             chart_images = render_charts(data)
-            env = Environment(
-                loader=FileSystemLoader(str(Path(__file__).resolve().parent.parent / "app" / "templates")),
-                autoescape=True,
-            )
-            html = env.get_template("ai_report_email.html").render(
-                report_date=data["report_date"],
-                ai_report_html=MarkdownIt("commonmark", {"html": False}).enable("table").render(markdown),
-                dashboard_url="http://localhost:3000",
-                chart_cids=list(chart_images),
+            html = service.build_ai_email_html(
+                markdown, data["report_date"], list(chart_images)
             )
             for cid, image in chart_images.items():
                 encoded = base64.b64encode(image).decode("ascii")

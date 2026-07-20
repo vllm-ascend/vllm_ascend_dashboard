@@ -6,6 +6,7 @@ from datetime import date as DateType, timedelta
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,15 @@ from app.services.daily_report import DailyReportService, _today_shanghai
 logger = logging.getLogger(__name__)
 
 REPORT_CONFIG_KEY = "daily_report_config"
+
+
+def _public_performance_summary(summary: dict | None) -> dict | None:
+    """Hide the internal immutable report snapshot from API responses."""
+    if not summary:
+        return summary
+    public = dict(summary)
+    public.pop("_report_snapshot", None)
+    return public
 
 router = APIRouter(prefix="/daily-report", tags=["每日运行报告"])
 
@@ -198,6 +208,19 @@ async def send_report_draft(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="发送日报草稿失败") from exc
 
 
+@router.get("/draft/{report_id}/preview", response_class=HTMLResponse)
+async def preview_report_draft(
+    report_id: int,
+    current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview the exact HTML that will be sent, with CID images inlined."""
+    try:
+        return HTMLResponse(await DailyReportService(db).get_draft_preview_html(report_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.post("/trigger", response_model=DailyReportTriggerResponse)
 async def trigger_report(
     current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
@@ -264,7 +287,12 @@ async def get_report_history(
 
         return DailyReportHistoryListResponse(
             total=total,
-            items=[DailyReportHistoryResponse.model_validate(item) for item in items],
+            items=[
+                DailyReportHistoryResponse.model_validate(item).model_copy(
+                    update={"performance_summary": _public_performance_summary(item.performance_summary)}
+                )
+                for item in items
+            ],
         )
     except Exception as e:
         logger.error(f"Failed to get report history: {e}")
@@ -296,7 +324,7 @@ async def get_latest_report(
             "ci_summary": latest.ci_summary,
             "model_summary": latest.model_summary,
             "github_summary": latest.github_summary,
-            "performance_summary": latest.performance_summary,
+            "performance_summary": _public_performance_summary(latest.performance_summary),
             "ai_report_content": latest.ai_report_content,
         }
     except Exception as e:

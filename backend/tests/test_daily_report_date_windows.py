@@ -84,3 +84,58 @@ async def test_nightly_rate_counts_only_executed_a2_a3_test_cases():
         {"hardware": "A2", "total_cases": 2, "passed_cases": 1, "failed_cases": 1, "pass_rate": 50.0},
         {"hardware": "A3", "total_cases": 1, "passed_cases": 1, "failed_cases": 0, "pass_rate": 100.0},
     ]
+
+
+def test_draft_uses_persisted_report_snapshot_without_requerying():
+    snapshot = {
+        "report_date": "2026-07-18",
+        "timezone": "Asia/Shanghai",
+        "yesterday": {"ci": {"total_cases": 34}},
+    }
+    history = SimpleNamespace(
+        report_date="2026-07-18",
+        ci_summary={"total_cases": 999},
+        model_summary={},
+        github_summary={},
+        performance_summary={"avg_throughput": 1, "_report_snapshot": snapshot},
+    )
+
+    assert DailyReportService._get_draft_report_snapshot(history) is snapshot
+
+
+def test_legacy_draft_snapshot_fallback_remains_sendable():
+    history = SimpleNamespace(
+        report_date="2026-07-18",
+        ci_summary={"total_cases": 34},
+        model_summary={"total_reports": 2},
+        github_summary={"pr_count": 1},
+        performance_summary={"avg_throughput": 10},
+    )
+
+    snapshot = DailyReportService._get_draft_report_snapshot(history)
+
+    assert snapshot["yesterday"]["ci"] == {"total_cases": 34}
+    assert snapshot["yesterday"]["performance"] == {"avg_throughput": 10}
+
+
+def test_preview_and_delivery_share_the_same_email_renderer(monkeypatch):
+    snapshot = {"report_date": "2026-07-18", "yesterday": {"ci": {}}}
+    history = SimpleNamespace(
+        report_date="2026-07-18",
+        ai_report_content="# Daily report",
+        performance_summary={"_report_snapshot": snapshot},
+        ci_summary={}, model_summary={}, github_summary={},
+    )
+    monkeypatch.setattr(
+        "app.services.chart_renderer.render_charts",
+        lambda data: {"nightly": b"png-bytes"},
+    )
+    service = DailyReportService(MagicMock())
+
+    delivery_html, delivery_images = service.build_draft_email(history)
+    preview_html, preview_images = service.build_draft_email(history, inline_images=True)
+
+    assert delivery_images == preview_images == {"nightly": b"png-bytes"}
+    assert 'src="cid:nightly"' in delivery_html
+    assert 'src="data:image/png;base64,cG5nLWJ5dGVz"' in preview_html
+    assert delivery_html.replace('cid:nightly', 'data:image/png;base64,cG5nLWJ5dGVz') == preview_html
