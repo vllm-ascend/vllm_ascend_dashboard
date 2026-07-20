@@ -179,7 +179,7 @@ services:
 
 # Named Volumes - Data persists outside container lifecycle
 volumes:
-  # Backend application data (SQLite database, cache, etc.)
+  # Backend cache and generated data (the database is stored in mysql_data)
   # Git repository cache is stored in /app/data/repos (subdirectory of backend_data)
   backend_data:
     driver: local
