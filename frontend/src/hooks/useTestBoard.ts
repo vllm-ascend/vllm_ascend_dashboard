@@ -113,6 +113,13 @@ export const useModuleHealth = () => {
   })
 }
 
+export const useTestCaseFeatureMatrix = () => {
+  return useQuery({
+    queryKey: ['test-board-case-matrix'],
+    queryFn: testBoardApi.getCaseFeatureMatrix,
+  })
+}
+
 export const useTestTrends = (days: number = 30) => {
   return useQuery({
     queryKey: ['test-board-trends', days],

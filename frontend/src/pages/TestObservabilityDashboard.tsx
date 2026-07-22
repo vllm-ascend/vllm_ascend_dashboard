@@ -4,12 +4,13 @@ import {
 } from 'antd'
 import {
   BugOutlined, CheckCircleOutlined, WarningOutlined, ClockCircleOutlined,
-  SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined, EditOutlined,
+  SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined, EditOutlined, TableOutlined,
 } from '@ant-design/icons'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
 import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions, useUpdateCase } from '../hooks/useTestBoard'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import type { TestCaseItem, FlakyCaseDetail, FailureBreakdown, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
+import TestCaseFeatureMatrixTab from '../components/TestCaseFeatureMatrixTab'
 import './TestObservabilityDashboard.css'
 
 const { Text, Title } = Typography
@@ -697,6 +698,11 @@ function TestObservabilityDashboard() {
                 </Card>
               </div>
             ),
+          },
+          {
+            key: 'case-matrix',
+            label: <Space><TableOutlined /><span>测试用例</span></Space>,
+            children: <TestCaseFeatureMatrixTab />,
           },
         ]}
       />

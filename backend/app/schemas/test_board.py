@@ -181,6 +181,39 @@ class ModuleHealthItem(BaseModel):
     health_level: str | None = None
 
 
+class TestCaseFeatureColumn(BaseModel):
+    key: str
+    title: str
+    count: int
+
+
+class TestCaseFeatureMatrixRow(BaseModel):
+    id: str
+    directory: str
+    case_name: str
+    card_count: str | None = None
+    remark: str | None = None
+    marked_feature_count: int
+    features: dict[str, str]
+
+
+class TestCaseFeatureMatrixStatistics(BaseModel):
+    total_cases: int
+    total_features: int
+    unmatched_cases: int
+    by_directory: dict[str, int]
+    by_card_count: dict[str, int]
+    by_remark: dict[str, int]
+
+
+class TestCaseFeatureMatrixResponse(BaseModel):
+    source_file: str
+    updated_at: datetime
+    feature_columns: list[TestCaseFeatureColumn]
+    rows: list[TestCaseFeatureMatrixRow]
+    statistics: TestCaseFeatureMatrixStatistics
+
+
 class TestBoardSyncRequest(BaseModel):
     days_back: int = 7
     force: bool = False

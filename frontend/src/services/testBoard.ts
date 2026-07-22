@@ -139,6 +139,39 @@ export interface ModuleHealthItem {
   health_level: string | null
 }
 
+export interface TestCaseFeatureColumn {
+  key: string
+  title: string
+  count: number
+}
+
+export interface TestCaseFeatureMatrixRow {
+  id: string
+  directory: string
+  case_name: string
+  card_count: string | null
+  remark: string | null
+  marked_feature_count: number
+  features: Record<string, string>
+}
+
+export interface TestCaseFeatureMatrixStatistics {
+  total_cases: number
+  total_features: number
+  unmatched_cases: number
+  by_directory: Record<string, number>
+  by_card_count: Record<string, number>
+  by_remark: Record<string, number>
+}
+
+export interface TestCaseFeatureMatrixResponse {
+  source_file: string
+  updated_at: string
+  feature_columns: TestCaseFeatureColumn[]
+  rows: TestCaseFeatureMatrixRow[]
+  statistics: TestCaseFeatureMatrixStatistics
+}
+
 export interface PaginatedResult<T> {
   total: number
   items: T[]
@@ -236,6 +269,11 @@ export const getOwnerMatrix = async (): Promise<OwnerMatrixItem[]> => {
 
 export const getModuleHealth = async (): Promise<ModuleHealthItem[]> => {
   const response = await api.get<ModuleHealthItem[]>('/test-board/modules')
+  return response.data
+}
+
+export const getCaseFeatureMatrix = async (): Promise<TestCaseFeatureMatrixResponse> => {
+  const response = await api.get<TestCaseFeatureMatrixResponse>('/test-board/case-matrix')
   return response.data
 }
 

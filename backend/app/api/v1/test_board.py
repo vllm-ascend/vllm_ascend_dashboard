@@ -17,8 +17,10 @@ from app.schemas.test_board import (
     TestOverviewResponse, TestCaseResponse, TestRunResponse,
     TestSuiteResponse, FlakyCaseDetail, FailureCategoryBreakdown,
     OwnerMatrixItem, ModuleHealthItem, TestBoardSyncRequest,
-    FailureAnnotationRequest, TestCaseUpdateRequest,
+    FailureAnnotationRequest, TestCaseFeatureMatrixResponse,
+    TestCaseUpdateRequest,
 )
+from app.services.test_case_matrix_service import get_case_feature_matrix
 from app.services.test_board_service import TestBoardService
 from app.services.test_health_calculator import TestHealthCalculator
 from app.services.github_client import GitHubClient
@@ -158,6 +160,14 @@ async def get_owners(db: AsyncSession = Depends(get_db), user: User = Depends(ge
 async def get_modules(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     svc = TestBoardService(db)
     return await svc.get_module_health()
+
+
+@router.get("/case-matrix", response_model=TestCaseFeatureMatrixResponse)
+async def get_case_matrix(user: User = Depends(get_current_user)):
+    try:
+        return get_case_feature_matrix()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="测试用例矩阵文件不存在") from exc
 
 
 @router.get("/trends")
