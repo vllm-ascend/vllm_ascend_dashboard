@@ -50,6 +50,12 @@ def _get_lock() -> asyncio.Lock:
         _coverage_sync_lock = asyncio.Lock()
     return _coverage_sync_lock
 
+
+def is_coverage_syncing() -> bool:
+    """是否有覆盖率同步正在进行（供 API 同步检查返回 409）。"""
+    lock = _coverage_sync_lock
+    return lock is not None and lock.locked()
+
 # chompjs 可选（C 扩展在部分平台 DLL 加载失败，回退到字符串感知平衡括号计数）
 try:
     import chompjs as _chompjs
@@ -368,6 +374,7 @@ def _process_tar_breadth(tar_path: Path, signature: str) -> dict:
     file_jobs: dict[str, set[str]] = defaultdict(set)
     file_hw: dict[str, set[str]] = defaultdict(set)
     module_files: dict[str, set[str]] = defaultdict(set)
+    job_files: dict[str, set[str]] = defaultdict(set)  # 每作业去重文件并集
     total_covdata = 0
     total_arcs = 0
     all_source_files: set[str] = set()
@@ -418,6 +425,7 @@ def _process_tar_breadth(tar_path: Path, signature: str) -> dict:
                 file_jobs[fp].add(job_dir)
                 file_hw[fp].add(hw)
                 module_files[module_of(fp)].add(fp)
+                job_files[job_dir].add(fp)  # 作业内去重并集
 
             # 作业级聚合
             if job_dir not in jobs:
@@ -439,7 +447,7 @@ def _process_tar_breadth(tar_path: Path, signature: str) -> dict:
             j = jobs[job_dir]
             j["covdata_count"] += 1
             j["arcs"] += stats["arcs"]
-            j["source_files_covered"] = len(stats["files"])
+            j["source_files_covered"] = len(job_files[job_dir])  # 并集，非覆盖
             if stats["when"] and (j["latest_when"] is None or stats["when"] > j["latest_when"]):
                 j["latest_when"] = stats["when"]
             if stats["when"] and (latest_when is None or stats["when"] > latest_when):
@@ -682,8 +690,8 @@ def process_line_coverage(tar_path: Path, tar_signature: str, covdata_when: str 
         _run(["python", "-m", "coverage", "combine", "--rcfile", str(rc), str(covdata_dir)], work_dir,
              settings.PR_COVERAGE_LINE_TIMEOUT_SECONDS)
         report_json = work_dir / "coverage.json"
-        _run(["python", "-m", "coverage", "json", "-o", str(report_json), "--rcfile", str(rc),
-              "--show-contexts"], work_dir, settings.PR_COVERAGE_LINE_TIMEOUT_SECONDS)
+        _run(["python", "-m", "coverage", "json", "-o", str(report_json), "--rcfile", str(rc)],
+             work_dir, settings.PR_COVERAGE_LINE_TIMEOUT_SECONDS)
 
         if not report_json.exists():
             raise RuntimeError("coverage.json not generated")
@@ -769,6 +777,12 @@ async def sync_e2e(db: AsyncSession) -> dict:
     try:
         parser = E2ECoverageParser()
         result = parser.parse()
+        # 变更检测：source_file_hash 与存储一致则跳过写库（设计承诺）
+        existing = await _load_config(db, E2E_KEY)
+        if existing and existing.get("source_file_hash") == result["source_file_hash"]:
+            logger.info("E2E coverage skipped (source_file_hash unchanged)")
+            return {"success": True, "skipped": True, "updated_at": existing.get("updated_at"),
+                    "repo_commit": result["repo_commit"]}
         await _save_config(db, E2E_KEY, result, "E2E 特性覆盖率数据")
         await db.commit()
         logger.info("E2E coverage synced: %s tests", result["summary"]["total_tests"])
@@ -815,6 +829,13 @@ async def sync_pr_lines(db: AsyncSession, tar_path: str | None, tar_signature: s
                         covdata_when: str | None) -> dict:
     if not settings.PR_COVERAGE_LINE_ENABLED:
         return {"success": False, "skipped": True, "reason": "disabled"}
+    # 变更检测：tar 签名与存储一致则跳过昂贵的 combine（设计承诺 + 避免每小时 600s 阻塞）
+    if tar_signature:
+        existing_lines = await _load_config(db, PR_LINES_KEY)
+        if existing_lines and existing_lines.get("tar_signature") == tar_signature:
+            logger.info("PR coverage lines skipped (tar_signature unchanged)")
+            return {"success": True, "skipped": True, "tar_signature": tar_signature,
+                    "status": existing_lines.get("status")}
     # 复用 breadth 已下载的 tar；若无则重新下载
     sig = tar_signature
     tp = Path(tar_path) if tar_path else None
@@ -884,25 +905,52 @@ async def sync_all_coverage(db: AsyncSession, source: str = "all") -> dict:
         if source in ("all", "pr_breadth"):
             r = await sync_pr_breadth(db)
             status["pr_breadth"] = {k: v for k, v in r.items() if k != "tar_path"}
+            # 始终捕获 tar 签名（即使 breadth 跳过），供 pr_lines 变更检测
+            tar_sig = r.get("tar_signature") or tar_sig
             if r.get("success") and not r.get("skipped"):
                 tar_path = r.get("tar_path")
-                tar_sig = r.get("tar_signature")
                 covdata_when = r.get("covdata_when")
 
         if source in ("all", "pr_lines"):
-            # 方案2 较重，作为后台任务不阻塞调度循环（这里仍同步执行但有超时保护）
-            r = await sync_pr_lines(db, tar_path, tar_sig, covdata_when)
-            status["pr_lines"] = r
+            # 方案2 变更检测：签名与存储一致则跳过；变更则作为独立后台任务不阻塞调度循环
+            existing_lines = await _load_config(db, PR_LINES_KEY)
+            if existing_lines and tar_sig and existing_lines.get("tar_signature") == tar_sig:
+                status["pr_lines"] = {"success": True, "skipped": True, "tar_signature": tar_sig,
+                                      "status": existing_lines.get("status")}
+            else:
+                # 后台执行（独立 session + 自管 tar 清理），不阻塞本 job 返回
+                asyncio.create_task(_pr_lines_bg(tar_path, tar_sig, covdata_when))
+                # breadth 下载的 tar 交给 bg 任务清理，此处不删除
+                tar_path = None
+                status["pr_lines"] = {"success": True, "status": "scheduled",
+                                      "tar_signature": tar_sig}
 
         await _save_sync_status(db, status)
         await db.commit()
-        # 清理 breadth 下载的 tar
+        # 清理 breadth 下载的 tar（若未被 pr_lines bg 接管）
         if tar_path:
             try:
                 Path(tar_path).unlink()
             except OSError:
                 pass
         return status
+
+
+async def _pr_lines_bg(tar_path: str | None, tar_signature: str | None, covdata_when: str | None) -> None:
+    """方案2 行覆盖率后台任务：独立 session，自管 tar 清理，不阻塞调度。"""
+    from app.db.base import SessionLocal
+    try:
+        async with SessionLocal() as db:
+            result = await sync_pr_lines(db, tar_path, tar_signature, covdata_when)
+            logger.info("PR coverage lines (bg) done: %s", result)
+    except Exception as e:  # noqa: BLE001
+        logger.error("PR coverage lines (bg) failed: %s", e, exc_info=True)
+    finally:
+        if tar_path:
+            try:
+                Path(tar_path).unlink()
+            except OSError:
+                pass
 
 
 async def _save_sync_status(db: AsyncSession, status: dict) -> None:
@@ -935,11 +983,11 @@ async def get_pr_breadth(db: AsyncSession, page: int = 1, per_page: int = 50,
         return {"summary": {}, "jobs": [], "file_matrix": [], "by_module": [], "updated_at": None}
     if fmt == "csv":
         return {"csv": _breadth_csv(data, module)}
-    file_matrix = data.get("file_matrix", [])
+    file_matrix = list(data.get("file_matrix", []))
     if module:
         file_matrix = [f for f in file_matrix if f.get("module") == module]
     if sort == "covered_by_jobs":
-        file_matrix.sort(key=lambda x: x.get("covered_by_jobs", 0), reverse=(order == "desc"))
+        file_matrix = sorted(file_matrix, key=lambda x: x.get("covered_by_jobs", 0), reverse=(order == "desc"))
     paged, total = _paginate(file_matrix, page, per_page)
     return {
         "summary": data.get("summary", {}),
@@ -970,9 +1018,9 @@ async def get_pr_lines(db: AsyncSession, page: int = 1, per_page: int = 50,
         return {"totals": {}, "by_module": [], "files": [], "updated_at": None, "status": "unknown"}
     if fmt == "csv":
         return {"csv": _lines_csv(data)}
-    files = data.get("files", [])
+    files = list(data.get("files", []))
     if sort == "percent_covered":
-        files.sort(key=lambda x: x.get("percent_covered", 0), reverse=(order == "desc"))
+        files = sorted(files, key=lambda x: x.get("percent_covered", 0), reverse=(order == "desc"))
     paged, total = _paginate(files, page, per_page)
     return {
         "totals": data.get("totals", {}),

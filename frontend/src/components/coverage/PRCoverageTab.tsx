@@ -9,8 +9,8 @@ import CoverageCodeViewer from './CoverageCodeViewer'
 const { Text } = Typography
 
 export default function PRCoverageTab() {
-  const { data: breadth, isLoading: breadthLoading } = usePRCoverageBreadth({ per_page: 200 })
-  const { data: lines, isLoading: linesLoading } = usePRCoverageLines({ per_page: 200, sort: 'percent_covered', order: 'asc' })
+  const { data: breadth, isLoading: breadthLoading } = usePRCoverageBreadth({ per_page: 500 })
+  const { data: lines, isLoading: linesLoading } = usePRCoverageLines({ per_page: 500, sort: 'percent_covered', order: 'asc' })
   const { data: syncStatus } = useCoverageSyncStatus()
   const [viewerPath, setViewerPath] = useState<string | null>(null)
 
@@ -131,7 +131,7 @@ export default function PRCoverageTab() {
 
                 <Card title="源码文件反向矩阵" size="small" extra={<Button size="small" icon={<DownloadOutlined />} href="/api/v1/test-board/coverage/pr-pipeline/breadth?format=csv" target="_blank">CSV</Button>}>
                   <Table dataSource={breadth?.file_matrix ?? []} rowKey="source_path" columns={fileMatrixColumns} size="small"
-                    pagination={{ pageSize: 15, total: breadth?.file_matrix_total, showTotal: (t) => `共 ${t} 条` }} scroll={{ x: 900 }} />
+                    pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条` }} scroll={{ x: 900 }} />
                 </Card>
               </div>
             ),
@@ -179,7 +179,7 @@ export default function PRCoverageTab() {
                   <Input.Search placeholder="搜索文件路径" allowClear style={{ width: 300, marginBottom: 12 }} onChange={(e) => setLineSearch(e.target.value)} />
                   {files.length ? (
                     <Table dataSource={files} rowKey="path" columns={fileColumns} size="small"
-                      pagination={{ pageSize: 20, total: lines?.files_total, showTotal: (t) => `共 ${t} 条` }} scroll={{ x: 900 }} />
+                      pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }} scroll={{ x: 900 }} />
                   ) : <Empty description={status === 'unknown' ? '暂无行覆盖率数据（需同步方案2）' : '无匹配文件'} />}
                 </Card>
               </div>

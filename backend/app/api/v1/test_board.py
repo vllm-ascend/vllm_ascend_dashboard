@@ -391,7 +391,11 @@ async def trigger_coverage_sync(
 ):
     """手动触发覆盖率同步（admin+，用依赖注入鉴权）"""
     from app.db.base import SessionLocal
-    from app.services.coverage_sync import sync_all_coverage
+    from app.services.coverage_sync import is_coverage_syncing, sync_all_coverage
+
+    # 同步检查锁状态：BackgroundTasks 在响应发送后执行，锁冲突需在此返回 409
+    if is_coverage_syncing():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="coverage sync in progress")
 
     async def _run_sync():
         try:

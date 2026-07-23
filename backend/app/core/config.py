@@ -2,7 +2,7 @@
 核心配置模块
 """
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     SUPPORT_MATRIX_COMPAT_PATH: str = "docs/source/user_guide/support_matrix/feature_matrix.md"
 
     # 测试覆盖率同步配置
-    COVERAGE_SYNC_INTERVAL_MINUTES: int = 60  # ge=10，避免过频
+    COVERAGE_SYNC_INTERVAL_MINUTES: int = Field(60, ge=10)  # ge=10，避免过频
     PR_COVERAGE_TAR_URL: str = "https://vllm-ascend.obs.cn-north-4.myhuaweicloud.com/ci/precision-test/coverage.tar"
     PR_COVERAGE_DOWNLOAD_TIMEOUT_SECONDS: int = 300
     PR_COVERAGE_DOWNLOAD_RETRIES: int = 3

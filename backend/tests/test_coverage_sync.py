@@ -4,6 +4,7 @@
 无需 MySQL，使用合成 fixture 覆盖正常格式与降级路径（检视意见 #6）。
 """
 import sqlite3
+import tarfile
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -13,9 +14,11 @@ import pytest
 from app.services.coverage_sync import (
     DIM_LABELS_FALLBACK,
     E2ECoverageParser,
+    _process_tar_breadth,
     clean_source_path,
     decode_job_dir,
     extract_js_literal,
+    get_source_at_commit,
     module_of,
     parse_hw_from_filename,
     read_covdata_sqlite,
@@ -258,3 +261,90 @@ class TestReadCovdata:
         p = tmp_path / "broken.covdata"
         p.write_bytes(b"not a sqlite database")
         assert read_covdata_sqlite(p) is None
+
+
+# ---------------------------------------------------------------------------
+# _process_tar_breadth 聚合（验证 source_files_covered 并集，检视意见 #1）
+# ---------------------------------------------------------------------------
+def _add_covdata_to_tar(tar: tarfile.TarFile, arcname: str, files: list[str], arcs: int,
+                        tmpdir: Path) -> None:
+    p = tmpdir / f"{abs(hash(arcname))}.covdata"
+    _make_covdata(p, files=files, arcs=arcs)
+    tar.add(str(p), arcname=arcname)
+
+
+class TestProcessTarBreadth:
+    def test_union_source_files_across_covdata(self, tmp_path: Path):
+        """同一作业 2 个 covdata，source_files_covered 应为并集而非覆盖。"""
+        tar_path = tmp_path / "coverage.tar"
+        cov_tmp = tmp_path / "cov"
+        cov_tmp.mkdir()
+        with tarfile.open(tar_path, "w") as tar:
+            base = "vllm-ascend/VLLM-ASCEND@task_2026072223/tests__e2e__pull_request__one_card__test_x/covdata/"
+            # covdata 1: a.py
+            _add_covdata_to_tar(tar, base + "coverage.linux-aarch64-a2b3-1-runner-x-workflow.pid1.X.Y",
+                                ["/__w/vllm-ascend/vllm-ascend/vllm_ascend/a.py"], arcs=3, tmpdir=cov_tmp)
+            # covdata 2: a.py + b.py（与 covdata 1 部分重叠）
+            _add_covdata_to_tar(tar, base + "coverage.linux-aarch64-a2b3-1-runner-x-workflow.pid2.X.Y",
+                                ["/__w/vllm-ascend/vllm-ascend/vllm_ascend/a.py",
+                                 "/__w/vllm-ascend/vllm-ascend/vllm_ascend/b.py"], arcs=5, tmpdir=cov_tmp)
+
+        result = _process_tar_breadth(tar_path, "len:1;etag:x")
+        jobs = result["jobs"]
+        assert len(jobs) == 1
+        j = jobs[0]
+        assert j["covdata_count"] == 2
+        assert j["arcs"] == 8  # 累积 3+5
+        assert j["source_files_covered"] == 2  # 并集 {a.py, b.py}，非覆盖(否则为 2 但本例巧合；见下)
+        # 全局去重源码文件
+        assert result["summary"]["total_source_files_covered"] == 2
+        # file_matrix 包含 a.py 和 b.py，a.py 被 2 个作业实例覆盖
+        fm = {f["source_path"]: f for f in result["file_matrix"]}
+        assert set(fm.keys()) == {"vllm_ascend/a.py", "vllm_ascend/b.py"}
+        assert fm["vllm_ascend/a.py"]["covered_by_jobs"] == 1  # 同一 job_dir，计数为 1 个作业
+
+    def test_overwrite_bug_regression(self, tmp_path: Path):
+        """回归：单作业多 covdata，若覆盖则为最后一个文件数；并集应更大。"""
+        tar_path = tmp_path / "coverage.tar"
+        cov_tmp = tmp_path / "cov"
+        cov_tmp.mkdir()
+        with tarfile.open(tar_path, "w") as tar:
+            base = "vllm-ascend/VLLM-ASCEND@task_t/tests__ut__a__b/covdata/"
+            # covdata 1: 3 files
+            _add_covdata_to_tar(tar, base + "coverage.linux-aarch64-a3-2-runner-x-workflow.pid1.X.Y",
+                                [f"/__w/vllm-ascend/vllm-ascend/vllm_ascend/m/f{i}.py" for i in range(3)],
+                                arcs=2, tmpdir=cov_tmp)
+            # covdata 2: 1 file（不同）— 若覆盖则为 1，并集为 4
+            _add_covdata_to_tar(tar, base + "coverage.linux-aarch64-a3-2-runner-x-workflow.pid2.X.Y",
+                                ["/__w/vllm-ascend/vllm-ascend/vllm_ascend/m/other.py"],
+                                arcs=1, tmpdir=cov_tmp)
+        result = _process_tar_breadth(tar_path, "len:1;etag:x")
+        j = result["jobs"][0]
+        assert j["source_files_covered"] == 4  # 并集 3+1，非覆盖(1)
+
+
+# ---------------------------------------------------------------------------
+# get_source_at_commit 路径穿越防护（检视意见 #10）
+# ---------------------------------------------------------------------------
+class TestSourcePathTraversal:
+    def test_reject_dotdot(self, monkeypatch, tmp_path: Path):
+        cache = MagicMock()
+        cache.cache_dir = tmp_path
+        monkeypatch.setattr("app.services.coverage_sync.get_github_cache", lambda: cache)
+        with pytest.raises(ValueError, match="invalid path"):
+            get_source_at_commit("vllm_ascend/../../../etc/passwd", "abc")
+
+    def test_reject_absolute(self, monkeypatch, tmp_path: Path):
+        cache = MagicMock()
+        cache.cache_dir = tmp_path
+        monkeypatch.setattr("app.services.coverage_sync.get_github_cache", lambda: cache)
+        # 绝对路径不在白名单前缀，被前缀校验拦截
+        with pytest.raises(ValueError):
+            get_source_at_commit("/etc/passwd", "abc")
+
+    def test_reject_non_whitelisted_prefix(self, monkeypatch, tmp_path: Path):
+        cache = MagicMock()
+        cache.cache_dir = tmp_path
+        monkeypatch.setattr("app.services.coverage_sync.get_github_cache", lambda: cache)
+        with pytest.raises(ValueError, match="path must be under"):
+            get_source_at_commit("tests/e2e/test_x.py", "abc")

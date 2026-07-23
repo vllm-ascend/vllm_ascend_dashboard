@@ -61,8 +61,7 @@
   background: #ffffff;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-comfortable);
-  box-shadow:
-    rgba(50, 50, 93, 0.25) 0px 30px 45px -30px,
+  box-shadow:    rgba(50, 50, 93, 0.25) 0px 30px 45px -30px,
     rgba(0, 0, 0, 0.1) 0px 18px 36px -18px;
   margin-bottom: var(--space-24);
 }
@@ -141,4 +140,10 @@
     flex-direction: column;
     text-align: center;
   }
+}
+
+/* E2E 覆盖率：未标记测试行置灰 */
+.stripe-test-board-page .unmarked-row td {
+  opacity: 0.5;
+  font-style: italic;
 }
