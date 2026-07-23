@@ -2,27 +2,32 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime
-from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, CurrentSuperAdminUser, DbSession
+from app.api.deps import (
+    CurrentAdminUser,
+    CurrentSuperAdminUser,
+    CurrentUser,
+    DbSession,
+    get_current_user,
+)
+from app.core.config import settings
 from app.db.base import SessionLocal
 from app.models import User
 from app.models.test_board import TestCase
-from app.schemas import Message
 from app.schemas.test_board import (
-    TestOverviewResponse, TestCaseResponse, TestRunResponse,
-    TestSuiteResponse, FlakyCaseDetail, FailureCategoryBreakdown,
-    OwnerMatrixItem, ModuleHealthItem, TestBoardSyncRequest,
-    FailureAnnotationRequest, TestCaseUpdateRequest,
+    FailureAnnotationRequest,
+    TestBoardSyncRequest,
+    TestCaseResponse,
+    TestCaseUpdateRequest,
+    TestOverviewResponse,
 )
-from app.services.test_board_service import TestBoardService
-from app.services.test_health_calculator import TestHealthCalculator
 from app.services.github_client import GitHubClient
-from app.core.config import settings
+from app.services.test_board_service import TestBoardService
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +58,8 @@ async def get_suites(db: AsyncSession = Depends(get_db), user: User = Depends(ge
 
 @router.get("/filter-options")
 async def get_filter_options(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    from sqlalchemy import select, distinct
+    from sqlalchemy import distinct, select
+
     from app.models.test_board import TestCase
     test_types = (await db.execute(select(distinct(TestCase.test_type)).where(TestCase.test_type.isnot(None)))).all()
     suites = (await db.execute(select(distinct(TestCase.test_suite)).where(TestCase.test_suite.isnot(None)))).all()
@@ -99,9 +105,11 @@ async def get_runs(
     format: str | None = None,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    from sqlalchemy import select, and_, desc, func
-    from app.models.test_board import TestRun
     from datetime import timedelta
+
+    from sqlalchemy import desc, func, select
+
+    from app.models.test_board import TestRun
     cutoff = datetime.now(UTC) - timedelta(days=days)
     stmt = select(TestRun).where(TestRun.started_at >= cutoff)
     if test_case_id:
@@ -162,9 +170,11 @@ async def get_modules(db: AsyncSession = Depends(get_db), user: User = Depends(g
 
 @router.get("/trends")
 async def get_trends(days: int = 30, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    from sqlalchemy import select
-    from app.models.test_board import TestSuiteSnapshot
     from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.models.test_board import TestSuiteSnapshot
     stmt = select(TestSuiteSnapshot).where(TestSuiteSnapshot.snapshot_date >= (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%d")).order_by(TestSuiteSnapshot.snapshot_date)
     snapshots = list((await db.execute(stmt)).scalars().all())
     health_trend = [{"date": s.snapshot_date, "score": s.health_score, "level": s.health_level} for s in snapshots]
@@ -307,3 +317,93 @@ async def trigger_derive_issues(
     else:
         background_tasks.add_task(_run_derivation_background)
         return {"success": True, "result": "full derivation scheduled in background"}
+
+
+# ---------------------------------------------------------------------------
+# 测试覆盖率（E2E 特性覆盖 + PR 流水线覆盖率）
+# ---------------------------------------------------------------------------
+class CoverageSyncRequest(BaseModel):
+    source: str = "all"  # all | e2e | pr_breadth | pr_lines
+
+
+@router.get("/coverage/e2e")
+async def get_e2e_coverage(user: CurrentUser, db: DbSession):
+    """E2E 特性覆盖数据"""
+    from app.services.coverage_sync import get_e2e_coverage as _get
+    return await _get(db)
+
+
+@router.get("/coverage/pr-pipeline/breadth")
+async def get_pr_breadth(
+    user: CurrentUser, db: DbSession,
+    page: int = Query(1, ge=1), per_page: int = Query(50, ge=1, le=500),
+    module: str | None = None, sort: str | None = None, order: str = "desc",
+    format: str | None = None,
+):
+    """PR 覆盖广度矩阵"""
+    from app.services.coverage_sync import get_pr_breadth as _get
+    result = await _get(db, page=page, per_page=per_page, module=module, sort=sort, order=order, fmt=format)
+    if format == "csv" and "csv" in result:
+        return Response(content=result["csv"], media_type="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=pr_coverage_breadth.csv"})
+    return result
+
+
+@router.get("/coverage/pr-pipeline/lines")
+async def get_pr_lines(
+    user: CurrentUser, db: DbSession,
+    page: int = Query(1, ge=1), per_page: int = Query(50, ge=1, le=500),
+    sort: str | None = None, order: str = "desc", format: str | None = None,
+):
+    """PR 行覆盖率%"""
+    from app.services.coverage_sync import get_pr_lines as _get
+    result = await _get(db, page=page, per_page=per_page, sort=sort, order=order, fmt=format)
+    if format == "csv" and "csv" in result:
+        return Response(content=result["csv"], media_type="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=pr_coverage_lines.csv"})
+    return result
+
+
+@router.get("/coverage/pr-pipeline/source")
+async def get_pr_source(user: CurrentUser, db: DbSession, path: str = Query(...)):
+    """文件源码 + 逐行覆盖数据（代码浏览器）"""
+    from app.services.coverage_sync import get_pr_source as _get
+    try:
+        return await _get(db, path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+@router.get("/coverage/status")
+async def get_coverage_status(user: CurrentUser, db: DbSession):
+    """同步状态"""
+    from app.services.coverage_sync import get_sync_status as _get
+    return await _get(db)
+
+
+@router.post("/coverage/sync")
+async def trigger_coverage_sync(
+    request: CoverageSyncRequest,
+    background_tasks: BackgroundTasks,
+    user: CurrentAdminUser,
+):
+    """手动触发覆盖率同步（admin+，用依赖注入鉴权）"""
+    from app.db.base import SessionLocal
+    from app.services.coverage_sync import is_coverage_syncing, sync_all_coverage
+
+    # 同步检查锁状态：BackgroundTasks 在响应发送后执行，锁冲突需在此返回 409
+    if is_coverage_syncing():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="coverage sync in progress")
+
+    async def _run_sync():
+        try:
+            async with SessionLocal() as db:
+                result = await sync_all_coverage(db, source=request.source)
+                logger.info("coverage sync (manual) done: %s", result)
+        except Exception as e:
+            logger.error("coverage sync (manual) failed: %s", e, exc_info=True)
+
+    background_tasks.add_task(_run_sync)
+    return {"success": True, "message": f"coverage sync ({request.source}) scheduled in background"}
