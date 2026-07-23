@@ -82,6 +82,7 @@ deploy/config/*.env
 # Test coverage
 *.log
 coverage/
+!frontend/src/components/coverage/
 .xml
 
 # Temporary files

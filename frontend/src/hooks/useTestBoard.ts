@@ -152,3 +152,56 @@ export const useUpdateCase = () => {
     },
   })
 }
+
+// ---------------------------------------------------------------------------
+// 测试覆盖率
+// ---------------------------------------------------------------------------
+export const useE2ECoverage = () => {
+  return useQuery({
+    queryKey: ['test-board-coverage-e2e'],
+    queryFn: testBoardApi.getE2ECoverage,
+    refetchInterval: 600000,
+  })
+}
+
+export const usePRCoverageBreadth = (params?: { page?: number; per_page?: number; module?: string; sort?: string; order?: string }) => {
+  return useQuery({
+    queryKey: ['test-board-coverage-pr-breadth', params],
+    queryFn: () => testBoardApi.getPRCoverageBreadth(params),
+    refetchInterval: 600000,
+  })
+}
+
+export const usePRCoverageLines = (params?: { page?: number; per_page?: number; sort?: string; order?: string }) => {
+  return useQuery({
+    queryKey: ['test-board-coverage-pr-lines', params],
+    queryFn: () => testBoardApi.getPRCoverageLines(params),
+    refetchInterval: 600000,
+  })
+}
+
+export const useCoverageSource = (path: string | null) => {
+  return useQuery({
+    queryKey: ['test-board-coverage-source', path],
+    queryFn: () => path ? testBoardApi.getCoverageSource(path) : Promise.resolve(null),
+    enabled: !!path,
+  })
+}
+
+export const useCoverageSyncStatus = () => {
+  return useQuery({
+    queryKey: ['test-board-coverage-status'],
+    queryFn: testBoardApi.getCoverageSyncStatus,
+    refetchInterval: 600000,
+  })
+}
+
+export const useTriggerCoverageSync = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (source: string) => testBoardApi.triggerCoverageSync(source),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['test-board-coverage'] })
+    },
+  })
+}

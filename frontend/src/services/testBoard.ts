@@ -271,3 +271,158 @@ export const updateCase = async (caseId: number, payload: TestCaseUpdatePayload)
   const response = await api.patch<TestCaseItem>(`/test-board/cases/${caseId}`, payload)
   return response.data
 }
+
+// ===========================================================================
+// 测试覆盖率（E2E 特性覆盖 + PR 流水线覆盖率）
+// ===========================================================================
+
+export interface E2ECoverageSummary {
+  total_tests: number
+  marked_tests: number
+  marked_ratio: number
+  by_card: Record<string, number>
+}
+
+export interface E2ETestItem {
+  filepath: string
+  test_name: string
+  card_count: number
+  models: string[]
+  coverage: Record<string, string[]>
+  is_marked: boolean
+}
+
+export interface E2ECoverageData {
+  summary: E2ECoverageSummary
+  taxonomy: Record<string, string[]>
+  dim_labels: Record<string, string>
+  tests: E2ETestItem[]
+  source_file_hash?: string
+  repo_commit?: string | null
+  updated_at?: string | null
+}
+
+export interface PRBreadthJob {
+  job_dir: string
+  test_path: string
+  test_type: string
+  test_func: string | null
+  hardware: string
+  card_count: number
+  covdata_count: number
+  source_files_covered: number
+  arcs: number
+  latest_when: string | null
+  sys_argv?: string
+}
+
+export interface PRFileMatrixItem {
+  source_path: string
+  module: string
+  covered_by_jobs: number
+  covered_by_hardware: string[]
+}
+
+export interface PRBreadthData {
+  summary: Record<string, unknown>
+  jobs: PRBreadthJob[]
+  file_matrix: PRFileMatrixItem[]
+  file_matrix_total?: number
+  by_module: Array<{ module: string; files: number; jobs_touching: number }>
+  tar_signature?: string
+  updated_at?: string | null
+}
+
+export interface PRLineFile {
+  path: string
+  module: string
+  statements: number
+  missing: number
+  covered: number
+  percent_covered: number
+  has_branches: boolean
+}
+
+export interface PRLineCoverageData {
+  totals: {
+    num_statements: number
+    covered_lines: number
+    missing_lines: number
+    percent_covered: number
+    percent_statements_covered?: number
+    num_branches?: number
+    covered_branches?: number
+    missing_branches?: number
+    percent_branches_covered?: number
+    num_files: number
+  }
+  by_module: Array<{ module: string; statements: number; covered: number; percent: number; branches: number; covered_branches: number; files: number }>
+  files: PRLineFile[]
+  files_total?: number
+  source_commit?: string | null
+  covdata_commit?: string | null
+  covdata_when?: string | null
+  version_gap_commits?: number | null
+  coverage_tool_version?: string | null
+  installed_coverage_version?: string | null
+  status: string
+  status_reason?: string | null
+  warning?: string | null
+  updated_at?: string | null
+}
+
+export interface CoverageSourceData {
+  path: string
+  commit: string | null
+  source: string
+  executed_lines: number[]
+  missing_lines: number[]
+  excluded_lines: number[]
+  executed_branches: Array<[number, number]>
+  missing_branches: Array<[number, number]>
+  summary: Record<string, number>
+  github_url: string | null
+  source_aligned: boolean
+}
+
+export interface CoverageSyncStatus {
+  last_check_at?: string | null
+  e2e?: { success: boolean; updated_at?: string; error?: string; repo_commit?: string }
+  pr_breadth?: { success: boolean; skipped?: boolean; tar_signature?: string; error?: string }
+  pr_lines?: { success: boolean; status?: string; tar_signature?: string; error?: string }
+}
+
+export const getE2ECoverage = async (): Promise<E2ECoverageData> => {
+  const response = await api.get<E2ECoverageData>('/test-board/coverage/e2e')
+  return response.data
+}
+
+export const getPRCoverageBreadth = async (params?: {
+  page?: number; per_page?: number; module?: string; sort?: string; order?: string
+}): Promise<PRBreadthData> => {
+  const response = await api.get<PRBreadthData>('/test-board/coverage/pr-pipeline/breadth', { params })
+  return response.data
+}
+
+export const getPRCoverageLines = async (params?: {
+  page?: number; per_page?: number; sort?: string; order?: string
+}): Promise<PRLineCoverageData> => {
+  const response = await api.get<PRLineCoverageData>('/test-board/coverage/pr-pipeline/lines', { params })
+  return response.data
+}
+
+export const getCoverageSource = async (path: string): Promise<CoverageSourceData> => {
+  const response = await api.get<CoverageSourceData>('/test-board/coverage/pr-pipeline/source', { params: { path } })
+  return response.data
+}
+
+export const getCoverageSyncStatus = async (): Promise<CoverageSyncStatus> => {
+  const response = await api.get<CoverageSyncStatus>('/test-board/coverage/status')
+  return response.data
+}
+
+export const triggerCoverageSync = async (source: string = 'all'): Promise<{ success: boolean; message: string }> => {
+  const response = await api.post('/test-board/coverage/sync', { source })
+  return response.data
+}
+

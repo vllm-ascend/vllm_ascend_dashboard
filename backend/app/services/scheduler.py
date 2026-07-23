@@ -152,6 +152,20 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add daily summary job: {e}", exc_info=True)
 
+        # 测试覆盖率同步任务 - 每小时检查数据源变更并刷新
+        coverage_interval = max(int(getattr(settings, 'COVERAGE_SYNC_INTERVAL_MINUTES', 60)), 10)
+        try:
+            self.scheduler.add_job(
+                self._sync_coverage_job,
+                trigger=IntervalTrigger(minutes=coverage_interval),
+                id="coverage_sync",
+                name="Test Coverage Sync",
+                replace_existing=True,
+            )
+            logger.info(f"[5/5] Test coverage sync scheduled every {coverage_interval} minutes")
+        except Exception as e:
+            logger.error(f"Failed to add coverage sync job: {e}", exc_info=True)
+
         # 启动调度器
         if not self.scheduler.running:
             try:
@@ -742,6 +756,19 @@ class DataSyncScheduler:
                 logger.error("=" * 60)
                 # async with 会自动 rollback 和 close
                 raise
+
+    async def _sync_coverage_job(self) -> None:
+        """测试覆盖率同步任务：每小时检查 E2E HTML / PR tar 变更并刷新"""
+        logger.info("=" * 60)
+        logger.info("COVERAGE SYNC JOB STARTED")
+        logger.info("=" * 60)
+        from app.services.coverage_sync import sync_all_coverage
+        async with SessionLocal() as db:
+            try:
+                result = await sync_all_coverage(db, source="all")
+                logger.info("COVERAGE SYNC JOB COMPLETED - %s", result)
+            except Exception as e:
+                logger.error(f"COVERAGE SYNC JOB FAILED - Error: {e}", exc_info=True)
 
     async def _generate_daily_summary_job(self):
         """每日总结生成任务"""
