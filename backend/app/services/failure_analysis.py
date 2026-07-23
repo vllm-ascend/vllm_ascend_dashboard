@@ -322,13 +322,30 @@ class FailureAnalysisService:
                 )
                 if not isinstance(report_json.get(key), str) or not report_json[key].strip()
             ]
-            if missing_report_fields:
+            if missing_report_fields and runtime != "custom_agent":
                 raise RuntimeError(
                     "Report renderer returned an incomplete report; missing JSON fields: "
                     + ", ".join(missing_report_fields)
                 )
 
             parsed = self.parse_llm_response(raw)
+            if missing_report_fields and runtime == "custom_agent":
+                logger.warning(
+                    "Custom agent report is missing summary fields %s; "
+                    "using explicit insufficient-evidence summaries",
+                    missing_report_fields,
+                )
+                parsed["problem_category"] = (
+                    report_json.get("problem_category") or "其他"
+                )
+                parsed["root_cause_summary"] = (
+                    report_json.get("root_cause_summary")
+                    or "候选（证据不足）：未获得足够证据确认根因，请查看完整调查报告"
+                )
+                parsed["improvement_measures_summary"] = (
+                    report_json.get("improvement_measures_summary")
+                    or "补充失败日志、运行环境和关联变更证据后重新分析"
+                )
             if runtime == "custom_agent" and (
                 (analysis.validation_result or {}).get("verdict") not in {"pass", "likely"}
                 and not any(
