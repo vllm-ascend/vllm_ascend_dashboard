@@ -137,6 +137,11 @@ def read_log_excerpt(path: str, start_line: int, end_line: int) -> str:
 
     Use this after grep_content returns line numbers. It lets the agent inspect
     the exact failure neighborhood without repeatedly loading a large full log.
+
+    Args:
+        path: File path relative to the data/ directory.
+        start_line: First line to return, using one-based line numbers.
+        end_line: Last line to return, using one-based line numbers.
     """
     try:
         full_path = _safe_data_path(path)
@@ -427,7 +432,8 @@ def git_read_file(commit_ref: str, path: str, start_line: int = 1, end_line: int
         return "Error: invalid ref or path"
     start_line = max(1, int(start_line))
     end_line = max(start_line, min(int(end_line), start_line + 1199))
-    content = _run_git(["show", f"{commit_ref}:{path.replace('\\', '/') }"], max_chars=200000)
+    normalized_path = path.replace("\\", "/")
+    content = _run_git(["show", f"{commit_ref}:{normalized_path}"], max_chars=200000)
     if content.startswith("Error:") or "[exit code:" in content:
         return content
     lines = content.splitlines()

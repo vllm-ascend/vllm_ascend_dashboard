@@ -1306,8 +1306,8 @@ async def update_failure_analysis_agent_config(
         raise HTTPException(status_code=422, detail="轮次和超时必须是整数") from exc
     if runtime not in {"claude_cli", "custom_agent"}:
         raise HTTPException(status_code=422, detail="运行方式必须是 claude_cli 或 custom_agent")
-    if not 3 <= max_turns <= 100:
-        raise HTTPException(status_code=422, detail="最大轮次必须在 3 到 100 之间")
+    if not 3 <= max_turns <= 300:
+        raise HTTPException(status_code=422, detail="最大轮次必须在 3 到 300 之间")
     if not 60 <= timeout_seconds <= 7200:
         raise HTTPException(status_code=422, detail="超时必须在 60 到 7200 秒之间")
     config_value = {
