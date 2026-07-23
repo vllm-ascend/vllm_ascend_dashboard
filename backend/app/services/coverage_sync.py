@@ -9,6 +9,7 @@
 数据存入 ProjectDashboardConfig（JSON），不新建表。
 """
 import asyncio
+import csv
 import hashlib
 import io
 import json
@@ -339,6 +340,20 @@ def read_covdata_sqlite(path: Path) -> dict | None:
     }
 
 
+def _is_covdata_member(member: tarfile.TarInfo) -> bool:
+    """安全判定 tar 成员是否为可读的 covdata 文件。
+
+    仅允许常规文件（isfile 仅对 REGTYPE 为真，自动排除符号链接/硬链接），
+    并显式排除 sym/lnk 防止 extractfile 跟随链接读取敏感文件。
+    """
+    return (
+        member.isfile()
+        and not member.issym()
+        and not member.islnk()
+        and "/covdata/coverage." in member.name
+    )
+
+
 async def _head_signature(client: httpx.AsyncClient) -> str:
     """HTTP HEAD 获取 tar 签名（Content-Length + ETag + Last-Modified）。"""
     r = await client.head(settings.PR_COVERAGE_TAR_URL, timeout=30.0)
@@ -385,7 +400,7 @@ def _process_tar_breadth(tar_path: Path, signature: str) -> dict:
 
     with tarfile.open(tar_path, "r") as tar:
         for member in tar:
-            if not member.isfile() or "/covdata/coverage." not in member.name:
+            if not _is_covdata_member(member):
                 continue
             # 作业目录：vllm-ascend/VLLM-ASCEND@task_xxx/<job_dir>/covdata/coverage...
             parts = member.name.split("/")
@@ -654,6 +669,50 @@ def _installed_coverage_version() -> str | None:
         return None
 
 
+def _safe_commit(cache: Any) -> str | None:
+    try:
+        return cache.get_latest_commit()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _validate_path_mapping(tar_path: Path, cache: Any, sample_size: int = 5) -> bool:
+    """[paths] 预校验：采样 covdata 的 file.path，验证映射后在本地 clone 存在。
+
+    返回 True 表示映射生效（多数采样文件存在），False 表示映射失败（应降级跳过 combine）。
+    """
+    sampled = 0
+    found = 0
+    try:
+        with tarfile.open(tar_path, "r") as tar:
+            for member in tar:
+                if not _is_covdata_member(member):
+                    continue
+                f = tar.extractfile(member)
+                if f is None:
+                    continue
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".covdata")
+                try:
+                    shutil.copyfileobj(f, tmp)
+                    tmp.close()
+                    stats = read_covdata_sqlite(Path(tmp.name))
+                finally:
+                    Path(tmp.name).unlink(missing_ok=True)
+                if not stats or not stats["files"]:
+                    continue
+                for raw in stats["files"][:sample_size]:
+                    sampled += 1
+                    if (cache.cache_dir / raw).exists():
+                        found += 1
+                break  # 仅采样一个 covdata
+    except Exception as e:  # noqa: BLE001
+        logger.warning("path mapping pre-validation failed: %s", e)
+        return False
+    if sampled == 0:
+        return True  # 无文件可采样，不阻断
+    return (found / sampled) >= 0.5
+
+
 def process_line_coverage(tar_path: Path, tar_signature: str, covdata_when: str | None,
                           covdata_version: str | None) -> dict:
     """方案2：展开 covdata → coverage combine → coverage json → 解析。"""
@@ -671,7 +730,7 @@ def process_line_coverage(tar_path: Path, tar_signature: str, covdata_when: str 
         # 展开所有 covdata 文件
         with tarfile.open(tar_path, "r") as tar:
             for member in tar:
-                if not member.isfile() or "/covdata/coverage." not in member.name:
+                if not _is_covdata_member(member):
                     continue
                 f = tar.extractfile(member)
                 if f is None:
@@ -685,7 +744,22 @@ def process_line_coverage(tar_path: Path, tar_signature: str, covdata_when: str 
         rc = work_dir / ".coveragerc"
         _write_coveragerc(rc)
 
-        # 路径映射预校验：采样一个 covdata 检查 file.path 是否能映射
+        # [paths] 预校验：采样 covdata file.path，验证映射后在本地 clone 存在；
+        # 失败则降级为 partial/path_mapping 并跳过昂贵的 combine（检视意见 #4）
+        if not _validate_path_mapping(tar_path, cache):
+            logger.warning("path mapping pre-validation failed, skipping combine")
+            return {
+                "totals": {}, "by_module": [], "files": [],
+                "tar_signature": tar_signature,
+                "source_commit": _safe_commit(cache), "covdata_commit": None,
+                "covdata_when": covdata_when, "version_gap_commits": None,
+                "coverage_tool_version": covdata_version,
+                "installed_coverage_version": _installed_coverage_version(),
+                "updated_at": datetime.now(UTC).isoformat(),
+                "status": "partial", "status_reason": "path_mapping",
+                "warning": "[paths] 路径映射预校验失败：covdata 源码路径在本地 clone 未找到，已跳过行覆盖率计算",
+            }
+
         # combine + json
         _run(["python", "-m", "coverage", "combine", "--rcfile", str(rc), str(covdata_dir)], work_dir,
              settings.PR_COVERAGE_LINE_TIMEOUT_SECONDS)
@@ -717,13 +791,21 @@ def process_line_coverage(tar_path: Path, tar_signature: str, covdata_when: str 
 # ---------------------------------------------------------------------------
 # 读取源码（代码浏览器）
 # ---------------------------------------------------------------------------
+_PATH_RE = re.compile(r"^[a-zA-Z0-9_./-]+$")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
 def get_source_at_commit(path: str, commit: str | None) -> tuple[str, bool]:
     """返回 (source, aligned)。用 git show {commit}:{path}；失败回退 HEAD 文件。"""
-    cache = get_github_cache()
+    # 安全校验：路径仅允许字母/数字/_./-（拦截 null byte、空格、..、特殊字符）；
+    # commit 必须为 40 字符 hex SHA（拦截 --all、HEAD~1 等 git ref 注入）
     if not path.startswith("vllm_ascend/") and not path.startswith("csrc/"):
         raise ValueError("path must be under vllm_ascend/ or csrc/")
-    if ".." in path or path.startswith("/"):
+    if ".." in path or path.startswith("/") or not _PATH_RE.match(path):
         raise ValueError("invalid path")
+    if commit is not None and not _COMMIT_RE.match(commit):
+        raise ValueError("invalid commit (must be 40-char hex SHA)")
+    cache = get_github_cache()
     if commit:
         try:
             r = subprocess.run(
@@ -853,7 +935,7 @@ async def sync_pr_lines(db: AsyncSession, tar_path: str | None, tar_signature: s
     try:
         with tarfile.open(tp, "r") as tar:
             for member in tar:
-                if member.isfile() and "/covdata/coverage." in member.name:
+                if _is_covdata_member(member):
                     f = tar.extractfile(member)
                     if f is None:
                         continue
@@ -1002,7 +1084,7 @@ async def get_pr_breadth(db: AsyncSession, page: int = 1, per_page: int = 50,
 
 def _breadth_csv(data: dict, module: str | None) -> str:
     out = io.StringIO()
-    w = csv_writer(out)
+    w = csv.writer(out)
     w.writerow(["source_path", "module", "covered_by_jobs", "covered_by_hardware"])
     for f in data.get("file_matrix", []):
         if module and f.get("module") != module:
@@ -1043,17 +1125,12 @@ async def get_pr_lines(db: AsyncSession, page: int = 1, per_page: int = 50,
 
 def _lines_csv(data: dict) -> str:
     out = io.StringIO()
-    w = csv_writer(out)
+    w = csv.writer(out)
     w.writerow(["path", "module", "statements", "missing", "covered", "percent_covered", "has_branches"])
     for f in data.get("files", []):
         w.writerow([f["path"], f["module"], f["statements"], f["missing"], f["covered"],
                     f["percent_covered"], f.get("has_branches", False)])
     return out.getvalue()
-
-
-def csv_writer(out: io.StringIO):
-    import csv as _csv
-    return _csv.writer(out)
 
 
 async def get_pr_source(db: AsyncSession, path: str) -> dict:

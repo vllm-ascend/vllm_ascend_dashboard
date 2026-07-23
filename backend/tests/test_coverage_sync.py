@@ -348,3 +348,29 @@ class TestSourcePathTraversal:
         monkeypatch.setattr("app.services.coverage_sync.get_github_cache", lambda: cache)
         with pytest.raises(ValueError, match="path must be under"):
             get_source_at_commit("tests/e2e/test_x.py", "abc")
+
+    def test_reject_null_byte_in_path(self, monkeypatch, tmp_path: Path):
+        cache = MagicMock()
+        cache.cache_dir = tmp_path
+        monkeypatch.setattr("app.services.coverage_sync.get_github_cache", lambda: cache)
+        # null byte 注入：正则 ^[a-zA-Z0-9_./-]+$ 拦截
+        with pytest.raises(ValueError, match="invalid path"):
+            get_source_at_commit("vllm_ascend/\x00/etc/passwd", "a" * 40)
+
+    def test_reject_bad_commit_ref(self, monkeypatch, tmp_path: Path):
+        cache = MagicMock()
+        cache.cache_dir = tmp_path
+        monkeypatch.setattr("app.services.coverage_sync.get_github_cache", lambda: cache)
+        # commit 非 40 字符 hex（拦截 --all / HEAD~1 等 git ref 注入）
+        with pytest.raises(ValueError, match="invalid commit"):
+            get_source_at_commit("vllm_ascend/platform.py", "--all")
+        with pytest.raises(ValueError, match="invalid commit"):
+            get_source_at_commit("vllm_ascend/platform.py", "HEAD~1")
+
+    def test_accept_none_commit(self, monkeypatch, tmp_path: Path):
+        # commit=None 合法（回退 HEAD 文件）；文件不存在抛 FileNotFoundError，但通过校验
+        cache = MagicMock()
+        cache.cache_dir = tmp_path
+        monkeypatch.setattr("app.services.coverage_sync.get_github_cache", lambda: cache)
+        with pytest.raises(FileNotFoundError):
+            get_source_at_commit("vllm_ascend/nonexistent.py", None)
