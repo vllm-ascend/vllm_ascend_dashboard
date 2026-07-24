@@ -15,6 +15,8 @@ from app.services.coverage_sync import (
     DIM_LABELS_FALLBACK,
     E2ECoverageParser,
     _process_tar_breadth,
+    _safe_commit,
+    _csv_safe,
     clean_source_path,
     decode_job_dir,
     extract_js_literal,
@@ -22,6 +24,7 @@ from app.services.coverage_sync import (
     module_of,
     parse_hw_from_filename,
     read_covdata_sqlite,
+    read_file_coverage_from_json,
 )
 
 # ---------------------------------------------------------------------------
@@ -374,3 +377,121 @@ class TestSourcePathTraversal:
         monkeypatch.setattr("app.services.coverage_sync.get_github_cache", lambda: cache)
         with pytest.raises(FileNotFoundError):
             get_source_at_commit("vllm_ascend/nonexistent.py", None)
+
+
+# ---------------------------------------------------------------------------
+# 编排逻辑测试 — _safe_commit / _version_gap / _csv_safe / path validation
+# ---------------------------------------------------------------------------
+class TestSafeCommit:
+    """检视意见 #4: 核心编排逻辑零测试覆盖 — _safe_commit 从 dict 提取 sha"""
+
+    def test_dict_returns_sha(self):
+        cache = MagicMock()
+        cache.get_latest_commit.return_value = {
+            "sha": "b4587e0a2a7fc75ab4feb95f1360f1b5eb635d3b",
+            "subject": "fix: something",
+            "author_name": "test",
+        }
+        assert _safe_commit(cache) == "b4587e0a2a7fc75ab4feb95f1360f1b5eb635d3b"
+
+    def test_string_returns_as_is(self):
+        cache = MagicMock()
+        cache.get_latest_commit.return_value = "abc123def456"
+        assert _safe_commit(cache) == "abc123def456"
+
+    def test_none_returns_none(self):
+        cache = MagicMock()
+        cache.get_latest_commit.return_value = None
+        assert _safe_commit(cache) is None
+
+    def test_exception_returns_none(self):
+        cache = MagicMock()
+        cache.get_latest_commit.side_effect = RuntimeError("boom")
+        assert _safe_commit(cache) is None
+
+
+class TestVersionGap:
+    """检视意见 #1: source_commit 是 dict 导致 _version_gap 永远失效"""
+
+    def test_gap_with_string_commits(self, monkeypatch):
+        from app.services.coverage_sync import _version_gap
+        cache = MagicMock()
+        cache.run_git.return_value = ("5\n", "")
+        gap = _version_gap(cache, "abc123", "def456")
+        assert gap == 5
+        cache.run_git.assert_called_once_with(
+            ["git", "rev-list", "--count", "abc123..def456"]
+        )
+
+    def test_gap_none_when_missing_commit(self):
+        from app.services.coverage_sync import _version_gap
+        cache = MagicMock()
+        assert _version_gap(cache, None, "def456") is None
+        assert _version_gap(cache, "abc123", None) is None
+        assert _version_gap(cache, None, None) is None
+
+    def test_gap_none_on_git_error(self):
+        from app.services.coverage_sync import _version_gap
+        cache = MagicMock()
+        cache.run_git.side_effect = RuntimeError("git failed")
+        assert _version_gap(cache, "abc123", "def456") is None
+
+
+class TestCsvSafe:
+    """检视意见 nit #5: CSV 导出防公式注入"""
+
+    def test_normal_value(self):
+        assert _csv_safe("vllm_ascend/platform.py") == "vllm_ascend/platform.py"
+
+    def test_formula_injection_equals(self):
+        assert _csv_safe("=cmd|'/c calc'!A1") == "'=cmd|'/c calc'!A1"
+
+    def test_formula_injection_plus(self):
+        assert _csv_safe("+1+1") == "'+1+1"
+
+    def test_formula_injection_minus(self):
+        assert _csv_safe("-1-1") == "'-1-1"
+
+    def test_formula_injection_at(self):
+        assert _csv_safe("@SUM(A1:A2)") == "'@SUM(A1:A2)"
+
+    def test_none_value(self):
+        assert _csv_safe(None) == ""
+
+    def test_numeric_value(self):
+        assert _csv_safe(42) == 42
+
+
+class TestReadFileCoveragePathValidation:
+    """检视意见 #2: read_file_coverage_from_json 路径校验"""
+
+    def test_reject_path_outside_coverage_dir(self, monkeypatch, tmp_path):
+        # 模拟 settings.DATA_DIR
+        monkeypatch.setattr("app.services.coverage_sync.settings.DATA_DIR", str(tmp_path))
+        # 指向 DATA_DIR 之外的文件
+        evil_path = str(tmp_path.parent / "evil.json")
+        result = read_file_coverage_from_json(evil_path, "some/path.py")
+        assert result is None
+
+    def test_accept_path_inside_coverage_dir(self, monkeypatch, tmp_path):
+        import json
+        monkeypatch.setattr("app.services.coverage_sync.settings.DATA_DIR", str(tmp_path))
+        cov_dir = tmp_path / "coverage"
+        cov_dir.mkdir(parents=True)
+        cov_file = cov_dir / "coverage_abc.json"
+        cov_file.write_text(json.dumps({
+            "files": {
+                "vllm_ascend/platform.py": {
+                    "executed_lines": [1, 2, 3],
+                    "missing_lines": [4],
+                    "excluded_lines": [],
+                    "executed_branches": [],
+                    "missing_branches": [],
+                    "summary": {"percent_covered": 75.0},
+                }
+            }
+        }))
+        result = read_file_coverage_from_json(str(cov_file), "vllm_ascend/platform.py")
+        assert result is not None
+        assert result["executed_lines"] == [1, 2, 3]
+        assert result["missing_lines"] == [4]

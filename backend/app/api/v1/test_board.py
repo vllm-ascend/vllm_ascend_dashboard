@@ -2,6 +2,7 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
@@ -325,7 +326,7 @@ async def trigger_derive_issues(
 # 测试覆盖率（E2E 特性覆盖 + PR 流水线覆盖率）
 # ---------------------------------------------------------------------------
 class CoverageSyncRequest(BaseModel):
-    source: str = "all"  # all | e2e | pr_breadth | pr_lines
+    source: Literal["all", "e2e", "pr_breadth", "pr_lines"] = "all"
 
 
 @router.get("/coverage/e2e")

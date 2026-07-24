@@ -23,7 +23,7 @@ import tempfile
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from sqlalchemy import select
@@ -56,6 +56,9 @@ def is_coverage_syncing() -> bool:
     """是否有覆盖率同步正在进行（供 API 同步检查返回 409）。"""
     lock = _coverage_sync_lock
     return lock is not None and lock.locked()
+
+# 保留后台 Task 引用防止被 GC 回收（Python 官方警告）
+_bg_tasks: set[asyncio.Task] = set()
 
 # chompjs 可选（C 扩展在部分平台 DLL 加载失败，回退到字符串感知平衡括号计数）
 try:
@@ -252,7 +255,8 @@ class E2ECoverageParser:
     @staticmethod
     def _safe_latest_commit(cache: Any) -> str | None:
         try:
-            return cache.get_latest_commit()
+            info = cache.get_latest_commit()
+            return info.get("sha") if isinstance(info, dict) else info
         except Exception:  # noqa: BLE001
             return None
 
@@ -603,7 +607,8 @@ def _parse_coverage_json(report_path: Path, tar_signature: str, cache: Any,
 
     source_commit = None
     try:
-        source_commit = cache.get_latest_commit()
+        commit_info = cache.get_latest_commit()
+        source_commit = commit_info.get("sha") if isinstance(commit_info, dict) else commit_info
     except Exception:  # noqa: BLE001
         pass
     covdata_commit = _infer_covdata_commit(cache, covdata_when)
@@ -671,7 +676,8 @@ def _installed_coverage_version() -> str | None:
 
 def _safe_commit(cache: Any) -> str | None:
     try:
-        return cache.get_latest_commit()
+        info = cache.get_latest_commit()
+        return info.get("sha") if isinstance(info, dict) else info
     except Exception:  # noqa: BLE001
         return None
 
@@ -735,8 +741,8 @@ def process_line_coverage(tar_path: Path, tar_signature: str, covdata_when: str 
                 f = tar.extractfile(member)
                 if f is None:
                     continue
-                # 扁平化命名避免路径冲突
-                safe_name = member.name.replace("/", "_").replace(":", "_")
+                # 使用 hash 命名避免不同路径扁平化后冲突
+                safe_name = hashlib.sha1(member.name.encode()).hexdigest()[:16] + ".covdata"
                 outp = covdata_dir / safe_name
                 with open(outp, "wb") as wf:
                     shutil.copyfileobj(f, wf)
@@ -825,7 +831,11 @@ def get_source_at_commit(path: str, commit: str | None) -> tuple[str, bool]:
 
 def read_file_coverage_from_json(coverage_json_path: str, path: str) -> dict | None:
     """从磁盘 coverage.json 读取单文件的逐行 + 分支覆盖数据。"""
-    p = Path(coverage_json_path)
+    p = Path(coverage_json_path).resolve()
+    allowed_dir = Path(settings.DATA_DIR).resolve() / "coverage"
+    if not p.is_relative_to(allowed_dir):
+        logger.warning("coverage_json_path escapes allowed directory: %s", coverage_json_path)
+        return None
     if not p.exists():
         return None
     try:
@@ -1001,7 +1011,9 @@ async def sync_all_coverage(db: AsyncSession, source: str = "all") -> dict:
                                       "status": existing_lines.get("status")}
             else:
                 # 后台执行（独立 session + 自管 tar 清理），不阻塞本 job 返回
-                asyncio.create_task(_pr_lines_bg(tar_path, tar_sig, covdata_when))
+                task = asyncio.create_task(_pr_lines_bg(tar_path, tar_sig, covdata_when))
+                _bg_tasks.add(task)
+                task.add_done_callback(_bg_tasks.discard)
                 # breadth 下载的 tar 交给 bg 任务清理，此处不删除
                 tar_path = None
                 status["pr_lines"] = {"success": True, "status": "scheduled",
@@ -1019,14 +1031,39 @@ async def sync_all_coverage(db: AsyncSession, source: str = "all") -> dict:
 
 
 async def _pr_lines_bg(tar_path: str | None, tar_signature: str | None, covdata_when: str | None) -> None:
-    """方案2 行覆盖率后台任务：独立 session，自管 tar 清理，不阻塞调度。"""
+    """方案2 行覆盖率后台任务：独立 session，自管 tar 清理，不阻塞调度。完成后回写同步状态。"""
     from app.db.base import SessionLocal
     try:
         async with SessionLocal() as db:
             result = await sync_pr_lines(db, tar_path, tar_signature, covdata_when)
             logger.info("PR coverage lines (bg) done: %s", result)
+            # 回写 SYNC_STATUS_KEY，让前端看到完成状态
+            sync_status = await _load_config(db, SYNC_STATUS_KEY)
+            if sync_status:
+                sync_status["pr_lines"] = {
+                    "success": True,
+                    "status": result.get("status", "ok"),
+                    "tar_signature": tar_signature,
+                }
+                await _save_sync_status(db, sync_status)
+                await db.commit()
     except Exception as e:  # noqa: BLE001
         logger.error("PR coverage lines (bg) failed: %s", e, exc_info=True)
+        # 回写失败状态
+        try:
+            async with SessionLocal() as db:
+                sync_status = await _load_config(db, SYNC_STATUS_KEY)
+                if sync_status:
+                    sync_status["pr_lines"] = {
+                        "success": False,
+                        "status": "failed",
+                        "error": str(e)[:200],
+                        "tar_signature": tar_signature,
+                    }
+                    await _save_sync_status(db, sync_status)
+                    await db.commit()
+        except Exception:  # noqa: BLE001
+            pass
     finally:
         if tar_path:
             try:
@@ -1082,6 +1119,14 @@ async def get_pr_breadth(db: AsyncSession, page: int = 1, per_page: int = 50,
     }
 
 
+def _csv_safe(val: Any) -> Any:
+    """防止 CSV 公式注入：以 =/+/-/@ 开头的单元格前缀 ' """
+    s = str(val) if val is not None else ""
+    if s and s[0] in ("=", "+", "-", "@"):
+        return "'" + s
+    return val
+
+
 def _breadth_csv(data: dict, module: str | None) -> str:
     out = io.StringIO()
     w = csv.writer(out)
@@ -1089,7 +1134,8 @@ def _breadth_csv(data: dict, module: str | None) -> str:
     for f in data.get("file_matrix", []):
         if module and f.get("module") != module:
             continue
-        w.writerow([f["source_path"], f["module"], f["covered_by_jobs"], ";".join(f.get("covered_by_hardware", []))])
+        w.writerow([_csv_safe(f["source_path"]), _csv_safe(f["module"]), f["covered_by_jobs"],
+                    ";".join(f.get("covered_by_hardware", []))])
     return out.getvalue()
 
 
@@ -1098,6 +1144,7 @@ async def get_pr_lines(db: AsyncSession, page: int = 1, per_page: int = 50,
     data = await _load_config(db, PR_LINES_KEY)
     if not data:
         return {"totals": {}, "by_module": [], "files": [], "updated_at": None, "status": "unknown"}
+    data.pop("coverage_json_path", None)  # 不暴露服务器路径给前端
     if fmt == "csv":
         return {"csv": _lines_csv(data)}
     files = list(data.get("files", []))
@@ -1128,7 +1175,7 @@ def _lines_csv(data: dict) -> str:
     w = csv.writer(out)
     w.writerow(["path", "module", "statements", "missing", "covered", "percent_covered", "has_branches"])
     for f in data.get("files", []):
-        w.writerow([f["path"], f["module"], f["statements"], f["missing"], f["covered"],
+        w.writerow([_csv_safe(f["path"]), _csv_safe(f["module"]), f["statements"], f["missing"], f["covered"],
                     f["percent_covered"], f.get("has_branches", False)])
     return out.getvalue()
 
@@ -1138,6 +1185,9 @@ async def get_pr_source(db: AsyncSession, path: str) -> dict:
     if not lines_cfg:
         raise FileNotFoundError("PR line coverage not synced yet")
     commit = lines_cfg.get("covdata_commit") or lines_cfg.get("source_commit")
+    # 兼容旧数据：commit 可能是 dict {sha, subject, ...}
+    if isinstance(commit, dict):
+        commit = commit.get("sha")
     source, aligned = get_source_at_commit(path, commit)
     cov = read_file_coverage_from_json(lines_cfg.get("coverage_json_path", ""), path)
     github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/blob/{commit}/{path}" if commit else None
