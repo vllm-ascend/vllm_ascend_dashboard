@@ -3,7 +3,7 @@ import { Card, Row, Col, Statistic, Table, Input, Select, Button, Tag, Space, Pr
 import { CodeOutlined, GithubOutlined, DownloadOutlined } from '@ant-design/icons'
 import { usePRCoverageBreadth, usePRCoverageLines, useCoverageSyncStatus } from '../../hooks/useTestBoard'
 import type { PRBreadthJob, PRFileMatrixItem, PRLineFile } from '../../services/testBoard'
-import { heatColor, githubBlobUrl } from './coverageUtils'
+import { heatColor, githubBlobUrl, commitSha } from './coverageUtils'
 import CoverageCodeViewer from './CoverageCodeViewer'
 
 const { Text } = Typography
@@ -52,7 +52,7 @@ export default function PRCoverageTab() {
     { title: '模块', dataIndex: 'module', key: 'module', width: 180, ellipsis: true },
     { title: '被覆盖作业数', dataIndex: 'covered_by_jobs', key: 'covered_by_jobs', width: 110, sorter: (a: PRFileMatrixItem, b: PRFileMatrixItem) => a.covered_by_jobs - b.covered_by_jobs },
     { title: '覆盖硬件', dataIndex: 'covered_by_hardware', key: 'covered_by_hardware', width: 160,
-      render: (hw: string[]) => <Space size={2} wrap>{hw.map((h) => <Tag key={h}>{h}</Tag>)}</Space> },
+      render: (hw: string[]) => <Space size={2} wrap>{(hw ?? []).map((h) => <Tag key={h}>{h}</Tag>)}</Space> },
   ]
 
   // --- 行覆盖率 ---
@@ -75,10 +75,11 @@ export default function PRCoverageTab() {
     { title: '模块', dataIndex: 'module', key: 'module', width: 180, ellipsis: true },
     { title: '语句', dataIndex: 'statements', key: 'statements', width: 70 },
     { title: '未覆盖', dataIndex: 'missing', key: 'missing', width: 80, render: (m: number) => m > 0 ? <Text type="danger">{m}</Text> : m },
-    { title: '覆盖率', dataIndex: 'percent_covered', key: 'percent_covered', width: 160, sorter: (a: PRLineFile, b: PRLineFile) => a.percent_covered - b.percent_covered,
+    { title: '覆盖率', dataIndex: 'percent_covered', key: 'percent_covered', width: 160, sorter: (a: PRLineFile, b: PRLineFile) => (a.percent_covered ?? 0) - (b.percent_covered ?? 0),
       render: (p: number) => {
-        const c = heatColor(p)
-        return <span style={{ background: c.background, color: c.color, padding: '2px 8px', borderRadius: 4 }}>{p.toFixed(1)}%</span>
+        const v = p ?? 0
+        const c = heatColor(v)
+        return <span style={{ background: c.background, color: c.color, padding: '2px 8px', borderRadius: 4 }}>{v.toFixed(1)}%</span>
       } },
   ]
 
@@ -88,7 +89,10 @@ export default function PRCoverageTab() {
     { title: '已覆盖', dataIndex: 'covered', key: 'covered', width: 80 },
     { title: '分支', dataIndex: 'branches', key: 'branches', width: 80 },
     { title: '覆盖率', dataIndex: 'percent', key: 'percent', width: 200,
-      render: (p: number) => <Progress percent={Math.round(p)} size="small" strokeColor={p >= 80 ? '#52c41a' : p >= 50 ? '#faad14' : '#ff4d4f'} format={() => `${p.toFixed(1)}%`} /> },
+      render: (p: number) => {
+        const v = p ?? 0
+        return <Progress percent={Math.round(v)} size="small" strokeColor={v >= 80 ? '#52c41a' : v >= 50 ? '#faad14' : '#ff4d4f'} format={() => `${v.toFixed(1)}%`} />
+      } },
     { title: '文件数', dataIndex: 'files', key: 'files', width: 80 },
   ]
 
@@ -153,7 +157,7 @@ export default function PRCoverageTab() {
                   <Col span={6}>
                     <Card loading={linesLoading}>
                       <Statistic title="总覆盖率（行+分支）"
-                        value={lSummary ? lSummary.percent_covered.toFixed(1) : '0.0'} suffix="%"
+                        value={lSummary?.percent_covered != null ? lSummary.percent_covered.toFixed(1) : '0.0'} suffix="%"
                         valueStyle={{ color: (lSummary?.percent_covered ?? 0) >= 80 ? '#3f8600' : '#cf1322' }} />
                       <Progress percent={Math.round(lSummary?.percent_covered ?? 0)} size="small"
                         strokeColor={(lSummary?.percent_covered ?? 0) >= 80 ? '#52c41a' : (lSummary?.percent_covered ?? 0) >= 50 ? '#faad14' : '#ff4d4f'} />
@@ -166,7 +170,7 @@ export default function PRCoverageTab() {
                     <Card loading={linesLoading} size="small">
                       <Text type="secondary" style={{ fontSize: 12 }}>行覆盖率 {lSummary?.percent_statements_covered?.toFixed(1) ?? '-'}%</Text><br />
                       <Text type="secondary" style={{ fontSize: 12 }}>分支覆盖率 {lSummary?.percent_branches_covered?.toFixed(1) ?? '-'}%</Text><br />
-                      <Text type="secondary" style={{ fontSize: 12 }}>covdata {(lines?.covdata_commit || '?').slice(0, 7)}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>covdata {commitSha(lines?.covdata_commit)?.slice(0, 7) ?? '?'}</Text>
                     </Card>
                   </Col>
                 </Row>
@@ -188,7 +192,7 @@ export default function PRCoverageTab() {
         ]}
       />
 
-      <CoverageCodeViewer path={viewerPath} commit={lines?.covdata_commit ?? lines?.source_commit ?? null} onClose={() => setViewerPath(null)} />
+      <CoverageCodeViewer path={viewerPath} commit={commitSha(lines?.covdata_commit ?? lines?.source_commit ?? null)} onClose={() => setViewerPath(null)} />
     </div>
   )
 }

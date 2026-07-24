@@ -718,7 +718,7 @@ function TestObservabilityDashboard() {
           },
           {
             key: 'e2e_coverage',
-            label: <Space><PercentageOutlined /><span>E2E 特性覆盖</span></Space>,
+            label: <Space><ApartmentOutlined /><span>E2E 特性覆盖</span></Space>,
             children: <E2ECoverageTab />,
           },
           {
