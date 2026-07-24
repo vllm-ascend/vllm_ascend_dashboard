@@ -298,7 +298,7 @@ export interface E2ECoverageData {
   dim_labels: Record<string, string>
   tests: E2ETestItem[]
   source_file_hash?: string
-  repo_commit?: string | null
+  repo_commit?: string | { sha: string; [k: string]: unknown } | null
   updated_at?: string | null
 }
 
@@ -359,8 +359,8 @@ export interface PRLineCoverageData {
   by_module: Array<{ module: string; statements: number; covered: number; percent: number; branches: number; covered_branches: number; files: number }>
   files: PRLineFile[]
   files_total?: number
-  source_commit?: string | null
-  covdata_commit?: string | null
+  source_commit?: string | { sha: string; [k: string]: unknown } | null
+  covdata_commit?: string | { sha: string; [k: string]: unknown } | null
   covdata_when?: string | null
   version_gap_commits?: number | null
   coverage_tool_version?: string | null

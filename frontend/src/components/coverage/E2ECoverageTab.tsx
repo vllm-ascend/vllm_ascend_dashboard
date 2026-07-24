@@ -15,6 +15,48 @@ const DIM_LABEL: Record<string, string> = {
   arch: '架构', feature: '特性', parallel: '并行', deploy: '部署',
   hardware: '硬件', quantization: '量化', graph_mode: '图模式',
 }
+const DIM_ORDER = ['arch', 'feature', 'parallel', 'deploy', 'hardware', 'quantization', 'graph_mode'] as const
+type DimKey = typeof DIM_ORDER[number]
+
+const PRESETS: Record<string, DimKey[]> = {
+  'arch × quant × graph': ['arch', 'quantization', 'graph_mode'],
+  'arch × feature × hw': ['arch', 'feature', 'hardware'],
+  'feature × parallel × graph': ['feature', 'parallel', 'graph_mode'],
+  '全部维度': [...DIM_ORDER],
+}
+
+interface ComboRow {
+  key: string
+  combo: string[]
+  count: number
+  tests: E2ETestItem[]
+}
+
+function computeCoveredCombos(tests: E2ETestItem[], dims: DimKey[]): ComboRow[] {
+  if (dims.length === 0) return []
+  const map = new Map<string, ComboRow>()
+  for (const t of tests) {
+    const sets = dims.map((d) => {
+      const vals = t.coverage[d]
+      return vals && vals.length ? vals : []
+    })
+    if (sets.some((s) => s.length === 0)) continue
+    let combos: string[][] = [[]]
+    for (const s of sets) {
+      const next: string[][] = []
+      for (const c of combos) for (const v of s) next.push([...c, v])
+      combos = next
+    }
+    for (const combo of combos) {
+      const key = combo.join('\x01')
+      let entry = map.get(key)
+      if (!entry) { entry = { key, combo, count: 0, tests: [] }; map.set(key, entry) }
+      entry.count++
+      entry.tests.push(t)
+    }
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count)
+}
 
 function tags(vals: string[] | undefined, dim: string) {
   if (!vals || vals.length === 0) return <Text type="secondary">-</Text>
@@ -56,7 +98,8 @@ export default function E2ECoverageTab() {
   const exportCSV = () => {
     const dims = ['arch', 'feature', 'parallel', 'deploy', 'hardware', 'quantization', 'graph_mode']
     const header = ['File', 'Test', 'Card', 'Models', ...dims]
-    const rows = filtered.map((t) => [
+    const dataToExport = comboFilter ? explorerFiltered : filtered
+    const rows = dataToExport.map((t) => [
       t.filepath, t.test_name, t.card_count, t.models.join(';'),
       ...dims.map((d) => (t.coverage[d] || []).join(';')),
     ])
@@ -86,13 +129,30 @@ export default function E2ECoverageTab() {
       title: 'Models', dataIndex: 'models', key: 'models', width: 160,
       render: (m: string[]) => m.length ? <Space size={2} wrap>{m.map((x) => <Tag key={x} color="green">{x}</Tag>)}</Space> : <Text type="secondary">-</Text>,
     },
-    ...(['arch', 'feature', 'parallel', 'deploy', 'hardware', 'quantization', 'graph_mode'] as const).map((dim) => ({
+    ...(DIM_ORDER as readonly DimKey[]).map((dim) => ({
       title: DIM_LABEL[dim], key: dim, width: 120,
       render: (_: unknown, r: E2ETestItem) => tags(r.coverage[dim], dim),
     })),
   ]
 
   const grouped = [1, 2, 4].map((c) => ({ card: c, items: filtered.filter((t) => t.card_count === c) })).filter((g) => g.items.length)
+
+  const [explorerDims, setExplorerDims] = useState<DimKey[]>(['arch', 'quantization', 'graph_mode'])
+  const explorerRows = useMemo(() => computeCoveredCombos(tests, explorerDims), [tests, explorerDims])
+  const [comboFilter, setComboFilter] = useState<Record<string, string> | null>(null)
+
+  const explorerFiltered = useMemo(() => {
+    if (!comboFilter) return filtered
+    return filtered.filter((t) => {
+      for (const [dim, val] of Object.entries(comboFilter)) {
+        const arr = t.coverage[dim as DimKey]
+        if (!arr || !arr.includes(val)) return false
+      }
+      return true
+    })
+  }, [filtered, comboFilter])
+
+  const explorerGrouped = [1, 2, 4].map((c) => ({ card: c, items: explorerFiltered.filter((t) => t.card_count === c) })).filter((g) => g.items.length)
 
   return (
     <div>
@@ -119,6 +179,67 @@ export default function E2ECoverageTab() {
         <Col span={4}><Card loading={isLoading}><Statistic title="4 卡" value={summary?.by_card?.['4'] ?? 0} /></Card></Col>
       </Row>
 
+      <Card title="交叉覆盖探索器" size="small" style={{ marginBottom: 16 }}
+        extra={<Text type="secondary" style={{ fontSize: 12 }}>
+          {explorerDims.length > 0 ? `已覆盖组合：${explorerRows.length} · 测试总数：${explorerRows.reduce((s, r) => s + r.count, 0)}` : '请选择维度'}
+        </Text>}>
+        <Space wrap style={{ marginBottom: 12 }}>
+          {DIM_ORDER.map((d) => (
+            <Checkbox
+              key={d}
+              checked={explorerDims.includes(d)}
+              onChange={(e) => {
+                setComboFilter(null)
+                setExplorerDims(e.target.checked ? [...explorerDims, d] : explorerDims.filter((x) => x !== d))
+              }}
+            >
+              {DIM_LABEL[d]}
+            </Checkbox>
+          ))}
+        </Space>
+        <Space wrap style={{ marginBottom: 12 }}>
+          {Object.entries(PRESETS).map(([label, dims]) => (
+            <Button key={label} size="small" type={explorerDims.length === dims.length && dims.every((d) => explorerDims.includes(d)) ? 'primary' : 'default'}
+              onClick={() => { setComboFilter(null); setExplorerDims(dims) }}>
+              {label}
+            </Button>
+          ))}
+          {comboFilter && (
+            <Button size="small" type="link" danger onClick={() => setComboFilter(null)}>
+              清除组合筛选 ✕
+            </Button>
+          )}
+        </Space>
+        {explorerDims.length > 0 && explorerRows.length > 0 ? (
+          <Table
+            dataSource={explorerRows}
+            rowKey="key"
+            size="small"
+            pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 个组合` }}
+            scroll={{ x: 500 }}
+            columns={[
+              ...explorerDims.map((d, i) => ({
+                title: DIM_LABEL[d], key: d, width: 140,
+                render: (_: unknown, r: ComboRow) => <Tag color={TAG_COLORS[d]}>{r.combo[i]}</Tag>,
+              })),
+              {
+                title: '测试数', dataIndex: 'count', key: 'count', width: 80,
+                sorter: (a: ComboRow, b: ComboRow) => a.count - b.count,
+                render: (count: number, r: ComboRow) => (
+                  <Button type="link" size="small" onClick={() => {
+                    const filter: Record<string, string> = {}
+                    explorerDims.forEach((d, i) => { filter[d] = r.combo[i] })
+                    setComboFilter(filter)
+                  }}>
+                    {count}
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        ) : <Empty description={explorerDims.length === 0 ? '请选择至少一个维度' : '无覆盖组合'} />}
+      </Card>
+
       <Card>
         <Space wrap style={{ marginBottom: 16 }}>
           <Input.Search placeholder="搜索测试名/模型/标签" allowClear style={{ width: 260 }} onChange={(e) => setSearch(e.target.value)} />
@@ -130,8 +251,16 @@ export default function E2ECoverageTab() {
           <Button icon={<DownloadOutlined />} onClick={exportCSV}>导出 CSV</Button>
         </Space>
 
+        {comboFilter && (
+          <div style={{ marginBottom: 12 }}>
+            <Tag color="blue" closable onClose={() => setComboFilter(null)}>
+              组合筛选：{Object.entries(comboFilter).map(([d, v]) => `${DIM_LABEL[d] ?? d}=${v}`).join(' & ')}
+            </Tag>
+          </div>
+        )}
+
         {data && !tests.length ? <Empty description="暂无 E2E 覆盖数据（请先同步）" /> : (
-          grouped.length ? grouped.map((g) => (
+          (comboFilter ? explorerGrouped : grouped).length ? (comboFilter ? explorerGrouped : grouped).map((g) => (
             <div key={g.card} style={{ marginBottom: 16 }}>
               <Text strong style={{ fontSize: 14 }}>{g.card} 卡测试（{g.items.length}）</Text>
               <Table
