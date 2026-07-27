@@ -137,6 +137,11 @@ def read_log_excerpt(path: str, start_line: int, end_line: int) -> str:
 
     Use this after grep_content returns line numbers. It lets the agent inspect
     the exact failure neighborhood without repeatedly loading a large full log.
+
+    Args:
+        path: File path relative to the data/ directory.
+        start_line: First line to return, using one-based line numbers.
+        end_line: Last line to return, using one-based line numbers.
     """
     try:
         full_path = _safe_data_path(path)
@@ -329,11 +334,20 @@ def list_files(directory: str = "") -> str:
         return f"Error: 列出文件失败: {e}"
 
 
-def _agent_repo_path() -> Path:
-    configured = os.environ.get("AGENT_REPO_PATH", "").strip()
-    if configured:
-        return Path(configured).resolve()
-    repo_name = f"{settings.GITHUB_OWNER}_{settings.GITHUB_REPO}"
+def _agent_repo_path(repository: str = "vllm_ascend") -> Path:
+    """Resolve one of the two read-only repositories available to the agent."""
+    if repository not in {"vllm_ascend", "vllm"}:
+        raise ValueError("repository must be 'vllm_ascend' or 'vllm'")
+    if repository == "vllm_ascend":
+        configured = os.environ.get("AGENT_REPO_PATH", "").strip()
+        if configured:
+            return Path(configured).resolve()
+        repo_name = f"{settings.GITHUB_OWNER}_{settings.GITHUB_REPO}"
+    else:
+        configured = os.environ.get("AGENT_VLLM_REPO_PATH", "").strip()
+        if configured:
+            return Path(configured).resolve()
+        repo_name = "vllm-project_vllm"
     return (Path(settings.DATA_DIR) / "repos" / repo_name).resolve()
 
 
@@ -348,9 +362,12 @@ def _valid_repo_relative_path(value: str, *, allow_empty: bool = False) -> bool:
     return not path.is_absolute() and ".." not in path.parts and "\x00" not in value
 
 
-def _run_git(args: list[str], max_chars: int = 30000) -> str:
+def _run_git(args: list[str], max_chars: int = 30000, repository: str = "vllm_ascend") -> str:
     """Run a read-only git command without shell syntax, cross-platform."""
-    repo = _agent_repo_path()
+    try:
+        repo = _agent_repo_path(repository)
+    except ValueError as exc:
+        return f"Error: {exc}"
     if not repo.is_dir():
         return f"Error: Agent repository does not exist: {repo}"
     try:
@@ -427,7 +444,8 @@ def git_read_file(commit_ref: str, path: str, start_line: int = 1, end_line: int
         return "Error: invalid ref or path"
     start_line = max(1, int(start_line))
     end_line = max(start_line, min(int(end_line), start_line + 1199))
-    content = _run_git(["show", f"{commit_ref}:{path.replace('\\', '/') }"], max_chars=200000)
+    normalized_path = path.replace("\\", "/")
+    content = _run_git(["show", f"{commit_ref}:{normalized_path}"], max_chars=200000)
     if content.startswith("Error:") or "[exit code:" in content:
         return content
     lines = content.splitlines()
@@ -494,6 +512,52 @@ def git_ref_contains(commit_ref: str, target_ref: str) -> str:
 
 
 @tool
+def vllm_git(operation: str, ref: str, path: str = "", other_ref: str = "", query: str = "") -> str:
+    """Read upstream vLLM history and source without changing its worktree.
+
+    Args:
+        operation: One of show, read_file, search, diff, or commit_range
+        ref: Primary commit SHA, tag, or branch
+        path: Optional repository-relative file or directory path
+        other_ref: Second ref for diff or commit_range
+        query: Literal search text for search
+    """
+    if operation not in {"show", "read_file", "search", "diff", "commit_range"}:
+        return "Error: unsupported operation"
+    if not _valid_git_ref(ref) or not _valid_repo_relative_path(path, allow_empty=True):
+        return "Error: invalid ref or path"
+    normalized_path = path.replace("\\", "/")
+    if operation == "show":
+        args = ["show", "--format=fuller", "--find-renames", ref]
+        if normalized_path:
+            args.extend(["--", normalized_path])
+        return _run_git(args, max_chars=40000, repository="vllm")
+    if operation == "read_file":
+        if not normalized_path:
+            return "Error: path is required for read_file"
+        return _run_git(["show", f"{ref}:{normalized_path}"], max_chars=200000, repository="vllm")
+    if operation == "search":
+        if not query or len(query) > 200:
+            return "Error: query is required for search"
+        args = ["grep", "-n", "-F", "--max-count=200", query, ref, "--"]
+        if normalized_path:
+            args.append(normalized_path)
+        return _run_git(args, repository="vllm")
+    if not _valid_git_ref(other_ref):
+        return "Error: other_ref is required for diff or commit_range"
+    if operation == "diff":
+        args = ["diff", "--find-renames", "--unified=80", ref, other_ref]
+        if normalized_path:
+            args.extend(["--", normalized_path])
+        return _run_git(args, max_chars=40000, repository="vllm")
+    return _run_git([
+        "log", "--reverse", "--max-count=300",
+        "--format=%H%x09%ad%x09%s", "--date=iso-strict",
+        f"{ref}..{other_ref}",
+    ], repository="vllm")
+
+
+@tool
 def run_bash(command: str) -> str:
     """在分析宿主中执行只读 shell 命令；宿主不等同于 CI Job 的 Runner。
 
@@ -556,6 +620,7 @@ FAILURE_ANALYSIS_TOOLS = [
     git_search_symbol,
     git_compare_file,
     git_ref_contains,
+    vllm_git,
 ]
 
 # 每日总结 / Commit 分析工具集（数据通常在 prompt 内，工具较少）

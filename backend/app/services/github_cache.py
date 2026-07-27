@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -218,6 +219,17 @@ class GitHubLocalCache:
             )
             
             # 拉取最新代码
+            # Upstream release tags are occasionally recreated. Force-sync
+            # them before pulling so Git does not abort with
+            # "would clobber existing tag" and invalidate the analysis cache.
+            subprocess.run(
+                ["git", "fetch", "origin", "--tags", "--force", "--prune"],
+                cwd=str(self.cache_dir),
+                check=True,
+                capture_output=True,
+                timeout=120,
+                env=env,
+            )
             subprocess.run(
                 ["git", "pull", "origin", "main"],
                 cwd=str(self.cache_dir),
@@ -228,7 +240,7 @@ class GitHubLocalCache:
             )
             # 同时 fetch 新的 tags
             subprocess.run(
-                ["git", "fetch", "--tags"],
+                ["git", "fetch", "origin", "--tags", "--force", "--prune"],
                 cwd=str(self.cache_dir),
                 check=True,
                 capture_output=True,
@@ -247,6 +259,14 @@ class GitHubLocalCache:
                 try:
                     # 重试一次
                     subprocess.run(
+                        ["git", "fetch", "origin", "--tags", "--force", "--prune"],
+                        cwd=str(self.cache_dir),
+                        check=True,
+                        capture_output=True,
+                        timeout=120,
+                        env=env,
+                    )
+                    subprocess.run(
                         ["git", "pull", "origin", "main"],
                         cwd=str(self.cache_dir),
                         check=True,
@@ -255,7 +275,7 @@ class GitHubLocalCache:
                         env=env,
                     )
                     subprocess.run(
-                        ["git", "fetch", "--tags"],
+                        ["git", "fetch", "origin", "--tags", "--force", "--prune"],
                         cwd=str(self.cache_dir),
                         check=True,
                         capture_output=True,
@@ -777,6 +797,7 @@ class GitHubLocalCache:
 
 # Singleton instances for different repos
 _cache_instances: Dict[str, GitHubLocalCache] = {}
+_analysis_repos_lock = threading.Lock()
 
 
 def get_github_cache() -> GitHubLocalCache:
@@ -808,6 +829,30 @@ def get_github_cache_for_repo(owner: str | None = None, repo: str | None = None)
 def get_vllm_cache() -> GitHubLocalCache:
     """获取 vLLM 仓库的本地缓存实例"""
     return get_github_cache_for_repo(owner="vllm-project", repo="vllm")
+
+
+def ensure_analysis_repos_ready(*, update: bool = True) -> dict[str, str]:
+    """Ensure both repositories required by failure analysis are usable."""
+    caches = {
+        "vllm_ascend": get_github_cache(),
+        "vllm": get_vllm_cache(),
+    }
+    # Concurrent analyses share these worktrees, so repository maintenance
+    # must be serialized to avoid git index/ref lock conflicts.
+    with _analysis_repos_lock:
+        for name, cache in caches.items():
+            ready = cache.pull() if update else cache.clone()
+            if not ready or not cache._is_repo_cloned():
+                raise RuntimeError(
+                    f"Required analysis repository is unavailable: {name} "
+                    f"({cache.clone_url})"
+                )
+            if not cache.fetch_full_history():
+                raise RuntimeError(
+                    f"Required analysis repository has incomplete history: {name} "
+                    f"({cache.cache_dir})"
+                )
+    return {name: str(cache.cache_dir.resolve()) for name, cache in caches.items()}
 
 
 def ensure_repo_cloned() -> bool:

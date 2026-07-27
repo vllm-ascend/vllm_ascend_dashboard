@@ -4,13 +4,16 @@ import {
 } from 'antd'
 import {
   BugOutlined, CheckCircleOutlined, WarningOutlined, ClockCircleOutlined,
-  SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined, EditOutlined, TableOutlined,
+  SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined, EditOutlined,
+  CodeOutlined, PercentageOutlined, TableOutlined,
 } from '@ant-design/icons'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
-import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions, useUpdateCase } from '../hooks/useTestBoard'
+import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions, useUpdateCase, useTriggerCoverageSync } from '../hooks/useTestBoard'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import type { TestCaseItem, FlakyCaseDetail, FailureBreakdown, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
 import TestCaseFeatureMatrixTab from '../components/TestCaseFeatureMatrixTab'
+import E2ECoverageTab from '../components/coverage/E2ECoverageTab'
+import PRCoverageTab from '../components/coverage/PRCoverageTab'
 import './TestObservabilityDashboard.css'
 
 const { Text, Title } = Typography
@@ -43,6 +46,7 @@ function TestObservabilityDashboard() {
   const { data: overview, isLoading: overviewLoading } = useTestOverview(7)
   const { data: suites, isLoading: suitesLoading } = useTestSuites()
   const syncMutation = useTriggerSync()
+  const coverageSyncMutation = useTriggerCoverageSync()
   const { data: currentUser } = useCurrentUser()
   const isSuperAdmin = currentUser?.role === 'super_admin'
   const updateCaseMutation = useUpdateCase()
@@ -464,13 +468,27 @@ function TestObservabilityDashboard() {
           测试健康评分、Flaky 检测、失败分类与责任矩阵
         </Text>
         <div style={{ marginTop: 16 }}>
-          <Button
-            icon={<SyncOutlined />}
-            loading={syncMutation.isPending}
-            onClick={handleSync}
-          >
-            同步测试数据
-          </Button>
+          <Space>
+            <Button
+              icon={<SyncOutlined />}
+              loading={syncMutation.isPending}
+              onClick={handleSync}
+            >
+              同步测试数据
+            </Button>
+            <Button
+              icon={<PercentageOutlined />}
+              loading={coverageSyncMutation.isPending}
+              onClick={() => {
+                coverageSyncMutation.mutate('all', {
+                  onSuccess: (d) => message.success(d.message || '覆盖率同步已提交'),
+                  onError: () => message.error('覆盖率同步失败'),
+                })
+              }}
+            >
+              同步覆盖率
+            </Button>
+          </Space>
         </div>
       </div>
 
@@ -543,7 +561,7 @@ function TestObservabilityDashboard() {
                   </Col>
                 </Row>
 
-                <Card title="健康度雷达图" style={{ marginBottom: 24 }}>
+                <Card title={<Tooltip title="其中「覆盖率」为负责人覆盖率（已分配 owner 的用例占比），测试代码覆盖率见「E2E 特性覆盖/PR 流水线覆盖」Tab">健康度雷达图</Tooltip>} style={{ marginBottom: 24 }}>
                   {overview?.health_score ? (
                     <ResponsiveContainer width="100%" height={320}>
                       <RadarChart data={[
@@ -703,6 +721,16 @@ function TestObservabilityDashboard() {
             key: 'case-matrix',
             label: <Space><TableOutlined /><span>测试用例</span></Space>,
             children: <TestCaseFeatureMatrixTab />,
+          },
+          {
+            key: 'e2e_coverage',
+            label: <Space><ApartmentOutlined /><span>E2E 特性覆盖</span></Space>,
+            children: <E2ECoverageTab />,
+          },
+          {
+            key: 'pr_coverage',
+            label: <Space><CodeOutlined /><span>PR 流水线覆盖</span></Space>,
+            children: <PRCoverageTab />,
           },
         ]}
       />

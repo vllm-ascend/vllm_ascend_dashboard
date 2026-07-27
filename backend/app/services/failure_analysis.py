@@ -42,6 +42,15 @@ class FailureAnalysisService:
             root = Path.cwd() / root
         return root.resolve()
 
+    @staticmethod
+    def _blocking_investigation_findings(program_validation: dict) -> list[dict]:
+        """Return evidence defects that make a report invalid, not insufficient."""
+        return [
+            item for item in program_validation.get("findings", [])
+            if item.get("severity") == "error"
+            and item.get("code") == "missing_failure_facts"
+        ]
+
     async def _get_llm_config(self, db: AsyncSession):
         stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
         result = await db.execute(stmt)
@@ -233,10 +242,19 @@ class FailureAnalysisService:
         if runtime not in {"claude_cli", "custom_agent"}:
             logger.warning("Unknown failure-analysis runtime %r; using claude_cli", runtime)
             runtime = "claude_cli"
-        max_turns_val = max(3, min(int(agent_config.get("max_turns", 80)), 100))
+        max_turns_val = max(3, min(int(agent_config.get("max_turns", 80)), 300))
         timeout_val = max(60, min(int(agent_config.get("timeout_seconds", 1800)), 7200))
         system_prompt = await self._get_system_prompt(db)
-        user_prompt = await self._build_job_context(job, db, max_turns=max_turns_val, timeout_seconds=timeout_val)
+        user_prompt = await self._build_job_context(
+            job,
+            db,
+            max_turns=max_turns_val,
+            timeout_seconds=timeout_val,
+            # The evidence pipeline must receive primary failure facts directly.
+            # A tool path alone allowed some investigations to finish without
+            # opening an otherwise valid downloaded Job log.
+            inline_logs=runtime == "custom_agent",
+        )
 
         # 濡傛灉涔嬪墠鏈夊け璐?鍗′綇鐨勮褰曪紝澶嶇敤鑰屼笉鏄彃鍏ユ柊璁板綍锛堥伩鍏?UNIQUE 鍐茬獊锛?
         if existing:
@@ -322,13 +340,30 @@ class FailureAnalysisService:
                 )
                 if not isinstance(report_json.get(key), str) or not report_json[key].strip()
             ]
-            if missing_report_fields:
+            if missing_report_fields and runtime != "custom_agent":
                 raise RuntimeError(
                     "Report renderer returned an incomplete report; missing JSON fields: "
                     + ", ".join(missing_report_fields)
                 )
 
             parsed = self.parse_llm_response(raw)
+            if missing_report_fields and runtime == "custom_agent":
+                logger.warning(
+                    "Custom agent report is missing summary fields %s; "
+                    "using explicit insufficient-evidence summaries",
+                    missing_report_fields,
+                )
+                parsed["problem_category"] = (
+                    report_json.get("problem_category") or "其他"
+                )
+                parsed["root_cause_summary"] = (
+                    report_json.get("root_cause_summary")
+                    or "候选（证据不足）：未获得足够证据确认根因，请查看完整调查报告"
+                )
+                parsed["improvement_measures_summary"] = (
+                    report_json.get("improvement_measures_summary")
+                    or "补充失败日志、运行环境和关联变更证据后重新分析"
+                )
             if runtime == "custom_agent" and (
                 (analysis.validation_result or {}).get("verdict") not in {"pass", "likely"}
                 and not any(
@@ -480,6 +515,7 @@ class FailureAnalysisService:
             git_compare_file,
         )
         from app.services.failure_analysis_pipeline import (
+            LEDGER_SCHEMA,
             extract_json_object,
             extract_required_regression_candidates,
             enrich_ledger_from_trace,
@@ -589,21 +625,65 @@ class FailureAnalysisService:
         if required_candidates:
             ledger["required_regression_candidates"] = required_candidates
         program_validation = programmatic_validate(ledger, required_candidates)
+
+        # Some tool-calling models keep investigating until their step budget is
+        # exhausted and never render the required JSON, even though the trace
+        # already contains the evidence. Give them one small, tool-free pass to
+        # organize only the collected observations into the required schema.
+        initial_blockers = [
+            item for item in program_validation.get("findings", [])
+            if item.get("severity") == "error"
+            and item.get("code") in {"missing_hypotheses", "missing_failure_facts"}
+        ]
+        if initial_blockers:
+            compact_trace = []
+            for entry in trace[-60:]:
+                if not isinstance(entry, dict):
+                    continue
+                compact_trace.append({
+                    "step": entry.get("step"),
+                    "model_output": str(entry.get("model_output") or "")[:2500],
+                    "observation": str(entry.get("observation") or "")[:2500],
+                })
+            organizer = await run_agent_with_heartbeat(AgentTask(
+                prompt=(
+                    "你是证据整理员，不得调查、不得调用工具、不得新增事实。请仅根据 JOB CONTEXT、"
+                    "已有 ledger 和调查轨迹，把已收集证据整理成 Required shape。最终只返回一个"
+                    "名为 evidence_ledger 的 JSON 对象；没有证据的字段保持空值，禁止猜测。\n\n"
+                    f"Required shape:\n{json.dumps(LEDGER_SCHEMA, ensure_ascii=False)}\n\n"
+                    f"CURRENT LEDGER:\n{json.dumps(ledger, ensure_ascii=False)}\n\n"
+                    f"JOB CONTEXT:\n{job_context[:60000]}\n\n"
+                    f"INVESTIGATION TRACE:\n{json.dumps(compact_trace, ensure_ascii=False)}"
+                ),
+                provider_config=provider_config,
+                system_prompt="只做证据归档，不使用工具，不添加调查轨迹之外的事实，只输出 JSON。",
+                max_steps=3,
+                timeout_seconds=min(300, timeout_seconds),
+                memory_type="failure_analysis",
+                source_id=analysis.id,
+                tools_override=[],
+                step_callback=callback_for("organization"),
+                phase="organization",
+            ), "organization")
+            if organizer.exit_code == 0:
+                organized = enrich_ledger_from_trace(
+                    normalize_ledger(extract_json_object(organizer.content)),
+                    trace,
+                )
+                if organized.get("failure_facts") or organized.get("hypotheses"):
+                    ledger = organized
+                    if required_candidates:
+                        ledger["required_regression_candidates"] = required_candidates
+                    program_validation = programmatic_validate(ledger, required_candidates)
         analysis.evidence_ledger = ledger
         analysis.analysis_phase = "verification"
         analysis.agent_trace = trace[-80:]
         analysis.agent_steps = len(trace)
         await db.commit()
 
-        blocking_findings = [
-            item for item in program_validation.get("findings", [])
-            if item.get("severity") == "error"
-            and item.get("code") in {
-                "missing_hypotheses",
-                "missing_failure_facts",
-                "missing_regression_boundary",
-            }
-        ]
+        # Missing primary log facts means data preparation failed. Do not
+        # render an empty ledger as a completed analysis report.
+        blocking_findings = self._blocking_investigation_findings(program_validation)
         if blocking_findings:
             analysis.validation_result = {
                 "verdict": "insufficient",
@@ -917,6 +997,29 @@ class FailureAnalysisService:
         # 预先下载日志并抽取真正被测源码 ref。对矩阵 job，workflow 可能来自 main，
         # 但容器里 checkout 的 vllm-ascend 可能是 releases/vX.Y.Z。
         logs = await self._download_all_logs(job)
+        # Put the primary failure evidence before historical comparisons and
+        # commit diffs. Those sections can be large enough to push a log placed
+        # at the end of the prompt outside the model's effective context.
+        if inline_logs and logs.get("job_log"):
+            try:
+                from pathlib import Path
+
+                log_text = Path(logs["job_log"]).read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                if len(log_text) > 20000:
+                    log_text = "...(truncated)...\n" + log_text[-20000:]
+                lines.append(
+                    "\n### Primary Job failure log (required evidence; read this first):"
+                    f"\n```text\n{log_text}\n```\n"
+                )
+                # The later cache section should list paths instead of adding
+                # the same 20k excerpt a second time.
+                inline_logs = False
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Required Job log could not be read for prompt construction: {exc}"
+                ) from exc
         matrix_target_ref = self._infer_matrix_target_ref_from_job_name(job.job_name)
         tested_ref = self._extract_tested_repo_ref_from_log(logs.get("job_log"))
         tested_branch = tested_ref.get("branch") or matrix_target_ref
@@ -1005,9 +1108,9 @@ class FailureAnalysisService:
             lines.append(commit_diff)
 
         # 纭繚鏈湴 Git 浠撳簱宸?clone
-        from app.services.github_cache import ensure_repo_cloned, get_github_cache
-        ensure_repo_cloned()
-        repo_path = str(get_github_cache().cache_dir.resolve())
+        from app.services.github_cache import ensure_analysis_repos_ready
+        analysis_repos = await asyncio.to_thread(ensure_analysis_repos_ready, update=True)
+        repo_path = analysis_repos["vllm_ascend"]
         ref_value = tested_commit or (ci_result.head_sha if ci_result and ci_result.head_sha else "main")
 
         # 棰勬媺鍙栨墍鏈夊彲鐢ㄦ棩蹇楀埌鏈湴锛孋LI 鍙鏈湴鏂囦欢涓?curl
@@ -1054,6 +1157,9 @@ class FailureAnalysisService:
         lines.append("  日志来源是 GitHub Actions 下载到 backend/data 的 job/run 日志和 artifacts；不能登录 runner。")
         lines.append("  生产环境、当前 Job Runner 与本地分析宿主可能不同，不能混淆。")
         lines.append("")
+        lines.append(f"- vllm-ascend source repository: `{analysis_repos['vllm_ascend']}`")
+        lines.append(f"- vLLM upstream source repository: `{analysis_repos['vllm']}`")
+        lines.append("- Use vllm_git for upstream vLLM history/source; other git_* tools inspect vllm-ascend.")
         github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}"
         lines.append(f"\n- **GitHub Job URL**: {github_url}")
         lines.append("\n请按 CI 失败分析报告模板输出中文报告。")
@@ -1862,17 +1968,40 @@ class FailureAnalysisService:
 
         # 1. Job log
         job_log_path = log_dir / f"{job.job_id}.log"
+        if job_log_path.exists() and job_log_path.stat().st_size == 0:
+            job_log_path.unlink()
+        job_log_errors: list[str] = []
         if not job_log_path.exists():
             job_url = f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/jobs/{job.job_id}/logs"
-            try:
-                async with aiohttp.ClientSession(timeout=request_timeout) as session:
-                    async with session.get(job_url, headers=headers) as resp:
-                        if resp.status == 200:
-                            job_log_path.write_bytes(await resp.read())
-            except Exception as e:
-                logger.warning("Failed to fetch job log: %s", e)
-        if job_log_path.exists():
+            for attempt in range(1, 4):
+                try:
+                    async with aiohttp.ClientSession(timeout=request_timeout) as session:
+                        async with session.get(job_url, headers=headers) as resp:
+                            if resp.status == 200:
+                                payload = await resp.read()
+                                if payload:
+                                    job_log_path.write_bytes(payload)
+                                    break
+                                job_log_errors.append(f"attempt {attempt}: HTTP 200 with empty body")
+                            else:
+                                body = (await resp.text(errors="replace"))[:500]
+                                job_log_errors.append(
+                                    f"attempt {attempt}: HTTP {resp.status}: {body}"
+                                )
+                except Exception as e:
+                    job_log_errors.append(
+                        f"attempt {attempt}: {type(e).__name__}: {e}"
+                    )
+                if attempt < 3:
+                    await asyncio.sleep(2 ** (attempt - 1))
+        if job_log_path.exists() and job_log_path.stat().st_size > 0:
             result["job_log"] = str(job_log_path)
+        else:
+            detail = "; ".join(job_log_errors) or "no cached file and no download response"
+            logger.error("Required job log unavailable for job %s: %s", job.job_id, detail)
+            raise RuntimeError(
+                f"Required GitHub job log unavailable for job {job.job_id}: {detail}"
+            )
 
         # 2. Run 鍏ㄩ儴鏃ュ織 ZIP
         run_zip_path = log_dir / f"run_{job.run_id}_logs.zip"
