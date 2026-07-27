@@ -9,7 +9,7 @@ SMTP 配置存储在数据库（ProjectDashboardConfig 表，config_key='smtp_co
 import base64
 import json
 import logging
-from datetime import date, timedelta, timezone
+from datetime import UTC, date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -19,8 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.email import get_smtp_config, send_email
-from app.models import ModelConfig, ModelReport, PerformanceData, ProjectDashboardConfig, DailyReportHistory
-from app.models.test_board import TestRun
+from app.models import (
+    CIResult,
+    DailyReportHistory,
+    ModelConfig,
+    ModelReport,
+    ProjectDashboardConfig,
+)
+from app.models.test_board import TestCase, TestRun
 from app.services.daily_data_file_store import DailyDataFileStore
 
 logger = logging.getLogger(__name__)
@@ -127,14 +133,21 @@ class DailyReportService:
 
     async def _collect_ci_data(self, start_dt, end_dt) -> dict:
         """Collect executed test-case results from the Nightly A2/A3 workflows."""
-        stmt = select(TestRun).where(
-            TestRun.started_at >= start_dt,
-            TestRun.started_at <= end_dt,
-            TestRun.workflow_name.isnot(None),
+        stmt = (
+            select(TestRun, TestCase.data_granularity)
+            .join(TestCase, TestRun.test_case_id == TestCase.id)
+            .where(
+                TestRun.started_at >= start_dt,
+                TestRun.started_at <= end_dt,
+                TestRun.workflow_name.isnot(None),
+            )
         )
         result = await self.db.execute(stmt)
         nightly_cases = []
-        for run in result.scalars().all():
+        job_level_fallback_runs = 0
+        duplicate_runs = 0
+        seen_run_keys = set()
+        for run, data_granularity in result.all():
             workflow = run.workflow_name.lower().replace("_", "-").replace(" ", "-")
             hardware = "A2" if "a2" in workflow else "A3" if "a3" in workflow else None
             if "nightly" not in workflow or hardware is None:
@@ -142,6 +155,14 @@ class DailyReportService:
             normalized_result = (run.result or "").lower()
             if normalized_result not in {"passed", "pass", "success", "failed", "fail", "failure", "error"}:
                 continue
+            if data_granularity == "job_level":
+                job_level_fallback_runs += 1
+                continue
+            run_key = (run.ci_job_id, run.test_case_id, run.started_at, normalized_result)
+            if run_key in seen_run_keys:
+                duplicate_runs += 1
+                continue
+            seen_run_keys.add(run_key)
             nightly_cases.append((run, hardware, normalized_result))
 
         total = len(nightly_cases)
@@ -188,25 +209,36 @@ class DailyReportService:
             "success_rate": rate,
             "avg_duration_seconds": avg_dur,
             "failed_workflows": failed_workflows,
+            "excluded_job_level_runs": job_level_fallback_runs,
+            "deduplicated_runs": duplicate_runs,
         }
 
     async def _collect_model_data(self, start_dt, end_dt) -> dict:
         """采集模型验证概况"""
-        stmt = select(ModelReport).where(
-            ModelReport.created_at >= start_dt,
-            ModelReport.created_at <= end_dt,
+        report_time = func.coalesce(CIResult.started_at, CIResult.completed_at, ModelReport.created_at)
+        stmt = (
+            select(ModelReport)
+            .outerjoin(CIResult, ModelReport.workflow_run_id == CIResult.run_id)
+            .where(
+                report_time >= start_dt,
+                report_time <= end_dt,
+            )
         )
         result = await self.db.execute(stmt)
         reports = result.scalars().all()
 
         total = len(reports)
-        pass_count = sum(1 for r in reports if r.pass_fail == "pass")
-        fail_count = sum(1 for r in reports if r.pass_fail == "fail")
+        pass_count = sum(1 for r in reports if _is_model_pass(r.pass_fail))
+        fail_count = sum(1 for r in reports if _is_model_fail(r.pass_fail))
         rate = (pass_count / total * 100) if total > 0 else 0.0
 
         model_ids_in_window = {r.model_config_id for r in reports}
 
-        earlier_stmt = select(ModelReport).where(ModelReport.created_at < start_dt)
+        earlier_stmt = (
+            select(ModelReport)
+            .outerjoin(CIResult, ModelReport.workflow_run_id == CIResult.run_id)
+            .where(report_time < start_dt)
+        )
         earlier_result = await self.db.execute(earlier_stmt)
         earlier_ids = {r.model_config_id for r in earlier_result.scalars().all()}
 
@@ -219,7 +251,7 @@ class DailyReportService:
 
         failed_models = []
         for r in reports:
-            if r.pass_fail == "fail":
+            if _is_model_fail(r.pass_fail):
                 mc_stmt2 = select(ModelConfig).where(ModelConfig.id == r.model_config_id)
                 mc2 = (await self.db.execute(mc_stmt2)).scalar_one_or_none()
                 failed_models.append({
@@ -244,15 +276,24 @@ class DailyReportService:
         issue_count = 0
         commit_count = 0
         ai_snippet = None
+        recent_prs = []
+        recent_issues = []
+        recent_commits = []
 
         current_date = end
         while current_date >= start:
             data = await self.file_store.load_daily_data(project, current_date)
             if data:
                 counts = data.get("counts", {})
-                pr_count += counts.get("prs", len(data.get("pull_requests", [])))
-                issue_count += counts.get("issues", len(data.get("issues", [])))
-                commit_count += counts.get("commits", len(data.get("commits", [])))
+                pull_requests = data.get("pull_requests", [])
+                issues = data.get("issues", [])
+                commits = data.get("commits", [])
+                pr_count += counts.get("prs", len(pull_requests))
+                issue_count += counts.get("issues", len(issues))
+                commit_count += counts.get("commits", len(commits))
+                recent_prs.extend(_compact_pr(item) for item in pull_requests[:20])
+                recent_issues.extend(_compact_issue(item) for item in issues[:20])
+                recent_commits.extend(_compact_commit(item) for item in commits[:30])
             current_date -= timedelta(days=1)
 
         if window_key == "yesterday":
@@ -260,7 +301,7 @@ class DailyReportService:
             if summary and summary.get("summary_markdown"):
                 md = summary["summary_markdown"]
                 lines = md.split("\n")
-                snippet_lines = [l for l in lines[:8] if l.strip()]
+                snippet_lines = [line for line in lines[:8] if line.strip()]
                 ai_snippet = " ".join(snippet_lines)[:300]
 
         return {
@@ -268,6 +309,9 @@ class DailyReportService:
             "issue_count": issue_count,
             "commit_count": commit_count,
             "ai_summary_snippet": ai_snippet,
+            "recent_prs": recent_prs[:30],
+            "recent_issues": recent_issues[:30],
+            "recent_commits": recent_commits[:40],
         }
 
     async def _collect_perf_data(self, start_dt, end_dt) -> dict:
@@ -350,12 +394,17 @@ class DailyReportService:
                     TestRun.started_at <= end_dt,
                 )
             )).scalars().all())
-            passed = sum(1 for row in rows if row.result in {"passed", "pass", "success"})
-            flaky_cases = len({row.test_case_id for row in rows if row.flip_detected})
+            executed_rows = [
+                row for row in rows
+                if (row.result or "").lower() in {"passed", "pass", "success", "failed", "fail", "failure", "error"}
+            ]
+            passed = sum(1 for row in executed_rows if (row.result or "").lower() in {"passed", "pass", "success"})
+            flaky_cases = len({row.test_case_id for row in executed_rows if row.flip_detected})
             return {
                 "health_score": {},
-                "total_cases": len(rows),
-                "pass_rate_7d": round(passed / len(rows), 3) if rows else 0,
+                "total_cases": len(executed_rows),
+                "skipped_cases": len(rows) - len(executed_rows),
+                "pass_rate_7d": round(passed / len(executed_rows), 3) if executed_rows else 0,
                 "flaky_case_count": flaky_cases,
             }
         except Exception as e:
@@ -416,7 +465,7 @@ class DailyReportService:
                 select(func.count(IssueDiagnosisHistory.id))
             )).scalar() or 0
             liked_count = (await self.db.execute(
-                select(func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.is_liked == True)
+                select(func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.is_liked)
             )).scalar() or 0
             return {
                 "yesterday_count": yesterday_count,
@@ -476,7 +525,7 @@ class DailyReportService:
 
             # 获取 LLM 配置
             llm_config = (await self.db.execute(
-                select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
+                select(LLMProviderConfig).where(LLMProviderConfig.is_active).limit(1)
             )).scalar_one_or_none()
             if not llm_config:
                 logger.warning("No active LLM provider configured, skipping AI report generation")
@@ -817,18 +866,65 @@ class DailyReportService:
         return result.scalar_one_or_none()
 
 
+def _is_model_pass(value) -> bool:
+    """Model report status has existed as both string and bool in older paths."""
+    return value is True or str(value).lower() == "pass"
+
+
+def _is_model_fail(value) -> bool:
+    return value is False or str(value).lower() == "fail"
+
+
+def _github_author_login(item: dict) -> str:
+    user = item.get("user")
+    if isinstance(user, dict):
+        return user.get("login", "")
+    return item.get("author", "") or item.get("author_name", "")
+
+
+def _compact_pr(item: dict) -> dict:
+    return {
+        "number": item.get("number") or item.get("pr_number"),
+        "title": item.get("title", ""),
+        "state": item.get("state", ""),
+        "author": _github_author_login(item),
+        "html_url": item.get("html_url", ""),
+    }
+
+
+def _compact_issue(item: dict) -> dict:
+    return {
+        "number": item.get("number") or item.get("issue_number"),
+        "title": item.get("title", ""),
+        "state": item.get("state", ""),
+        "author": _github_author_login(item),
+        "html_url": item.get("html_url", ""),
+    }
+
+
+def _compact_commit(item: dict) -> dict:
+    return {
+        "short_sha": item.get("short_sha") or str(item.get("sha", ""))[:7],
+        "message": item.get("message", ""),
+        "author": item.get("author", ""),
+        "pr_number": item.get("pr_number"),
+        "pr_title": item.get("pr_title"),
+        "html_url": item.get("html_url", ""),
+    }
+
+
 def _date_to_utc_start(d: date):
     """将北京时间日期转为 UTC 范围起始"""
     from datetime import datetime, time
     start = datetime.combine(d, time.min, tzinfo=SHANGHAI_TZ)
-    return start.astimezone(timezone.utc)
+    return start.astimezone(UTC)
 
 
 def _date_to_utc_end(d: date):
     """将北京时间日期转为 UTC 范围结束"""
     from datetime import datetime, time
     end = datetime.combine(d, time.max, tzinfo=SHANGHAI_TZ)
-    return end.astimezone(timezone.utc)
+    return end.astimezone(UTC)
 
 
 def _today_shanghai():
