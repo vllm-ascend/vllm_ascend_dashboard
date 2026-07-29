@@ -3,7 +3,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, and_, desc, delete
+from sqlalchemy import select, and_, or_, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.test_board import TestCase, TestRun, TestSuiteSnapshot
@@ -14,6 +14,8 @@ CASE_WEIGHTS = {"pass_rate": 0.35, "stability": 0.30, "reliability": 0.20, "time
 SUITE_WEIGHTS = {"pass_rate": 0.30, "stability": 0.25, "reliability": 0.20, "timeliness": 0.15, "coverage": 0.10}
 TEST_RUN_RETENTION_DAYS = 90
 SUITE_SNAPSHOT_RETENTION_DAYS = 365
+# 物理删除阈值：超过此天数未运行的用例从数据库中删除（区别于看板层 7 天隐藏）
+STALE_CASE_DELETE_DAYS = 90
 
 
 class TestHealthCalculator:
@@ -157,6 +159,32 @@ class TestHealthCalculator:
         snap_result = await self.db.execute(delete(TestSuiteSnapshot).where(TestSuiteSnapshot.snapshot_date < snapshot_cutoff.strftime("%Y-%m-%d")))
         await self.db.commit()
         return result.rowcount + snap_result.rowcount
+
+    async def cleanup_stale_cases(self, stale_days: int | None = None) -> int:
+        """物理删除长期未运行的已退出测试用例及其运行记录。
+
+        看板层通过 include_stale=False 已隐藏超过 TEST_CASE_STALE_DAYS（默认 7 天）未运行的用例；
+        本方法物理清理超过 STALE_CASE_DELETE_DAYS（默认 90 天）仍未运行的用例，
+        包括有运行记录但超期未运行的、以及从未运行且创建时间超期的用例。
+        """
+        threshold = stale_days or STALE_CASE_DELETE_DAYS
+        cutoff = datetime.now(UTC) - timedelta(days=threshold)
+        # 查找超期用例：有 last_run_at 但超期，或 last_run_at 为空但 first_seen_at 超期
+        stale_case_ids_stmt = select(TestCase.id).where(
+            or_(
+                and_(TestCase.last_run_at.isnot(None), TestCase.last_run_at < cutoff),
+                and_(TestCase.last_run_at.is_(None), TestCase.first_seen_at.isnot(None), TestCase.first_seen_at < cutoff),
+            )
+        )
+        stale_ids = [r[0] for r in (await self.db.execute(stale_case_ids_stmt)).all()]
+        if not stale_ids:
+            await self.db.commit()
+            return 0
+        await self.db.execute(delete(TestRun).where(TestRun.test_case_id.in_(stale_ids)))
+        result = await self.db.execute(delete(TestCase).where(TestCase.id.in_(stale_ids)))
+        await self.db.commit()
+        logger.info(f"Cleaned up {result.rowcount} stale test cases (not run in {threshold}+ days)")
+        return result.rowcount
 
     async def _get_recent_runs(self, test_case_id: int, days: int = 30) -> list[TestRun]:
         cutoff = datetime.now(UTC) - timedelta(days=days)

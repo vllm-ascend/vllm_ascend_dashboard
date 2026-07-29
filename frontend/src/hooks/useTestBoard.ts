@@ -26,6 +26,7 @@ export const useTestCases = (params?: {
   owner?: string
   sort?: string
   order?: string
+  include_stale?: boolean
   page?: number
   per_page?: number
 }) => {

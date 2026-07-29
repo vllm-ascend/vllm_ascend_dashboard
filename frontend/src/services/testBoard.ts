@@ -47,6 +47,7 @@ export interface TestCaseItem {
   issues_found_override: boolean
   effective_issues_found: number
   effective_suspected_test_issue_count: number
+  is_retired: boolean
 }
 
 export interface TestRunItem {
@@ -93,6 +94,8 @@ export interface TestOverview {
   result_distribution: Record<string, number>
   health_trend: Array<{ date: string; score: number; level: string }>
   pass_rate_trend: Array<{ date: string; rate: number }>
+  stale_case_count?: number
+  stale_days?: number
 }
 
 export interface FlakyCaseDetail {
@@ -209,6 +212,7 @@ export const getCases = async (params?: {
   owner?: string
   sort?: string
   order?: string
+  include_stale?: boolean
   page?: number
   per_page?: number
 }): Promise<PaginatedResult<TestCaseItem>> => {

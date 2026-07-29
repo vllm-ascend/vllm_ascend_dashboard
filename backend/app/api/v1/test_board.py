@@ -47,16 +47,23 @@ def get_github():
 
 
 @router.get("/overview", response_model=TestOverviewResponse)
-async def get_overview(days: int = Query(7, ge=1, le=90), db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def get_overview(
+    days: int = Query(7, ge=1, le=90),
+    include_stale: bool = Query(False, description="是否包含已退出用例"),
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
     svc = TestBoardService(db)
-    data = await svc.get_overview(days=days)
+    data = await svc.get_overview(days=days, include_stale=include_stale)
     return data
 
 
 @router.get("/suites")
-async def get_suites(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def get_suites(
+    include_stale: bool = Query(False, description="是否包含已退出用例"),
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
     svc = TestBoardService(db)
-    return await svc.get_suites()
+    return await svc.get_suites(include_stale=include_stale)
 
 
 @router.get("/filter-options")
@@ -79,6 +86,7 @@ async def get_cases(
     test_type: str | None = None, suite_name: str | None = None, module_name: str | None = None,
     hardware: str | None = None, result: str | None = None, health_level: str | None = None,
     is_flaky: bool | None = None, owner: str | None = None,
+    include_stale: bool = Query(False, description="是否包含已退出用例"),
     sort: str = "health_score", order: str = "desc",
     page: int = 1, per_page: int = 20,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
@@ -88,7 +96,7 @@ async def get_cases(
                "is_flaky": is_flaky, "owner": owner, "sort": sort, "order": order}
     filters = {k: v for k, v in filters.items() if v is not None}
     svc = TestBoardService(db)
-    data = await svc.get_cases(filters=filters, page=page, per_page=per_page)
+    data = await svc.get_cases(filters=filters, page=page, per_page=per_page, include_stale=include_stale)
     data["items"] = [TestCaseResponse.model_validate(item) for item in data["items"]]
     return data
 

@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import {
-  Card, Table, Space, Statistic, Row, Col, Typography, Tabs, Tag, Button, message, Modal, Input, Select, Progress, Tooltip, Empty, InputNumber, Form, Checkbox,
+  Card, Table, Space, Statistic, Row, Col, Typography, Tabs, Tag, Button, message, Modal, Input, Select, Progress, Tooltip, Empty, InputNumber, Form, Checkbox, Switch,
 } from 'antd'
 import {
   BugOutlined, CheckCircleOutlined, WarningOutlined, ClockCircleOutlined,
   SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined, EditOutlined,
-  CodeOutlined, PercentageOutlined, TableOutlined,
+  CodeOutlined, PercentageOutlined, TableOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
 import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions, useUpdateCase, useTriggerCoverageSync } from '../hooks/useTestBoard'
@@ -41,6 +41,25 @@ function getGranularityTag(granularity: string) {
   return <Tag>{granularity}</Tag>
 }
 
+function formatLastRun(lastRunAt: string | null, staleDays: number = 7) {
+  if (!lastRunAt) return <Text type="secondary">从未运行</Text>
+  const dt = new Date(lastRunAt)
+  const now = new Date()
+  const diffMs = now.getTime() - dt.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  const isStale = diffDays > staleDays
+  const formatted = dt.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  const relText = diffDays === 0 ? '今天' : diffDays === 1 ? '昨天' : diffDays < 30 ? `${diffDays}天前` : diffDays < 365 ? `${Math.floor(diffDays / 30)}月前` : `${Math.floor(diffDays / 365)}年前`
+  return (
+    <Tooltip title={formatted}>
+      <Space size={4}>
+        <span style={{ color: isStale ? '#999' : undefined }}>{relText}</span>
+        {isStale && <Tag color="default">已退出</Tag>}
+      </Space>
+    </Tooltip>
+  )
+}
+
 function TestObservabilityDashboard() {
   const [activeTab, setActiveTab] = useState('overview')
   const { data: overview, isLoading: overviewLoading } = useTestOverview(7)
@@ -53,8 +72,10 @@ function TestObservabilityDashboard() {
 
   const [casePage, setCasePage] = useState(1)
   const [caseFilters, setCaseFilters] = useState<Record<string, string | undefined>>({})
+  const [includeStale, setIncludeStale] = useState(false)
   const { data: casesData, isLoading: casesLoading } = useTestCases({
     ...caseFilters,
+    include_stale: includeStale,
     page: casePage,
     per_page: 20,
   })
@@ -97,6 +118,7 @@ function TestObservabilityDashboard() {
         <Space size={4}>
           <span style={{ fontWeight: 500 }}>{name}</span>
           {record.is_flaky && <Tag color="volcano">Flaky</Tag>}
+          {record.is_retired && <Tag color="default">已退出</Tag>}
         </Space>
       ),
     },
@@ -171,6 +193,14 @@ function TestObservabilityDashboard() {
       key: 'last_result',
       width: 100,
       render: getResultTag,
+    },
+    {
+      title: '最近运行时间',
+      dataIndex: 'last_run_at',
+      key: 'last_run_at',
+      width: 130,
+      sorter: true,
+      render: (lastRunAt: string | null) => formatLastRun(lastRunAt, overview?.stale_days ?? 7),
     },
     {
       title: '最近成功耗时',
@@ -559,6 +589,16 @@ function TestObservabilityDashboard() {
                       />
                     </Card>
                   </Col>
+                  <Col span={6}>
+                    <Card loading={overviewLoading}>
+                      <Statistic
+                        title={<Tooltip title={`超过 ${overview?.stale_days ?? 7} 天未运行、已标记为"已退出"并从监控中隐藏的用例数`}>已退出用例（隐藏）</Tooltip>}
+                        value={overview?.stale_case_count || 0}
+                        prefix={<ExclamationCircleOutlined />}
+                        valueStyle={{ color: (overview?.stale_case_count || 0) > 0 ? '#faad14' : '#3f8600' }}
+                      />
+                    </Card>
+                  </Col>
                 </Row>
 
                 <Card title={<Tooltip title="其中「覆盖率」为负责人覆盖率（已分配 owner 的用例占比），测试代码覆盖率见「E2E 特性覆盖/PR 流水线覆盖」Tab">健康度雷达图</Tooltip>} style={{ marginBottom: 24 }}>
@@ -618,7 +658,7 @@ function TestObservabilityDashboard() {
             label: <Space><CheckCircleOutlined /><span>用例</span></Space>,
             children: (
               <Card title="测试用例列表">
-                <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+                <div style={{ marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
                   <Select placeholder="类型" allowClear style={{ width: 120 }} onChange={(v) => setCaseFilters({ ...caseFilters, test_type: v })}
                     options={(filterOptions?.test_types || []).map((v: string) => ({ label: v, value: v }))}
                   />
@@ -643,6 +683,14 @@ function TestObservabilityDashboard() {
                       { label: 'D (<60)', value: 'D' },
                     ]}
                   />
+                  <Tooltip title={`超过 ${overview?.stale_days ?? 7} 天未运行的用例标记为"已退出"，默认隐藏、不统计、不暴露失败数；开启后可查看全部用例`}>
+                    <Space size={4}>
+                      <Switch size="small" checked={includeStale} onChange={(v) => { setIncludeStale(v); setCasePage(1) }} />
+                      <Text type="secondary" style={{ fontSize: 13 }}>
+                        显示已退出用例{!includeStale && overview?.stale_case_count ? ` (${overview.stale_case_count})` : ''}
+                      </Text>
+                    </Space>
+                  </Tooltip>
                 </div>
                 <Table
                   dataSource={casesData?.items || []}
@@ -656,7 +704,7 @@ function TestObservabilityDashboard() {
                     onChange: setCasePage,
                     showTotal: (total) => `共 ${total} 条`,
                   }}
-                  scroll={{ x: 1700 }}
+                  scroll={{ x: 1830 }}
                 />
               </Card>
             ),

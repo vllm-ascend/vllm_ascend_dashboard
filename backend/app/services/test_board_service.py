@@ -3,9 +3,10 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, func, and_, desc, asc, delete, text, case
+from sqlalchemy import select, func, and_, or_, desc, asc, delete, text, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models import CIJob, CIResult, JobOwner, JobFailureAnalysis, WorkflowConfig
 from app.models.test_board import TestCase, TestRun, TestSuiteSnapshot, FailureAnnotation
 from app.services.test_timing_parser import TestTimingParser
@@ -17,6 +18,23 @@ from app.services.github_client import GitHubClient
 logger = logging.getLogger(__name__)
 
 
+def _stale_cutoff() -> datetime:
+    """计算退出截止时间：超过 TEST_CASE_STALE_DAYS 天未运行的用例视为已退出。"""
+    return datetime.now(UTC) - timedelta(days=settings.TEST_CASE_STALE_DAYS)
+
+
+def _active_case_filter():
+    """返回"活跃用例"的 WHERE 条件。
+
+    活跃 = 最近运行时间在阈值内，或者最近创建（first_seen_at 在阈值内）但尚未运行的新用例。
+    """
+    cutoff = _stale_cutoff()
+    return or_(
+        TestCase.last_run_at >= cutoff,
+        and_(TestCase.last_run_at.is_(None), TestCase.first_seen_at >= cutoff),
+    )
+
+
 class TestBoardService:
     __test__ = False  # Production service, not a pytest test class.
 
@@ -24,26 +42,32 @@ class TestBoardService:
         self.db = db
         self.github = github_client
 
-    async def get_overview(self, days: int = 7) -> dict[str, Any]:
-        cutoff = datetime.now(UTC) - timedelta(days=days)
-        total_stmt = select(func.count(TestCase.id))
+    @staticmethod
+    def _apply_active(stmt, include_stale: bool):
+        """条件性应用活跃用例过滤。include_stale=True 时不过滤（返回原语句）。"""
+        if not include_stale:
+            return stmt.where(_active_case_filter())
+        return stmt
+
+    async def get_overview(self, days: int = 7, include_stale: bool = False) -> dict[str, Any]:
+        total_stmt = self._apply_active(select(func.count(TestCase.id)), include_stale)
         total = (await self.db.execute(total_stmt)).scalar() or 0
 
-        flaky_stmt = select(func.count(TestCase.id)).where(TestCase.is_flaky == True)
+        flaky_stmt = self._apply_active(select(func.count(TestCase.id)).where(TestCase.is_flaky == True), include_stale)
         flaky_count = (await self.db.execute(flaky_stmt)).scalar() or 0
 
-        attention_stmt = select(func.count(TestCase.id)).where(
+        attention_stmt = self._apply_active(select(func.count(TestCase.id)).where(
             TestCase.last_result.in_(["failed", "error"])
-        )
+        ), include_stale)
         attention = (await self.db.execute(attention_stmt)).scalar() or 0
 
-        pass_rate_stmt = select(func.avg(TestCase.pass_rate_7d)).where(TestCase.pass_rate_7d.isnot(None))
+        pass_rate_stmt = self._apply_active(select(func.avg(TestCase.pass_rate_7d)).where(TestCase.pass_rate_7d.isnot(None)), include_stale)
         pass_rate_7d = (await self.db.execute(pass_rate_stmt)).scalar() or 0.0
 
-        avg_dur_stmt = select(func.avg(TestCase.avg_duration_seconds)).where(TestCase.avg_duration_seconds.isnot(None))
+        avg_dur_stmt = self._apply_active(select(func.avg(TestCase.avg_duration_seconds)).where(TestCase.avg_duration_seconds.isnot(None)), include_stale)
         avg_dur = (await self.db.execute(avg_dur_stmt)).scalar() or 0.0
 
-        suite_dist_stmt = select(TestCase.test_suite, TestCase.hardware, func.count(TestCase.id)).group_by(TestCase.test_suite, TestCase.hardware)
+        suite_dist_stmt = self._apply_active(select(TestCase.test_suite, TestCase.hardware, func.count(TestCase.id)).group_by(TestCase.test_suite, TestCase.hardware), include_stale)
         suite_dist_rows = (await self.db.execute(suite_dist_stmt)).all()
         suite_distribution = {}
         for row in suite_dist_rows:
@@ -52,11 +76,11 @@ class TestBoardService:
             key = suite_name if hardware and hardware in suite_name else f"{suite_name}-{hardware}"
             suite_distribution[key] = row[2]
 
-        result_dist_stmt = select(TestCase.last_result, func.count(TestCase.id)).group_by(TestCase.last_result)
+        result_dist_stmt = self._apply_active(select(TestCase.last_result, func.count(TestCase.id)).group_by(TestCase.last_result), include_stale)
         result_dist_rows = (await self.db.execute(result_dist_stmt)).all()
         result_distribution = {row[0] or "unknown": row[1] for row in result_dist_rows}
 
-        avg_hs_stmt = select(func.avg(TestCase.health_score)).where(TestCase.health_score.isnot(None))
+        avg_hs_stmt = self._apply_active(select(func.avg(TestCase.health_score)).where(TestCase.health_score.isnot(None)), include_stale)
         avg_hs = (await self.db.execute(avg_hs_stmt)).scalar() or 0.0
         hs_level = TestHealthCalculator._score_to_level(avg_hs) if avg_hs else "D"
 
@@ -68,19 +92,23 @@ class TestBoardService:
         pass_rate_trend_rows = (await self.db.execute(pass_rate_trend_stmt)).all()
         pass_rate_trend = [{"date": r[0], "rate": round(r[1] or 0, 3)} for r in pass_rate_trend_rows]
 
-        avg_flaky_stmt = select(func.avg(TestCase.flaky_rate)).where(TestCase.flaky_rate.isnot(None))
+        avg_flaky_stmt = self._apply_active(select(func.avg(TestCase.flaky_rate)).where(TestCase.flaky_rate.isnot(None)), include_stale)
         avg_flaky = (await self.db.execute(avg_flaky_stmt)).scalar() or 0.0
         stability = round(1.0 - avg_flaky, 2)
 
         reliability = round(pass_rate_7d, 2)
 
-        dur_covered_stmt = select(func.count(TestCase.id)).where(TestCase.avg_duration_seconds.isnot(None))
+        dur_covered_stmt = self._apply_active(select(func.count(TestCase.id)).where(TestCase.avg_duration_seconds.isnot(None)), include_stale)
         dur_covered = (await self.db.execute(dur_covered_stmt)).scalar() or 0
         timeliness = round(dur_covered / total, 2) if total > 0 else 0.0
 
-        owner_covered_stmt = select(func.count(TestCase.id)).where(TestCase.owner.isnot(None))
+        owner_covered_stmt = self._apply_active(select(func.count(TestCase.id)).where(TestCase.owner.isnot(None)), include_stale)
         owner_covered = (await self.db.execute(owner_covered_stmt)).scalar() or 0
         coverage = round(owner_covered / total, 2) if total > 0 else 0.0
+
+        # 已退出用例数（始终计算，用于 UI 提示）
+        stale_count_stmt = select(func.count(TestCase.id)).where(~_active_case_filter())
+        stale_case_count = (await self.db.execute(stale_count_stmt)).scalar() or 0
 
         return {
             "health_score": {"overall": round(avg_hs, 1), "pass_rate": round(pass_rate_7d, 3), "stability": stability, "reliability": reliability, "timeliness": timeliness, "coverage": coverage, "level": hs_level},
@@ -89,16 +117,17 @@ class TestBoardService:
             "avg_duration_p50": round(avg_dur, 1),
             "suite_distribution": suite_distribution, "result_distribution": result_distribution,
             "health_trend": health_trend, "pass_rate_trend": pass_rate_trend,
+            "stale_case_count": stale_case_count, "stale_days": settings.TEST_CASE_STALE_DAYS,
         }
 
-    async def get_suites(self) -> list[dict[str, Any]]:
-        stmt = select(TestCase.test_suite, TestCase.test_type, TestCase.hardware,
+    async def get_suites(self, include_stale: bool = False) -> list[dict[str, Any]]:
+        stmt = self._apply_active(select(TestCase.test_suite, TestCase.test_type, TestCase.hardware,
                        func.count(TestCase.id), func.avg(TestCase.health_score), func.avg(TestCase.pass_rate_7d),
                        func.sum(case((TestCase.is_flaky == True, 1), else_=0)),
                        func.avg(TestCase.avg_duration_seconds)).group_by(
-            TestCase.test_suite, TestCase.test_type, TestCase.hardware)
+            TestCase.test_suite, TestCase.test_type, TestCase.hardware), include_stale)
         rows = (await self.db.execute(stmt)).all()
-        max_run_stmt = select(TestCase.test_suite, TestCase.hardware, func.max(TestCase.last_run_at)).group_by(TestCase.test_suite, TestCase.hardware)
+        max_run_stmt = self._apply_active(select(TestCase.test_suite, TestCase.hardware, func.max(TestCase.last_run_at)).group_by(TestCase.test_suite, TestCase.hardware), include_stale)
         max_run_rows = (await self.db.execute(max_run_stmt)).all()
         last_run_map = {f"{r[0]}-{r[1]}": r[2] for r in max_run_rows}
         results = []
@@ -114,8 +143,10 @@ class TestBoardService:
             })
         return results
 
-    async def get_cases(self, filters: dict[str, Any] = None, page: int = 1, per_page: int = 20) -> dict[str, Any]:
+    async def get_cases(self, filters: dict[str, Any] = None, page: int = 1, per_page: int = 20, include_stale: bool = False) -> dict[str, Any]:
         stmt = select(TestCase)
+        if not include_stale:
+            stmt = stmt.where(_active_case_filter())
         if filters:
             if filters.get("test_type"):
                 stmt = stmt.where(TestCase.test_type == filters["test_type"])
@@ -171,7 +202,7 @@ class TestBoardService:
         return {"case": case, "runs": runs}
 
     async def get_flaky_cases(self, min_flip_rate: float = 0.01, days: int = 30, filters: dict = None, page: int = 1, per_page: int = 20) -> dict[str, Any]:
-        stmt = select(TestCase).where(TestCase.is_flaky == True, TestCase.flaky_rate >= min_flip_rate)
+        stmt = select(TestCase).where(TestCase.is_flaky == True, TestCase.flaky_rate >= min_flip_rate, _active_case_filter())
         if filters:
             if filters.get("test_suite"):
                 stmt = stmt.where(TestCase.test_suite == filters["test_suite"])
@@ -202,8 +233,12 @@ class TestBoardService:
 
     async def get_failure_breakdown(self, days: int = 30, category: str | None = None, suite_name: str | None = None) -> dict[str, Any]:
         cutoff = datetime.now(UTC) - timedelta(days=days)
-        stmt = select(TestRun.failure_category, func.count(TestRun.id)).where(
-            TestRun.result == "failed", TestRun.started_at >= cutoff
+        active = _active_case_filter()
+        # JOIN TestCase 排除已退出用例的失败记录，不对外暴露已退出用例的失败数
+        stmt = select(TestRun.failure_category, func.count(TestRun.id)).join(
+            TestCase, TestRun.test_case_id == TestCase.id
+        ).where(
+            TestRun.result == "failed", TestRun.started_at >= cutoff, active
         ).group_by(TestRun.failure_category)
         if category:
             stmt = stmt.where(TestRun.failure_category == category)
@@ -217,7 +252,7 @@ class TestBoardService:
         infra = cat_counts.get("infrastructure", 0)
         unk = cat_counts.get("unknown", 0)
         flaky_fail_stmt = select(func.count(TestCase.id)).where(
-            TestCase.is_flaky == True, TestCase.last_result == "failed"
+            TestCase.is_flaky == True, TestCase.last_result == "failed", active
         )
         flaky_failures = (await self.db.execute(flaky_fail_stmt)).scalar() or 0
         return {
@@ -229,7 +264,7 @@ class TestBoardService:
 
     async def get_duration_analysis(self, days: int = 30, suite_name: str | None = None) -> dict[str, Any]:
         stmt = select(TestCase.test_name, TestCase.avg_duration_seconds, TestCase.duration_p90_seconds).where(
-            TestCase.avg_duration_seconds.isnot(None)
+            TestCase.avg_duration_seconds.isnot(None), _active_case_filter()
         )
         if suite_name:
             stmt = stmt.where(TestCase.test_suite == suite_name)
@@ -238,9 +273,10 @@ class TestBoardService:
         return {"top_slow": [{"test_name": r[0], "avg_duration": r[1], "p90_duration": r[2]} for r in rows]}
 
     async def get_owner_matrix(self) -> list[dict[str, Any]]:
+        active = _active_case_filter()
         stmt = select(TestCase.owner, TestCase.module_name, func.count(TestCase.id),
                        func.avg(TestCase.pass_rate_7d), func.sum(case((TestCase.is_flaky == True, 1), else_=0)),
-                       func.sum(case((TestCase.last_result == "failed", 1), else_=0))).group_by(TestCase.owner, TestCase.module_name)
+                       func.sum(case((TestCase.last_result == "failed", 1), else_=0))).where(active).group_by(TestCase.owner, TestCase.module_name)
         rows = (await self.db.execute(stmt)).all()
         owner_map: dict[str, dict] = {}
         for r in rows:
@@ -255,10 +291,11 @@ class TestBoardService:
         return list(owner_map.values())
 
     async def get_module_health(self) -> list[dict[str, Any]]:
+        active = _active_case_filter()
         stmt = select(TestCase.module_name, TestCase.owner, func.count(TestCase.id),
                        func.avg(TestCase.pass_rate_7d), func.sum(case((TestCase.is_flaky == True, 1), else_=0)),
                        func.sum(case((TestCase.last_result == "failed", 1), else_=0)),
-                       func.avg(TestCase.health_score)).group_by(TestCase.module_name, TestCase.owner)
+                       func.avg(TestCase.health_score)).where(active).group_by(TestCase.module_name, TestCase.owner)
         rows = (await self.db.execute(stmt)).all()
         return [{"module_name": r[0] or "unknown", "owner": r[1], "total_cases": r[2],
                  "pass_rate_7d": round(r[3] or 0, 3), "flaky_count": r[4] or 0,

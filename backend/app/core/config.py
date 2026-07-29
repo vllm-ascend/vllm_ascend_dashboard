@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     CI_SYNC_FORCE_FULL_REFRESH: bool = False  # 是否强制全量覆盖刷新
     DATA_RETENTION_DAYS: int = 365
 
+    # 测试用例退出阈值：超过此天数未运行的用例标记为「已退出」，从监控看板隐藏
+    # 与 CI 夜间测试周期对齐——超过一个周期未运行说明用例已不在 vllm-ascend CI 中
+    TEST_CASE_STALE_DAYS: int = 7
+
     # 模型同步配置
     MODEL_SYNC_INTERVAL_MINUTES: int = 60  # 模型报告同步间隔（分钟），默认 1 小时
     MODEL_SYNC_RUNS_LIMIT: int = 100

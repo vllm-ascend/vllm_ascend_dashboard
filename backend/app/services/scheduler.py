@@ -313,6 +313,20 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add test board cleanup job: {e}", exc_info=True)
 
+        # 已退出测试用例物理清理 — 每日凌晨 02:30 删除超过 STALE_CASE_DELETE_DAYS 天未运行的用例
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+            self.scheduler.add_job(
+                self._cleanup_stale_cases_job,
+                trigger=CronTrigger(hour=2, minute=30, timezone=self._timezone),
+                id="cleanup_stale_cases",
+                name="Test Board Stale Case Cleanup",
+                replace_existing=True,
+            )
+            logger.info(f"Test board stale case cleanup scheduled at 02:30 {self._timezone}")
+        except Exception as e:
+            logger.error(f"Failed to add stale case cleanup job: {e}", exc_info=True)
+
         # 上游支持矩阵同步任务 - 每日同步
         if getattr(settings, 'SUPPORT_MATRIX_SYNC_ENABLED', True):
             try:
@@ -1067,6 +1081,18 @@ class DataSyncScheduler:
                 logger.info(f"TEST BOARD RUN CLEANUP JOB COMPLETED - {deleted} records deleted")
             except Exception as e:
                 logger.error(f"TEST BOARD RUN CLEANUP JOB FAILED: {e}", exc_info=True)
+
+    async def _cleanup_stale_cases_job(self) -> None:
+        """物理清理超过 STALE_CASE_DELETE_DAYS 天未运行的已退出测试用例。"""
+        logger.info("TEST BOARD STALE CASE CLEANUP JOB STARTED")
+        async with SessionLocal() as db:
+            try:
+                from app.services.test_health_calculator import TestHealthCalculator
+                calc = TestHealthCalculator(db)
+                deleted = await calc.cleanup_stale_cases()
+                logger.info(f"TEST BOARD STALE CASE CLEANUP JOB COMPLETED - {deleted} stale cases deleted")
+            except Exception as e:
+                logger.error(f"TEST BOARD STALE CASE CLEANUP JOB FAILED: {e}", exc_info=True)
 
     def update_daily_summary_schedule(self, enabled: bool, cron_hour: int, cron_minute: int, timezone: str = 'Asia/Shanghai'):
         """

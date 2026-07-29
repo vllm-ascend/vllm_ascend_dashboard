@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -57,6 +57,8 @@ class TestCaseResponse(BaseModel):
     # 人工未显式设置时，展示自动推导值；人工设置后以人工值为准
     effective_issues_found: int = 0
     effective_suspected_test_issue_count: int = 0
+    # 已退出用例：超过 TEST_CASE_STALE_DAYS 天未运行，默认隐藏、不统计、不暴露失败数
+    is_retired: bool = False
 
     @model_validator(mode="after")
     def _compute_effective_issues(self) -> "TestCaseResponse":
@@ -68,6 +70,24 @@ class TestCaseResponse(BaseModel):
             self.effective_suspected_test_issue_count = self.suspected_test_issue_count
         else:
             self.effective_suspected_test_issue_count = self.auto_suspected_test_issue_count
+        return self
+
+    @model_validator(mode="after")
+    def _compute_retired(self) -> "TestCaseResponse":
+        from app.core.config import settings
+        cutoff = datetime.now(UTC) - timedelta(days=settings.TEST_CASE_STALE_DAYS)
+
+        def _is_past(dt: datetime | None) -> bool:
+            if dt is None:
+                return False
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=UTC) < cutoff
+            return dt < cutoff
+
+        if self.last_run_at:
+            self.is_retired = _is_past(self.last_run_at)
+        elif self.first_seen_at:
+            self.is_retired = _is_past(self.first_seen_at)
         return self
 
 
@@ -135,6 +155,8 @@ class TestOverviewResponse(BaseModel):
     result_distribution: dict[str, int]
     health_trend: list[dict]
     pass_rate_trend: list[dict]
+    stale_case_count: int = 0
+    stale_days: int = 7
 
 
 class FlakyCaseDetail(BaseModel):
