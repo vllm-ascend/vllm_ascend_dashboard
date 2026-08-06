@@ -32,6 +32,7 @@ class TaskManager:
         Scheduler 创建任务记录。
         返回 task_id；如果 dedupe_key 对应的活跃任务已存在则跳过。
         """
+        import json as _json
         result = await db.execute(
             text("""
                 INSERT IGNORE INTO collection_tasks
@@ -40,7 +41,7 @@ class TaskManager:
             """),
             {
                 "task_type": task_type,
-                "task_params": task_params,
+                "task_params": _json.dumps(task_params),
                 "dedupe_key": dedupe_key,
                 "capability": required_capability,
                 "priority": priority,
