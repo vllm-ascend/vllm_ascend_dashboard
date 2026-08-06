@@ -1,12 +1,19 @@
-"""SSH tunnel: localhost:3307 -> production MySQL. Run as background process."""
+"""SSH tunnel: localhost:3307 -> production MySQL. Run as background process or Docker."""
 import paramiko, socket, threading, time, os, sys
 
-JUMP = "123.57.0.174"
-PROD = "190.92.220.4"
-KEY = os.path.expanduser("~/.ssh/id_rsa")
-PASS = "openlab@123"
-MYSQL_IP = "172.27.0.4"
-FORWARDS = [(3307, (MYSQL_IP, 3306)), (8080, ("127.0.0.1", 8080))]  # MySQL + Headscale
+JUMP = os.environ.get("JUMP_HOST", "123.57.0.174")
+PROD = os.environ.get("PROD_HOST", "190.92.220.4")
+KEY = os.environ.get("SSH_KEY", os.path.expanduser("~/.ssh/id_rsa"))
+PASS = os.environ.get("PROD_PASS", "openlab@123")
+MYSQL_IP = os.environ.get("MYSQL_IP", "172.27.0.4")
+
+# Parse FORWARDS from env: "3307:172.27.0.4:3306,8080:127.0.0.1:8080"
+forwards_str = os.environ.get("FORWARDS", f"3307:{MYSQL_IP}:3306,8080:127.0.0.1:8080")
+FORWARDS = []
+for f in forwards_str.split(","):
+    parts = f.strip().split(":")
+    if len(parts) == 3:
+        FORWARDS.append((int(parts[0]), (parts[1], int(parts[2]))))
 
 def run():
     while True:

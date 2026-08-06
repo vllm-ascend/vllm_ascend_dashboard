@@ -1,0 +1,11 @@
+# SSH tunnel container - connects Windows node to production
+FROM python:3.11-slim
+
+RUN pip install paramiko
+
+COPY scripts/tunnel_prod.py /tunnel.py
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1',3307)); s.close()"
+
+CMD ["python3", "/tunnel.py"]
