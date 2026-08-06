@@ -569,7 +569,11 @@ class DataSyncScheduler:
         if not self.github_client:
             self._initialize_github_client()
 
-        # Step 3: 创建 collection_tasks 记录（进度持久化）
+        # Phase A Step 3+4: COLLECTOR_MODE 开关
+        # true  → Scheduler 只写 pending 任务，Collector 通过租约领取执行
+        # false → Scheduler 自己执行（默认，兼容现有流程）
+        import os as _os
+        _collector_mode = _os.environ.get("COLLECTOR_MODE", "false").lower() == "true"
         from datetime import UTC
         dedupe_key = f"ci_sync:scheduled:{datetime.now(UTC).strftime('%Y-%m-%dT%H:00')}"
         task_id = None
@@ -583,9 +587,12 @@ class DataSyncScheduler:
                     {"days_back": settings.CI_SYNC_DAYS_BACK, "max_runs": settings.CI_SYNC_MAX_RUNS_PER_WORKFLOW},
                     dedupe_key,
                 )
-                if task_id:
+                if task_id and not _collector_mode:
                     await TaskManager.start_task(db, task_id, "scheduler")
-                    await db.commit()
+                await db.commit()
+                if task_id and _collector_mode:
+                    logger.info("COLLECTOR_MODE: task %d created, waiting for Collector", task_id)
+                    return  # Scheduler 不执行，等 Collector 来领
         except Exception as e:
             logger.warning("Failed to create collection_task record (non-fatal): %s", e)
 
