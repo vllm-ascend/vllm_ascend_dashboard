@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Alert,
   Button,
@@ -37,6 +38,7 @@ import {
 } from 'recharts'
 import {
   ClusterResourceSummary,
+  KubernetesCluster,
   ResourceNodeInfo,
   ResourcePodInfo,
   ResourceQuantity,
@@ -44,7 +46,15 @@ import {
   getClusterSummary,
 } from '../services/resourceDashboard'
 import { useNpuMetrics, useNodeMetrics } from '../hooks/useResourceMetrics'
-import type { NpuMetricPoint, TopPodInfo, NodeMetricPoint } from '../services/resourceMetrics'
+import type {
+  ClusterNodeMetrics,
+  ClusterNpuMetrics,
+  NodeMetricPoint,
+  NodeMetricsResponse,
+  NpuMetricPoint,
+  NpuMetricsResponse,
+  TopPodInfo,
+} from '../services/resourceMetrics'
 
 const { Title, Text } = Typography
 
@@ -57,6 +67,84 @@ const usageColor = (value: number) => (value >= 90 ? '#ff4d4f' : value >= 50 ? '
 
 const CLUSTER_COLORS = ['#1677ff', '#52c41a', '#faad14', '#ff4d4f', '#722ed1', '#13c2c2']
 const NODE_COLORS = ['#1677ff', '#52c41a', '#faad14', '#ff4d4f', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16', '#a0d911', '#2f54eb']
+
+// Keep hardware pools together in the realtime view.  New pools are configured
+// as regular Kubernetes clusters, so the model is inferred from the display
+// name without changing the existing API or database schema.
+const HARDWARE_CARD_ORDER = ['A2', 'A3', 'A3-560T', 'A5'] as const
+type HardwareLabel = (typeof HARDWARE_CARD_ORDER)[number]
+
+const HARDWARE_TAG_COLORS: Record<HardwareLabel, string> = {
+  A2: 'green',
+  A3: 'purple',
+  A5: 'blue',
+  'A3-560T': 'orange',
+}
+
+const inferHardwareLabel = (clusterName: string): HardwareLabel | null => {
+  const normalized = clusterName.toUpperCase()
+  // Check the more specific A3-560T variant first; it also matches names such
+  // as "A3 560T 资源池" and "A3-560T".
+  if (/A3\s*[-_/]?\s*560T/.test(normalized) || /560T/.test(normalized)) return 'A3-560T'
+  if (/\bA5\b/.test(normalized) || normalized.includes('A5资源')) return 'A5'
+  if (/\bA3\b/.test(normalized) || normalized.includes('A3资源')) return 'A3'
+  if (/\bA2\b/.test(normalized) || normalized.includes('A2资源')) return 'A2'
+  return null
+}
+
+const hardwareRank = (clusterName: string) => {
+  const hardware = inferHardwareLabel(clusterName)
+  return hardware ? HARDWARE_CARD_ORDER.indexOf(hardware) : HARDWARE_CARD_ORDER.length
+}
+
+const sortClustersByHardware = <T extends { name: string }>(clusters: T[]) => [...clusters].sort((left, right) => {
+  const rankDelta = hardwareRank(left.name) - hardwareRank(right.name)
+  return rankDelta || left.name.localeCompare(right.name, 'zh-CN')
+})
+
+const isA3CardCluster = (clusterName: string) => {
+  const hardware = inferHardwareLabel(clusterName)
+  return hardware === 'A3' || hardware === 'A3-560T'
+}
+
+const mergeClusterSummaries = (summaries: ClusterResourceSummary[], cardName: string): ClusterResourceSummary => {
+  const first = summaries[0]
+  const nodeResources = summaries.flatMap(summary => summary.node_resources.flatMap(node => ({
+    ...node,
+    // Node names are only unique inside one cluster. Prefix them when the A3
+    // card combines the A3 and A3-560T pools so the drawer table remains safe.
+    node_name: summaries.length > 1 ? `${summary.cluster_name}/${node.node_name}` : node.node_name,
+  })))
+
+  return {
+    cluster_id: first?.cluster_id ?? 0,
+    cluster_name: cardName,
+    total: {
+      cpu_cores: summaries.reduce((sum, summary) => sum + summary.total.cpu_cores, 0),
+      memory_bytes: summaries.reduce((sum, summary) => sum + summary.total.memory_bytes, 0),
+      npu: summaries.reduce((sum, summary) => sum + summary.total.npu, 0),
+    },
+    used: {
+      cpu_cores: summaries.reduce((sum, summary) => sum + summary.used.cpu_cores, 0),
+      memory_bytes: summaries.reduce((sum, summary) => sum + summary.used.memory_bytes, 0),
+      npu: summaries.reduce((sum, summary) => sum + summary.used.npu, 0),
+    },
+    available: {
+      cpu_cores: summaries.reduce((sum, summary) => sum + summary.available.cpu_cores, 0),
+      memory_bytes: summaries.reduce((sum, summary) => sum + summary.available.memory_bytes, 0),
+      npu: summaries.reduce((sum, summary) => sum + summary.available.npu, 0),
+    },
+    running_instances: summaries.reduce((sum, summary) => sum + summary.running_instances, 0),
+    executing_pods_count: summaries.reduce((sum, summary) => sum + summary.executing_pods_count, 0),
+    executed_pods_count: summaries.reduce((sum, summary) => sum + summary.executed_pods_count, 0),
+    node_resources: nodeResources,
+    executing_pods: summaries.flatMap(summary => summary.executing_pods || []),
+    scope: {
+      clusters: summaries.map(summary => ({ cluster_id: summary.cluster_id, cluster_name: summary.cluster_name })),
+    },
+    error: null,
+  }
+}
 
 function ResourceUsage({ summary }: { summary: ClusterResourceSummary }) {
   const cpuPct = percent(summary.used.cpu_cores, summary.total.cpu_cores)
@@ -126,7 +214,20 @@ function PodTable({ data }: { data: ResourcePodInfo[] }) {
       }}
       scroll={{ x: 1060 }}
       columns={[
-        { title: '集群', dataIndex: 'cluster_name', width: 140 },
+        {
+          title: '集群',
+          dataIndex: 'cluster_name',
+          width: 180,
+          render: (clusterName: string) => {
+            const hardware = inferHardwareLabel(clusterName)
+            return (
+              <Space size={6}>
+                <span>{clusterName}</span>
+                {hardware ? <Tag color={HARDWARE_TAG_COLORS[hardware]}>{hardware}</Tag> : null}
+              </Space>
+            )
+          },
+        },
         { title: 'Namespace', dataIndex: 'namespace', width: 160 },
         { title: 'Pod', dataIndex: 'name', width: 260 },
         {
@@ -281,6 +382,111 @@ function buildNodeChartData(nodes: { node_name: string; metrics: NodeMetricPoint
   return Array.from(timeMap.values()).sort((a, b) => String(a.collected_at).localeCompare(String(b.collected_at)))
 }
 
+/**
+ * The trend API returns one series per Kubernetes cluster.  A3-560T is a
+ * separate cluster for collection purposes, but it belongs to the A3 pool in
+ * the dashboard.  Keep the API response untouched and aggregate the two
+ * series only for this view.
+ */
+function mergeNpuTrendClusters(data: NpuMetricsResponse | undefined): NpuMetricsResponse | undefined {
+  if (!data) return undefined
+
+  const groups = new Map<string, { isA3: boolean; clusters: ClusterNpuMetrics[] }>()
+  for (const cluster of data.clusters) {
+    const isA3 = isA3CardCluster(cluster.cluster_name)
+    const key = isA3 ? 'hardware:A3' : `cluster:${cluster.cluster_id}`
+    const group = groups.get(key)
+    if (group) {
+      group.clusters.push(cluster)
+    } else {
+      groups.set(key, { isA3, clusters: [cluster] })
+    }
+  }
+
+  return {
+    clusters: Array.from(groups.values()).map(({ isA3, clusters }) => {
+      const first = isA3
+        ? clusters.find(cluster => inferHardwareLabel(cluster.cluster_name) === 'A3') ?? clusters[0]
+        : clusters[0]
+      if (!isA3) return first
+
+      const pointMap = new Map<string, NpuMetricPoint>()
+      for (const cluster of clusters) {
+        for (const point of cluster.metrics) {
+          const existing = pointMap.get(point.collected_at)
+          if (existing) {
+            existing.npu_total += point.npu_total
+            existing.npu_used += point.npu_used
+            existing.npu_available += point.npu_available
+            existing.executing_pods_count += point.executing_pods_count
+            existing.pr_count += point.pr_count
+            existing.top_pods = existing.top_pods.concat(point.top_pods)
+          } else {
+            pointMap.set(point.collected_at, {
+              ...point,
+              top_pods: [...point.top_pods],
+            })
+          }
+        }
+      }
+
+      const metrics = Array.from(pointMap.values())
+        .sort((left, right) => left.collected_at.localeCompare(right.collected_at))
+        .map(point => ({
+          ...point,
+          // A simple average would make a small pool count as much as the
+          // larger pool.  Calculate the utilization from the merged totals.
+          npu_utilization: point.npu_total > 0 ? (point.npu_used / point.npu_total) * 100 : 0,
+          top_pods: point.top_pods
+            .slice()
+            .sort((left, right) => right.npu - left.npu)
+            .slice(0, 5),
+        }))
+
+      return {
+        cluster_id: first.cluster_id,
+        cluster_name: 'A3',
+        metrics,
+      }
+    }),
+  }
+}
+
+function mergeNodeTrendClusters(data: NodeMetricsResponse | undefined): NodeMetricsResponse | undefined {
+  if (!data) return undefined
+
+  const groups = new Map<string, { isA3: boolean; clusters: ClusterNodeMetrics[] }>()
+  for (const cluster of data.clusters) {
+    const isA3 = isA3CardCluster(cluster.cluster_name)
+    const key = isA3 ? 'hardware:A3' : `cluster:${cluster.cluster_id}`
+    const group = groups.get(key)
+    if (group) {
+      group.clusters.push(cluster)
+    } else {
+      groups.set(key, { isA3, clusters: [cluster] })
+    }
+  }
+
+  return {
+    clusters: Array.from(groups.values()).map(({ isA3, clusters }) => {
+      const first = isA3
+        ? clusters.find(cluster => inferHardwareLabel(cluster.cluster_name) === 'A3') ?? clusters[0]
+        : clusters[0]
+      const prefixNodes = isA3 && clusters.length > 1
+      return {
+        cluster_id: first.cluster_id,
+        cluster_name: isA3 ? 'A3' : first.cluster_name,
+        nodes: clusters.flatMap(cluster => cluster.nodes.map(node => ({
+          ...node,
+          // Node names are only unique within one cluster.  Prefix the source
+          // pool when A3 and A3-560T are displayed together.
+          node_name: prefixNodes ? `${cluster.cluster_name}/${node.node_name}` : node.node_name,
+        }))),
+      }
+    }),
+  }
+}
+
 function NodeTrendTooltipContent({ active, payload, label }: any) {
   if (!active || !payload || payload.length === 0) return null
   return (
@@ -335,6 +541,7 @@ function NodeSparkline({ metrics, timeRange }: { metrics: NodeMetricPoint[]; tim
 }
 
 function NpuTrendTab() {
+  const navigate = useNavigate()
   const [timeRange, setTimeRange] = useState<string>('24h')
   const [selectedClusters] = useState<number[]>([])
   const [selectedNodes] = useState<string[]>([])
@@ -365,10 +572,12 @@ function NpuTrendTab() {
     )
   }
 
-  const { data: allClusters = [] } = useQuery({
+  const { data: allClustersData = [] } = useQuery({
     queryKey: ['resource-clusters-enabled'],
     queryFn: getEnabledResourceClusters,
   })
+
+  const allClusters = useMemo(() => sortClustersByHardware(allClustersData), [allClustersData])
 
   const activeClusterIds = selectedClusters.length > 0 ? selectedClusters : allClusters.map(c => c.id)
 
@@ -382,9 +591,12 @@ function NpuTrendTab() {
     time_range: timeRange,
   })
 
+  const trendMetricsData = useMemo(() => mergeNpuTrendClusters(metricsData), [metricsData])
+  const trendNodeMetricsData = useMemo(() => mergeNodeTrendClusters(nodeMetricsData), [nodeMetricsData])
+
   const summaryRows = useMemo<NodeSummaryRow[]>(() => {
     const rows: NodeSummaryRow[] = []
-    for (const cluster of nodeMetricsData?.clusters || []) {
+    for (const cluster of trendNodeMetricsData?.clusters || []) {
       for (const node of cluster.nodes) {
         if (selectedNodes.length && !selectedNodes.includes(node.node_name)) continue
         const utils = node.metrics.map(m => m.npu_utilization)
@@ -404,7 +616,7 @@ function NpuTrendTab() {
     }
     return rows.sort((a, b) =>
       a.cluster_name.localeCompare(b.cluster_name) || a.node_name.localeCompare(b.node_name))
-  }, [nodeMetricsData, selectedNodes])
+  }, [trendNodeMetricsData, selectedNodes])
 
   const clusterSummaries = useMemo<ClusterSummary[]>(() => {
     const map = new Map<number, ClusterSummary & { nodeAvgs: number[] }>()
@@ -442,12 +654,12 @@ function NpuTrendTab() {
     return result
   }, [summaryRows])
 
-  const hasNodeData = (nodeMetricsData?.clusters || []).some(c => c.nodes.length > 0)
+  const hasNodeData = (trendNodeMetricsData?.clusters || []).some(c => c.nodes.length > 0)
 
   const chartData = useMemo(() => {
-    if (!metricsData?.clusters) return []
+    if (!trendMetricsData?.clusters) return []
     const allPoints: any[] = []
-    for (const cluster of metricsData.clusters) {
+    for (const cluster of trendMetricsData.clusters) {
       for (const point of cluster.metrics) {
         allPoints.push({
           collected_at: point.collected_at,
@@ -470,13 +682,30 @@ function NpuTrendTab() {
       Object.assign(existing, point)
     }
     return Array.from(timeMap.values()).sort((a, b) => a.collected_at.localeCompare(b.collected_at))
-  }, [metricsData, timeRange])
+  }, [trendMetricsData, timeRange])
 
   if (metricsLoading && !metricsData) {
     return (
       <div style={{ padding: 24 }}>
         <Skeleton active paragraph={{ rows: 6 }} />
       </div>
+    )
+  }
+
+  if (allClusters.length === 0) {
+    return (
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description="暂无已启用的算力资源池"
+        style={{ margin: '48px 0' }}
+      >
+        <Space direction="vertical" size="small">
+          <Text type="secondary">请先在资源看板配置中添加 Kubernetes 集群并启用监控。</Text>
+          <Button type="primary" onClick={() => navigate('/admin/resource-dashboard-config')}>
+            去配置资源池
+          </Button>
+        </Space>
+      </Empty>
     )
   }
 
@@ -557,7 +786,7 @@ function NpuTrendTab() {
         </Row>
       )}
 
-      {metricsData?.clusters && metricsData.clusters.length > 0 ? (
+      {trendMetricsData?.clusters && trendMetricsData.clusters.length > 0 ? (
         <Card title="NPU 利用率趋势">
           <ResponsiveContainer width="100%" height={320}>
             <LineChart data={chartData}>
@@ -576,7 +805,7 @@ function NpuTrendTab() {
               />
               <Tooltip content={<NpuTrendTooltipContent />} />
               <Legend formatter={renderLegend} />
-              {metricsData.clusters.map((cluster, index) => (
+              {trendMetricsData.clusters.map((cluster, index) => (
                 <Line
                   key={cluster.cluster_id}
                   type="monotone"
@@ -600,7 +829,7 @@ function NpuTrendTab() {
         </Card>
       )}
 
-      {metricsData?.clusters && metricsData.clusters.length > 0 && (
+      {trendMetricsData?.clusters && trendMetricsData.clusters.length > 0 && (
         <Card title="Pod / PR 数量趋势">
           <ResponsiveContainer width="100%" height={320}>
             <LineChart data={chartData}>
@@ -617,7 +846,7 @@ function NpuTrendTab() {
               />
               <Tooltip />
               <Legend formatter={renderLegend} />
-              {metricsData.clusters.map((cluster, index) => (
+              {trendMetricsData.clusters.map((cluster, index) => (
                 <Line
                   key={`pods-${cluster.cluster_id}`}
                   type="monotone"
@@ -630,7 +859,7 @@ function NpuTrendTab() {
                   hide={hiddenLines.has(`executing_pods_count_${cluster.cluster_id}`)}
                 />
               ))}
-              {metricsData.clusters.map((cluster, index) => (
+              {trendMetricsData.clusters.map((cluster, index) => (
                 <Line
                   key={`pr-${cluster.cluster_id}`}
                   type="monotone"
@@ -651,7 +880,7 @@ function NpuTrendTab() {
 
       {hasNodeData ? (
         <>
-          {nodeMetricsData?.clusters?.map(cluster => {
+          {trendNodeMetricsData?.clusters?.map(cluster => {
             const visibleNodes = selectedNodes.length
               ? cluster.nodes.filter(n => selectedNodes.includes(n.node_name))
               : cluster.nodes
@@ -782,14 +1011,17 @@ function NpuTrendTab() {
 }
 
 function RealtimeDashboardTab() {
+  const navigate = useNavigate()
   const [selectedClusters, setSelectedClusters] = useState<number[]>([])
   const [appliedFilters, setAppliedFilters] = useState({ clusterIds: [] as number[] })
   const [selectedClusterSummary, setSelectedClusterSummary] = useState<ClusterResourceSummary | null>(null)
 
-  const { data: allClusters = [], isLoading: clustersLoading, error: clustersError, refetch: refetchClusters } = useQuery({
+  const { data: allClustersData = [], isLoading: clustersLoading, error: clustersError, refetch: refetchClusters } = useQuery({
     queryKey: ['resource-clusters-enabled'],
     queryFn: getEnabledResourceClusters,
   })
+
+  const allClusters = useMemo(() => sortClustersByHardware(allClustersData), [allClustersData])
 
   const clusterOptions = allClusters.map(c => ({ label: c.name, value: c.id }))
 
@@ -806,6 +1038,38 @@ function RealtimeDashboardTab() {
       retry: false,
     })),
   })
+
+  const cardGroups = useMemo(() => {
+    type CardGroup = {
+      key: string
+      name: string
+      hardware: HardwareLabel | null
+      entries: Array<{ cluster: KubernetesCluster; query: (typeof clusterQueries)[number] }>
+    }
+
+    const groups = new Map<string, CardGroup>()
+    activeClusterIds.forEach((clusterId, index) => {
+      const cluster = allClusters.find(item => item.id === clusterId)
+      if (!cluster) return
+
+      const hardware = inferHardwareLabel(cluster.name)
+      const groupedA3 = isA3CardCluster(cluster.name)
+      const key = groupedA3 ? 'hardware:A3' : `cluster:${cluster.id}`
+      const existing = groups.get(key)
+      if (existing) {
+        existing.entries.push({ cluster, query: clusterQueries[index] })
+        return
+      }
+
+      groups.set(key, {
+        key,
+        name: groupedA3 ? 'A3' : cluster.name,
+        hardware: groupedA3 ? 'A3' : hardware,
+        entries: [{ cluster, query: clusterQueries[index] }],
+      })
+    })
+    return Array.from(groups.values())
+  }, [activeClusterIds, allClusters, clusterQueries])
 
   const arrivedSummaries = useMemo(
     () => clusterQueries.filter(q => q.data && !q.data.error).map(q => q.data!),
@@ -884,6 +1148,23 @@ function RealtimeDashboardTab() {
     )
   }
 
+  if (allClusters.length === 0) {
+    return (
+      <Empty
+        image={Empty.PRESENTED_IMAGE_SIMPLE}
+        description="暂无已启用的算力资源池"
+        style={{ margin: '48px 0' }}
+      >
+        <Space direction="vertical" size="small">
+          <Text type="secondary">请先在资源看板配置中添加 Kubernetes 集群并启用监控。</Text>
+          <Button type="primary" onClick={() => navigate('/admin/resource-dashboard-config')}>
+            去配置资源池
+          </Button>
+        </Space>
+      </Empty>
+    )
+  }
+
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
       <Card size="small">
@@ -925,38 +1206,59 @@ function RealtimeDashboardTab() {
       </Row>
 
       <Row gutter={[16, 16]}>
-        {clusterQueries.map((query, index) => {
-          const cluster = allClusters.find(c => c.id === activeClusterIds[index])
-          if (!cluster) return null
+        {cardGroups.map(group => {
+          const successfulSummaries = group.entries
+            .map(entry => entry.query.data)
+            .filter((summary): summary is ClusterResourceSummary => Boolean(summary && !summary.error))
+          const failedEntries = group.entries.filter(entry => entry.query.error || entry.query.data?.error)
+          const isLoading = group.entries.some(entry => entry.query.isLoading)
+          const summary = successfulSummaries.length > 0
+            ? mergeClusterSummaries(successfulSummaries, group.name)
+            : null
+          const errorMessage = failedEntries
+            .map(entry => entry.query.data?.error || (entry.query.error as Error | null)?.message)
+            .filter(Boolean)
+            .join('；')
+          const hardwareLabels = Array.from(new Set(
+            group.entries
+              .map(entry => inferHardwareLabel(entry.cluster.name))
+              .filter((hardware): hardware is HardwareLabel => Boolean(hardware)),
+          ))
+
           return (
-            <Col xs={24} lg={12} xl={8} key={cluster.id}>
+            <Col xs={24} lg={12} xl={8} key={group.key}>
               <Card
                 hoverable
-                title={cluster.name}
-                extra={
-                  query.error ? <Tag color="red">异常</Tag>
-                    : query.data?.error ? <Tag color="red">异常</Tag>
-                      : query.isLoading ? <Tag color="blue">加载中</Tag>
-                        : <Tag color="green">正常</Tag>
-                }
-                onClick={() => query.data && setSelectedClusterSummary(query.data)}
-                style={{ cursor: query.data ? 'pointer' : 'default' }}
-              >
-                {query.error ? (
-                  <Alert type="error" showIcon message="集群查询失败" description={(query.error as Error).message} />
-                ) : query.isLoading ? (
-                  <Skeleton active paragraph={{ rows: 4 }} />
-                ) : query.data?.error ? (
-                  <Alert type="error" showIcon message="集群查询失败" description={query.data.error} />
-                ) : query.data ? (
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <ResourceUsage summary={query.data} />
-                    <Space wrap>
-                      <Tag>运行实例 {query.data.running_instances}</Tag>
-                      <Tag>执行中 {query.data.executing_pods_count}</Tag>
-                    </Space>
+                title={
+                  <Space size={8}>
+                    <span>{group.name}</span>
+                    {hardwareLabels.map(hardware => (
+                      <Tag key={hardware} color={HARDWARE_TAG_COLORS[hardware]}>{hardware}</Tag>
+                    ))}
                   </Space>
-                ) : null}
+                }
+                extra={
+                  failedEntries.length > 0 ? <Tag color="orange">部分异常</Tag>
+                    : isLoading ? <Tag color="blue">加载中</Tag>
+                      : <Tag color="green">正常</Tag>
+                }
+                onClick={() => summary && setSelectedClusterSummary(summary)}
+                style={{ cursor: summary ? 'pointer' : 'default' }}
+              >
+                {summary ? (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <ResourceUsage summary={summary} />
+                    <Space wrap>
+                      <Tag>运行实例 {summary.running_instances}</Tag>
+                      <Tag>执行中 Pod {summary.executing_pods_count}</Tag>
+                    </Space>
+                    {errorMessage && <Text type="warning">部分资源池查询失败：{errorMessage}</Text>}
+                  </Space>
+                ) : isLoading ? (
+                  <Skeleton active paragraph={{ rows: 4 }} />
+                ) : (
+                  <Alert type="error" showIcon message="集群查询失败" description={errorMessage || '暂无可用资源数据'} />
+                )}
               </Card>
             </Col>
           )

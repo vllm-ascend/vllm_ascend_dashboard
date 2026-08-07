@@ -33,6 +33,8 @@ import { useResourceMetricsConfig, useUpdateResourceMetricsConfig } from '../hoo
 const { TextArea } = Input
 const { Title, Text } = Typography
 
+const HARDWARE_CLUSTER_NAME_HINT = 'A2 资源池、A3 资源池、A5 资源池、A3-560T 资源池'
+
 function ResourceDashboardConfig() {
   const queryClient = useQueryClient()
   const [form] = Form.useForm()
@@ -255,8 +257,11 @@ function ResourceDashboardConfig() {
         destroyOnClose
       >
         <Form form={form} layout="vertical">
+          <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+            硬件资源池名称建议包含型号：{HARDWARE_CLUSTER_NAME_HINT}。看板会自动按型号排序并显示硬件标签，A3-560T 会汇总到 A3 卡片中。
+          </Text>
           <Form.Item name="name" label="集群名称" rules={[{ required: true, message: '请输入集群名称' }]}>
-            <Input placeholder="例如：A2 资源池" />
+            <Input placeholder="例如：A2 资源池、A3 资源池、A5 资源池、A3-560T 资源池" />
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input placeholder="集群用途或备注" />
