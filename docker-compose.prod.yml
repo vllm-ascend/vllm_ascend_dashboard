@@ -47,6 +47,7 @@ services:
     environment:
       # Database connection (MySQL)
       - DATABASE_URL=mysql+aiomysql://${CONTROL_DB_USER:-control_svc}:${CONTROL_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-vllm_dashboard}
+      - TZ=Asia/Shanghai
       # LiteLLM gateway
       - LITELLM_PROXY_URL=http://litellm:4000
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
@@ -189,6 +190,7 @@ services:
       - .env.production
     environment:
       - DATABASE_URL=mysql+aiomysql://${SCHEDULER_DB_USER:-scheduler_svc}:${SCHEDULER_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-vllm_dashboard}
+      - TZ=Asia/Shanghai
     command: python -m app.scheduler
     volumes:
       - backend_data:/app/data          # 共享 backend 的 data 目录（git 缓存、model_fo_map.json）
@@ -220,6 +222,7 @@ services:
       - .env.production
     environment:
       - DATABASE_URL=mysql+aiomysql://${COLLECTOR_DB_USER:-collector_svc}:${COLLECTOR_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-vllm_dashboard}
+      - TZ=Asia/Shanghai
       - NODE_ID=collector-prod-1
       - CAPABILITIES=python
     command: python -m app.collector

@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REPO_PATH = os.environ.get("VLLM_ASCEND_REPO_PATH", "")
 if not DEFAULT_REPO_PATH:
+    # 优先使用 github_cache 的缓存目录（CI sync 时自动 clone/pull）
+    try:
+        from app.core.config import settings
+        data_root = Path(settings.DATA_DIR)
+        if not data_root.is_absolute():
+            data_root = Path.cwd() / data_root
+        cache_path = data_root.resolve() / "repos" / f"{settings.GITHUB_OWNER or 'vllm-project'}_{settings.GITHUB_REPO or 'vllm-ascend'}"
+        if cache_path.exists():
+            DEFAULT_REPO_PATH = str(cache_path)
+    except Exception:
+        pass
+if not DEFAULT_REPO_PATH:
+    # fallback：本地开发环境的 vllm-ascend clone
     candidates = [
         Path(__file__).resolve().parent.parent.parent.parent.parent / "vllm-ascend",
         Path("/app/data/vllm-ascend"),
@@ -50,15 +63,27 @@ class TestCaseDef:
 
 
 def load_model_fo_map() -> dict[str, str]:
-    """加载 data/model_fo_map.json 中的模型→FO映射"""
-    fo_file = Path(__file__).resolve().parent.parent.parent.parent / "data" / "model_fo_map.json"
-    if not fo_file.exists():
+    """加载 data/model_fo_map.json 中的模型→FO映射。
+    本地：backend/app/services/ → 4 层 parent 到项目根
+    容器：/app/app/services/ → 3 层 parent 到 /app（WORKDIR）
+    用环境变量 DATA_DIR 兜底，找不到则依次尝试候选路径。
+    """
+    base = Path(__file__).resolve().parent
+    candidates = [
+        Path(os.environ.get("DATA_DIR", "")) / "model_fo_map.json",
+        base.parent.parent.parent / "data" / "model_fo_map.json",  # 容器：/app/data/
+        base.parent.parent.parent.parent / "data" / "model_fo_map.json",  # 本地：项目根/data/
+    ]
+    fo_file = next((p for p in candidates if p.exists()), None)
+    if not fo_file:
+        logger.warning(f"model_fo_map.json not found in any of: {[str(p) for p in candidates]}")
         return {}
     try:
         with open(fo_file, encoding="utf-8") as f:
             data = json.load(f)
         return {k: v for k, v in data.items() if not k.startswith("_") and isinstance(v, str)}
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to load model_fo_map.json: {e}")
         return {}
 
 
