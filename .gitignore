@@ -101,6 +101,9 @@ coverage/
 data/*
 !data/model_fo_map.json
 
+# Backend runtime data (logs, caches, reports, git repos)
+backend/data/
+
 # Auto-generated docs
 PROJECT_STRUCTURE.md
 
