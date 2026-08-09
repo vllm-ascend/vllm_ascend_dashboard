@@ -74,16 +74,32 @@ class NightlyConfigParser:
         return self.config_file.exists()
 
     def checkout_branch(self, branch: str) -> bool:
-        """切换到指定分支，返回是否成功"""
+        """切换到指定分支，返回是否成功。支持 origin/ 和 upstream/ 前缀。"""
         import subprocess
+        env = {**os.environ, "MSYS_NO_PATHCONV": "1"}
         try:
+            # 如果分支在 origin 或 upstream 远程存在，创建本地 tracking branch
+            for remote in ["origin", "upstream"]:
+                ref = f"{remote}/{branch}"
+                r = subprocess.run(
+                    ["git", "-C", str(self.repo_path), "rev-parse", "--verify", ref],
+                    capture_output=True, text=True, timeout=10, env=env,
+                )
+                if r.returncode == 0:
+                    # 创建/更新本地分支跟踪远程
+                    subprocess.run(
+                        ["git", "-C", str(self.repo_path), "fetch", remote, branch],
+                        capture_output=True, text=True, timeout=30, env=env,
+                    )
+                    subprocess.run(
+                        ["git", "-C", str(self.repo_path), "checkout", "-B", branch, ref],
+                        capture_output=True, text=True, timeout=30, env=env,
+                    )
+                    return True
+            # 本地分支直接 checkout
             subprocess.run(
                 ["git", "-C", str(self.repo_path), "checkout", branch],
-                capture_output=True, text=True, timeout=30,
-            )
-            subprocess.run(
-                ["git", "-C", str(self.repo_path), "pull", "origin", branch],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=30, env=env,
             )
             return True
         except Exception as e:
@@ -91,22 +107,25 @@ class NightlyConfigParser:
             return False
 
     def get_active_branches(self) -> list[str]:
-        """获取 repo 中所有活跃分支（从 CI 数据中出现过的分支）"""
-        # 默认返回 main + release 分支
+        """获取所有 release 分支（origin + upstream 远程）"""
         import subprocess
-        try:
-            result = subprocess.run(
-                ["git", "-C", str(self.repo_path), "branch", "-r"],
-                capture_output=True, text=True, timeout=10,
-            )
-            branches = []
-            for line in result.stdout.strip().split("\n"):
-                line = line.strip().lstrip("origin/")
-                if line and not line.startswith("HEAD"):
-                    branches.append(line)
-            return branches
-        except Exception:
-            return ["main"]
+        env = {**os.environ, "MSYS_NO_PATHCONV": "1"}
+        branches = set()
+        for remote in ["origin", "upstream"]:
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(self.repo_path), "branch", "-r", "--list", f"{remote}/releases/*"],
+                    capture_output=True, text=True, timeout=10, env=env,
+                )
+                for line in result.stdout.strip().split("\n"):
+                    line = line.strip()
+                    if line and "->" not in line:
+                        # 去掉 remote/ 前缀
+                        name = line.split("/", 1)[1] if "/" in line else line
+                        branches.add(name)
+            except Exception:
+                pass
+        return sorted(branches)
 
     def parse(self, report_date: str = "", source_branch: str = "main") -> list[TestCaseDef]:
         """解析 nightly_config.yaml，返回用例定义列表"""
