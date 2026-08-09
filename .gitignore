@@ -97,8 +97,9 @@ coverage/
 
 .python-version
 
-# vllm-ascend source code
-data/
+# vllm-ascend source code (keep model_fo_map.json under version control)
+data/*
+!data/model_fo_map.json
 
 # Auto-generated docs
 PROJECT_STRUCTURE.md
