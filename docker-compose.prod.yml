@@ -190,6 +190,9 @@ services:
     environment:
       - DATABASE_URL=mysql+aiomysql://${SCHEDULER_DB_USER:-scheduler_svc}:${SCHEDULER_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-vllm_dashboard}
     command: python -m app.scheduler
+    volumes:
+      - backend_data:/app/data          # 共享 backend 的 data 目录（git 缓存、model_fo_map.json）
+      - backend_logs:/app/logs
     networks:
       - dashboard-network
     restart: unless-stopped

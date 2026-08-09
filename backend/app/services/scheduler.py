@@ -601,14 +601,17 @@ class DataSyncScheduler:
             # 匹配：CI job_name 末尾是 config 文件名（如 xx.yaml），
             # nightly_test_cases.test_model 存的就是 config_file_path
             tc = None
-            ci_suffix = job.job_name.split(' / ')[-1] if ' / ' in job.job_name else job.job_name
             for tc_key, tc_val in tc_map.items():
                 tc_date, tc_branch, tc_wf, tc_job = tc_key
                 if tc_date == beijing_date and tc_wf == job.workflow_name:
-                    # 匹配 test_model (config_file_path) 或 job_name (YAML name)
                     if (tc_val.test_model and tc_val.test_model in job.job_name) or tc_job in job.job_name:
                         tc = tc_val
                         break
+
+            # 只保留 nightly_config.yaml 中定义的测试用例，
+            # 跳过 Build image / Export env / clear-logs 等基础设施 job
+            if not tc:
+                continue
 
             github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/job/{job.job_id}" if job.job_id else None
 
