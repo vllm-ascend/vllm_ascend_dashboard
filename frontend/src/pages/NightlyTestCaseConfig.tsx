@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Card,
   Table,
@@ -11,7 +11,7 @@ import {
   Input,
   Form,
   message,
-  Switch,
+  DatePicker,
 } from 'antd'
 import {
   PlusOutlined,
@@ -24,30 +24,45 @@ import {
   useUpdateNightlyTestCase,
 } from '../hooks/useCI'
 import type { NightlyTestCase } from '../services/ci'
+import dayjs from 'dayjs'
 
 const { Text, Title } = Typography
 
 const WORKFLOW_OPTIONS = [
   { label: 'Nightly-A2', value: 'Nightly-A2' },
   { label: 'Nightly-A3', value: 'Nightly-A3' },
+  { label: 'Nightly-310P', value: 'Nightly-310P' },
 ]
 
 function NightlyTestCaseConfig() {
-  const [workflowFilter, setWorkflowFilter] = useState<string | undefined>(undefined)
+  const [selectedDate, setSelectedDate] = useState<dayjs.Dayjs | null>(null)
+  const [selectedBranch, setSelectedBranch] = useState('main')
+
+  const [workflowFilter, setWorkflowFilter] = useState<string | undefined>('Nightly-A3')
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRecord, setEditingRecord] = useState<NightlyTestCase | null>(null)
   const [form] = Form.useForm()
 
   const { data: testCases, isLoading, refetch } = useNightlyTestCases({
+    report_date: selectedDate?.format('YYYY-MM-DD'),
+    source_branch: selectedBranch,
     workflow_name: workflowFilter,
   })
+  // 自动选最新日期
+  useEffect(() => {
+    if (testCases && testCases.length > 0 && !selectedDate) {
+      const dates = [...new Set(testCases.map(tc => tc.report_date as string).filter(Boolean))]
+      dates.sort().reverse()
+      if (dates[0]) setSelectedDate(dayjs(dates[0]))
+    }
+  }, [testCases, selectedDate])
+
   const createMutation = useCreateNightlyTestCase()
   const updateMutation = useUpdateNightlyTestCase()
 
   const handleAdd = () => {
     setEditingRecord(null)
     form.resetFields()
-    form.setFieldsValue({ enabled: true })
     setModalOpen(true)
   }
 
@@ -77,17 +92,6 @@ function NightlyTestCaseConfig() {
 
   const columns = [
     {
-      title: '状态',
-      dataIndex: 'enabled',
-      key: 'enabled',
-      width: 80,
-      render: (enabled: boolean) => (
-        enabled
-          ? <Tag color="green">正常</Tag>
-          : <Tag color="default">已过时</Tag>
-      ),
-    },
-    {
       title: 'Workflow',
       dataIndex: 'workflow_name',
       key: 'workflow_name',
@@ -95,20 +99,12 @@ function NightlyTestCaseConfig() {
       render: (text: string) => <Tag color="blue">{text}</Tag>,
     },
     {
-      title: 'Job 名称',
+      title: '用例名',
       dataIndex: 'job_name',
       key: 'job_name',
       width: 240,
       ellipsis: true,
       render: (text: string) => <Text>{text}</Text>,
-    },
-    {
-      title: '显示名',
-      dataIndex: 'display_name',
-      key: 'display_name',
-      width: 140,
-      ellipsis: true,
-      render: (text: string | null) => text || '-',
     },
     {
       title: '测试模型',
@@ -125,14 +121,7 @@ function NightlyTestCaseConfig() {
       width: 90,
       render: (text: string | null) => text || '-',
     },
-    {
-      title: '负责人',
-      dataIndex: 'owner',
-      key: 'owner',
-      width: 90,
-      render: (text: string | null) => text || '-',
-    },
-    {
+{
       title: '部署方式',
       dataIndex: 'deployment_type',
       key: 'deployment_type',
@@ -160,6 +149,23 @@ function NightlyTestCaseConfig() {
           <Text type="secondary">管理 Nightly 流水线中的静态用例，过时用例标记而非删除</Text>
         </div>
         <Space>
+          <DatePicker
+            value={selectedDate}
+            onChange={(d) => d && setSelectedDate(d)}
+            allowClear={false}
+            format="YYYY-MM-DD"
+            style={{ width: 140 }}
+          />
+          <Select
+            value={selectedBranch}
+            onChange={setSelectedBranch}
+            style={{ width: 140 }}
+            options={[
+              { label: 'main', value: 'main' },
+              { label: 'releases/v0.23.0', value: 'releases/v0.23.0' },
+              { label: 'releases/v0.25.1', value: 'releases/v0.25.1' },
+            ]}
+          />
           <Select
             value={workflowFilter}
             onChange={setWorkflowFilter}
@@ -200,11 +206,8 @@ function NightlyTestCaseConfig() {
           <Form.Item name="workflow_name" label="Workflow" rules={[{ required: true, message: '请选择' }]}>
             <Select options={WORKFLOW_OPTIONS} placeholder="选择 Workflow" />
           </Form.Item>
-          <Form.Item name="job_name" label="Job 名称" rules={[{ required: true, message: '请输入 job 名称' }]}>
-            <Input placeholder="如 single-node (main, xxx, ...)" />
-          </Form.Item>
-          <Form.Item name="display_name" label="显示名">
-            <Input placeholder="可选的显示名称" />
+          <Form.Item name="job_name" label="用例名" rules={[{ required: true, message: '请输入用例名' }]}>
+            <Input placeholder="如 deepseek-r1-0528-w8a8" />
           </Form.Item>
           <Space size={16} style={{ width: '100%' }}>
             <Form.Item name="test_model" label="测试模型" style={{ width: 240 }}>
@@ -224,9 +227,6 @@ function NightlyTestCaseConfig() {
           </Space>
           <Form.Item name="notes" label="备注">
             <Input.TextArea rows={2} placeholder="备注信息" />
-          </Form.Item>
-          <Form.Item name="enabled" label="已过时" valuePropName="checked">
-            <Switch checkedChildren="否" unCheckedChildren="是" />
           </Form.Item>
         </Form>
       </Modal>

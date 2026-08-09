@@ -208,6 +208,8 @@ export interface DailyFailureJob {
   model_fo: string | null
   deployment_type: string | null
   processing_status: string
+  problem_category: string | null
+  related_pr: string | null
   notes: string | null
   updated_by: string | null
   status_updated_at: string | null
@@ -231,6 +233,8 @@ export interface DailyFailureListResponse {
 
 export interface DailyFailureUpdateRequest {
   processing_status: string
+  problem_category?: string | null
+  related_pr?: string | null
   notes?: string | null
 }
 
@@ -260,10 +264,23 @@ export const updateFailureStatus = async (
   return response.data
 }
 
+export const batchUpdateFailureStatus = async (
+  ids: number[],
+  data: DailyFailureUpdateRequest
+): Promise<{ message: string; count: number }> => {
+  const response = await api.put<{ message: string; count: number }>(
+    `/ci/daily-failures/batch-status?${ids.map(id => `ids=${id}`).join('&')}`,
+    data
+  )
+  return response.data
+}
+
 // ============ Nightly Test Case Management ============
 
 export interface NightlyTestCase {
   id: number
+  report_date: string | null
+  source_branch: string
   workflow_name: string
   job_name: string
   display_name: string | null
@@ -278,6 +295,8 @@ export interface NightlyTestCase {
 }
 
 export interface NightlyTestCaseCreate {
+  report_date?: string | null
+  source_branch?: string | null
   workflow_name: string
   job_name: string
   display_name?: string | null
@@ -290,6 +309,8 @@ export interface NightlyTestCaseCreate {
 }
 
 export interface NightlyTestCaseUpdate {
+  report_date?: string | null
+  source_branch?: string | null
   workflow_name?: string | null
   job_name?: string | null
   display_name?: string | null
@@ -302,6 +323,8 @@ export interface NightlyTestCaseUpdate {
 }
 
 export const getNightlyTestCases = async (params?: {
+  report_date?: string
+  source_branch?: string
   workflow_name?: string
   enabled?: boolean
 }): Promise<NightlyTestCase[]> => {

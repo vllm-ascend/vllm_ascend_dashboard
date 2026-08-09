@@ -80,6 +80,8 @@ async def init_db():
 
     # 列级迁移：test_cases 新增 auto_issues_found 等字段（本 PR 范围）
     await _migrate_test_case_columns()
+    await _migrate_nightly_test_cases_columns()
+    await _migrate_daily_failure_records_columns()
 
     # 初始化 LLM 提供商默认配置
     await _init_llm_provider_configs()
@@ -262,6 +264,76 @@ async def _cleanup_stale_analyses():
             await db.commit()
     except Exception as e:
         logger.warning("Failed to cleanup stale analyses (non-fatal): %s", e)
+
+
+async def _migrate_nightly_test_cases_columns():
+    """Add report_date + source_branch to nightly_test_cases, update unique constraint"""
+    try:
+        from sqlalchemy import inspect, text
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            def _get_columns(sync_session):
+                return {c["name"] for c in inspect(sync_session.connection()).get_columns("nightly_test_cases")}
+            existing = await db.run_sync(_get_columns)
+            for name, sql_type in [("report_date", "DATE"), ("source_branch", "VARCHAR(100) DEFAULT 'main'")]:
+                if name not in existing:
+                    await db.execute(text(f"ALTER TABLE nightly_test_cases ADD COLUMN {name} {sql_type}"))
+                    await db.commit()
+            # Drop old unique constraint, add new one
+            try:
+                await db.execute(text("ALTER TABLE nightly_test_cases DROP INDEX uq_nightly_test_case_workflow_job"))
+                await db.commit()
+            except Exception:
+                pass
+            try:
+                await db.execute(text(
+                    "ALTER TABLE nightly_test_cases ADD UNIQUE INDEX uq_nightly_test_case_date_branch_wf_job"
+                    " (report_date, source_branch, workflow_name, job_name)"
+                ))
+                await db.commit()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("Nightly test case columns migration skipped (non-fatal): %s", e)
+
+
+async def _migrate_daily_failure_records_columns():
+    """Add source_branch + problem_category to daily_failure_records, update unique constraint"""
+    try:
+        from sqlalchemy import inspect, text
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            def _get_columns(sync_session):
+                return {c["name"] for c in inspect(sync_session.connection()).get_columns("daily_failure_records")}
+            existing = await db.run_sync(_get_columns)
+            if "source_branch" not in existing:
+                await db.execute(text("ALTER TABLE daily_failure_records ADD COLUMN source_branch VARCHAR(100) DEFAULT 'main'"))
+                await db.commit()
+            if "problem_category" not in existing:
+                await db.execute(text("ALTER TABLE daily_failure_records ADD COLUMN problem_category VARCHAR(50)"))
+                await db.commit()
+            if "related_pr" not in existing:
+                await db.execute(text("ALTER TABLE daily_failure_records ADD COLUMN related_pr VARCHAR(20)"))
+                await db.commit()
+            try:
+                await db.execute(text("ALTER TABLE daily_failure_records DROP INDEX uq_daily_failure_date_wf_job"))
+                await db.commit()
+            except Exception:
+                pass
+            try:
+                await db.execute(text(
+                    "ALTER TABLE daily_failure_records ADD UNIQUE INDEX uq_daily_failure_date_branch_wf_job"
+                    " (report_date, source_branch, workflow_name, job_name)"
+                ))
+                await db.commit()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("Daily failure records columns migration skipped (non-fatal): %s", e)
 
 
 async def _sync_litellm_providers():

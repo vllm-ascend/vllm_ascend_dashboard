@@ -1498,6 +1498,8 @@ async def list_daily_failures(
             model_fo=rec.model_fo,
             deployment_type=rec.deployment_type,
             processing_status=rec.processing_status or "未处理",
+            problem_category=rec.problem_category,
+            related_pr=rec.related_pr,
             notes=rec.notes,
             updated_by=rec.updated_by,
             status_updated_at=rec.status_updated_at,
@@ -1547,6 +1549,8 @@ async def update_failure_status(
             )
 
     rec.processing_status = update.processing_status
+    rec.problem_category = update.problem_category
+    rec.related_pr = update.related_pr
     rec.notes = update.notes
     rec.updated_by = current_user.username
     rec.status_updated_at = datetime.now(UTC)
@@ -1571,6 +1575,8 @@ async def update_failure_status(
         model_fo=rec.model_fo,
         deployment_type=rec.deployment_type,
         processing_status=rec.processing_status or "未处理",
+        problem_category=rec.problem_category,
+        related_pr=rec.related_pr,
         notes=rec.notes,
         updated_by=rec.updated_by,
         status_updated_at=rec.status_updated_at,
@@ -1578,16 +1584,64 @@ async def update_failure_status(
     )
 
 
+@router.put("/daily-failures/batch-status")
+async def batch_update_failure_status(
+    ids: list[int],
+    update: DailyFailureUpdateRequest,
+    current_user: CurrentUser,
+    db: DbSession,
+):
+    """批量更新失败记录的处理状态"""
+    if not ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ids 不能为空")
+    if len(ids) > 200:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="单次最多 200 条")
+
+    stmt = select(DailyFailureRecord).where(DailyFailureRecord.id.in_(ids))
+    result = await db.execute(stmt)
+    records = result.scalars().all()
+
+    if len(records) != len(ids):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="部分记录不存在")
+
+    now = datetime.now(UTC)
+    for rec in records:
+        if current_user.role not in ("admin", "super_admin"):
+            if not rec.owner or rec.owner != current_user.username:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"没有权限更新 {rec.workflow_name}/{rec.job_name}（责任人：{rec.owner or '未配置'}）",
+                )
+        rec.processing_status = update.processing_status
+        rec.problem_category = update.problem_category
+        rec.notes = update.notes
+        rec.updated_by = current_user.username
+        rec.status_updated_at = now
+
+    await db.commit()
+    return {"message": f"已更新 {len(records)} 条记录", "count": len(records)}
+
+
 # ============ Nightly Test Case CRUD ============
 
 @router.get("/nightly-test-cases", response_model=list[NightlyTestCaseResponse])
 async def list_nightly_test_cases(
     db: DbSession,
+    report_date: str | None = Query(None, description="快照日期 YYYY-MM-DD，默认最新"),
+    source_branch: str | None = Query(None, description="来源分支，默认 main"),
     workflow_name: str | None = Query(None, description="按 workflow 筛选"),
     enabled: bool | None = Query(None, description="按启用状态筛选"),
 ):
-    """列出所有 Nightly 用例"""
-    stmt = select(NightlyTestCase).order_by(NightlyTestCase.workflow_name, NightlyTestCase.job_name)
+    """列出 Nightly 用例，支持按日期和分支筛选"""
+    stmt = select(NightlyTestCase).order_by(
+        NightlyTestCase.report_date.desc(),
+        NightlyTestCase.workflow_name,
+        NightlyTestCase.job_name,
+    )
+    if report_date:
+        stmt = stmt.where(NightlyTestCase.report_date == report_date)
+    if source_branch:
+        stmt = stmt.where(NightlyTestCase.source_branch == source_branch)
     if workflow_name:
         stmt = stmt.where(NightlyTestCase.workflow_name == workflow_name)
     if enabled is not None:
@@ -1653,3 +1707,84 @@ async def delete_nightly_test_case(
     await db.delete(tc)
     await db.commit()
     return {"message": "已删除"}
+
+
+@router.post("/nightly-test-cases/sync-from-yaml")
+async def sync_test_cases_from_yaml(
+    current_user: CurrentAdminUser,
+    db: DbSession,
+):
+    """从本地 vllm-ascend 仓库的 nightly YAML 配置同步用例到静态表"""
+    from app.services.nightly_config_parser import NightlyConfigParser, load_model_fo_map
+
+    fo_map = load_model_fo_map()
+    parser = NightlyConfigParser()
+    info = parser.get_repo_info()
+
+    if not info["available"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"vllm-ascend 仓库未找到，nightly_dir={info['nightly_dir']}。请设置 VLLM_ASCEND_REPO_PATH 环境变量"
+        )
+
+    from datetime import date as date_type
+
+    parser = NightlyConfigParser()
+    today = str(date_type.today())
+
+    # 先做快照：从各活跃分支拉取 YAML
+    branches = parser.get_active_branches()
+    target_branches = ["main"] + [b for b in branches if b.startswith("releases/")]
+    total_created = 0
+    total_updated = 0
+
+    for branch in target_branches:
+        if not parser.checkout_branch(branch):
+            continue
+        cases = parser.parse(report_date=today, source_branch=branch)
+        if not cases:
+            continue
+
+        for c in cases:
+            # 检查当天该分支是否已有
+            existing = await db.execute(
+                select(NightlyTestCase).where(
+                    NightlyTestCase.report_date == today,
+                    NightlyTestCase.source_branch == branch,
+                    NightlyTestCase.workflow_name == c.workflow,
+                    NightlyTestCase.job_name == c.name,
+                )
+            )
+            existing = existing.scalar_one_or_none()
+
+            if existing:
+                existing.test_model = c.model_path
+                existing.deployment_type = c.deployment
+                existing.model_fo = fo_map.get(c.model_path) or fo_map.get(c.model_path.split("/")[-1]) or fo_map.get(c.model_path.rsplit(".", 1)[0] if "." in c.model_path else c.model_path, "")
+                total_updated += 1
+            else:
+                db.add(NightlyTestCase(
+                    report_date=today,
+                    source_branch=branch,
+                    workflow_name=c.workflow,
+                    job_name=c.name,
+                    display_name=c.name,
+                    test_model=c.model_path,
+                    model_fo=fo_map.get(c.model_path) or fo_map.get(c.model_path.split("/")[-1]) or fo_map.get(c.model_path.rsplit(".", 1)[0] if "." in c.model_path else c.model_path, ""),
+                    deployment_type=c.deployment,
+                ))
+                total_created += 1
+
+    if total_created > 0 or total_updated > 0:
+        await db.commit()
+
+    if created > 0 or updated > 0:
+        await db.commit()
+
+    return {
+        "message": f"YAML 同步完成（{today}，{len(target_branches)} 个分支）",
+        "repo_info": info,
+        "branches": target_branches,
+        "created": total_created,
+        "updated": total_updated,
+    }

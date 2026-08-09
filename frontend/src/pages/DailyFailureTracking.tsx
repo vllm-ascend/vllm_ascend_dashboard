@@ -15,8 +15,6 @@ import {
   message,
   Tooltip,
   DatePicker,
-  Collapse,
-  Progress,
 } from 'antd'
 import {
   ReloadOutlined,
@@ -27,9 +25,9 @@ import {
   CheckCircleOutlined,
   SyncOutlined,
   CloseCircleOutlined,
-  CaretRightOutlined,
+  CheckSquareOutlined,
 } from '@ant-design/icons'
-import { useDailyFailures, useUpdateFailureStatus } from '../hooks/useCI'
+import { useDailyFailures, useUpdateFailureStatus, useBatchUpdateFailureStatus } from '../hooks/useCI'
 import { formatDuration, renderHardwareTag } from '../utils/ciRenderers'
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
 import type { DailyFailureJob } from '../services/ci'
@@ -43,11 +41,20 @@ const { TextArea } = Input
 const STATUS_CONFIG: Record<string, { color: string; icon: React.ReactNode; label: string }> = {
   '未处理': { color: '#ff4d4f', icon: <ExclamationCircleOutlined />, label: '未处理' },
   '处理中': { color: '#fa8c16', icon: <SyncOutlined spin />, label: '处理中' },
-  '已修复': { color: '#1677ff', icon: <CheckCircleOutlined />, label: '已修复' },
   '已关闭': { color: '#8c8c8c', icon: <CloseCircleOutlined />, label: '已关闭' },
 }
 
+const PROBLEM_CATEGORIES = ['基础设施', '测试框架', '开发代码', '测试用例', '不稳定用例']
+
 const jobColumns = [
+  {
+    title: '日期',
+    dataIndex: '_date',
+    key: '_date',
+    width: 110,
+    fixed: 'left' as const,
+    render: (date: string) => <Text strong>{date}</Text>,
+  },
   {
     title: 'Workflow',
     dataIndex: 'workflow_name',
@@ -81,12 +88,19 @@ const jobColumns = [
     render: renderHardwareTag,
   },
   {
-    title: '测试模型',
-    dataIndex: 'test_model',
-    key: 'test_model',
-    width: 130,
-    ellipsis: true,
-    render: (text: string | null) => text || '-',
+    title: '责任人',
+    dataIndex: 'owner',
+    key: 'owner',
+    width: 90,
+    render: (owner: string | null) => {
+      if (!owner) return <Text type="secondary">-</Text>
+      return (
+        <Space size={4}>
+          <UserOutlined style={{ color: '#1677ff' }} />
+          <Text>{owner}</Text>
+        </Space>
+      )
+    },
   },
   {
     title: '模型 FO',
@@ -104,26 +118,18 @@ const jobColumns = [
     render: (text: string | null) => text || '-',
   },
   {
-    title: '负责人',
-    dataIndex: 'owner',
-    key: 'owner',
-    width: 90,
-    render: (owner: string | null) => {
-      if (!owner) return <Text type="secondary">-</Text>
-      return (
-        <Space size={4}>
-          <UserOutlined style={{ color: '#1677ff' }} />
-          <Text>{owner}</Text>
-        </Space>
-      )
-    },
+    title: '问题分类',
+    dataIndex: 'problem_category',
+    key: 'problem_category',
+    width: 100,
+    render: (text: string | null) => text ? <Tag>{text}</Tag> : <Text type="secondary">-</Text>,
   },
   {
-    title: '耗时',
-    dataIndex: 'duration_seconds',
-    key: 'duration_seconds',
-    width: 80,
-    render: (dur: number | null) => formatDuration(dur),
+    title: 'PR',
+    dataIndex: 'related_pr',
+    key: 'related_pr',
+    width: 70,
+    render: (text: string | null) => text ? <a href={`https://github.com/vllm-project/vllm-ascend/pull/${text}`} target="_blank" rel="noopener noreferrer">#{text}</a> : <Text type="secondary">-</Text>,
   },
   {
     title: '处理状态',
@@ -177,12 +183,14 @@ const jobColumns = [
 ]
 
 function DailyFailureTracking() {
-  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null)
-  const [workflowFilter, setWorkflowFilter] = useState<string | undefined>(undefined)
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>([dayjs(), dayjs()])
+  const [workflowFilter, setWorkflowFilter] = useState<string | undefined>('Nightly-A3')
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
   const [notesSearch, setNotesSearch] = useState<string | undefined>(undefined)
   const [editingJob, setEditingJob] = useState<DailyFailureJob | null>(null)
   const [editStatus, setEditStatus] = useState<string>('未处理')
+  const [editProblemCategory, setEditProblemCategory] = useState<string>('')
+  const [editRelatedPr, setEditRelatedPr] = useState<string>('')
   const [editNotes, setEditNotes] = useState<string>('')
 
   const startDate = dateRange?.[0]?.format('YYYY-MM-DD')
@@ -197,11 +205,14 @@ function DailyFailureTracking() {
   })
 
   const updateMutation = useUpdateFailureStatus()
+  const batchUpdateMutation = useBatchUpdateFailureStatus()
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
 
   // Expose edit handler to column renderers
   ;(window as any).__openEditDailyFailure = (job: DailyFailureJob) => {
     setEditingJob(job)
     setEditStatus(job.processing_status)
+    setEditProblemCategory(job.problem_category || ''); setEditRelatedPr(job.related_pr || '')
     setEditNotes(job.notes || '')
   }
 
@@ -210,7 +221,7 @@ function DailyFailureTracking() {
     try {
       await updateMutation.mutateAsync({
         jobDbId: editingJob.id,
-        data: { processing_status: editStatus, notes: editNotes || null },
+        data: { processing_status: editStatus, problem_category: editProblemCategory || null, related_pr: editRelatedPr || null, notes: editNotes || null },
       })
       message.success('处理状态已更新')
       setEditingJob(null)
@@ -233,6 +244,11 @@ function DailyFailureTracking() {
       },
       { total: 0, unprocessed: 0, processing: 0, fixed: 0, closed: 0 }
     )
+  }, [data])
+
+  const allJobs = useMemo(() => {
+    if (!data) return []
+    return data.flatMap(day => day.jobs.map(job => ({ ...job, _date: day.date })))
   }, [data])
 
   const workflowOptions = useMemo(() => {
@@ -305,11 +321,6 @@ function DailyFailureTracking() {
         </Col>
         <Col span={4}>
           <Card size="small">
-            <Statistic title="已修复" value={totalStats.fixed} suffix="个" valueStyle={{ color: '#1677ff' }} />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card size="small">
             <Statistic title="已关闭" value={totalStats.closed} suffix="个" valueStyle={{ color: '#8c8c8c' }} />
           </Card>
         </Col>
@@ -317,87 +328,52 @@ function DailyFailureTracking() {
           <Card size="small">
             <Statistic
               title="处理率"
-              value={totalStats.total > 0 ? Math.round((totalStats.fixed + totalStats.closed) / totalStats.total * 100) : 0}
+              value={totalStats.total > 0 ? Math.round(totalStats.closed / totalStats.total * 100) : 0}
               suffix="%"
-              valueStyle={{ color: totalStats.total > 0 && (totalStats.fixed + totalStats.closed) / totalStats.total >= 0.8 ? '#3f8600' : '#cf1322' }}
+              valueStyle={{ color: totalStats.total > 0 && totalStats.closed / totalStats.total >= 0.8 ? '#3f8600' : '#cf1322' }}
             />
           </Card>
         </Col>
       </Row>
 
       {/* 按天分组的折叠面板 */}
-      {isLoading ? (
-        <Card><Text type="secondary">加载中...</Text></Card>
-      ) : !data || data.length === 0 ? (
-        <Card><Text type="secondary">暂无失败数据</Text></Card>
-      ) : (
-        <Collapse
-          defaultActiveKey={data.slice(0, 3).map(d => d.date)}
-          expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} />}
-          accordion={false}
-        >
-          {data.map((day) => {
-            const dayRate = day.stats.total_failed_jobs > 0
-              ? Math.round((day.stats.fixed + day.stats.closed) / day.stats.total_failed_jobs * 100)
-              : 0
-            return (
-              <Collapse.Panel
-                key={day.date}
-                header={
-                  <Row gutter={16} style={{ width: '100%', paddingRight: 40 }}>
-                    <Col span={4}>
-                      <Text strong style={{ fontSize: 15 }}>{day.date}</Text>
-                      <Text type="secondary" style={{ marginLeft: 8 }}>
-                        {dayjs(day.date).format('dddd')}
-                      </Text>
-                    </Col>
-                    <Col span={2}>
-                      <Statistic title="失败" value={day.stats.total_failed_jobs} suffix="个"
-                        valueStyle={{ fontSize: 16, color: '#ff4d4f' }} />
-                    </Col>
-                    <Col span={2}>
-                      <Statistic title="未处理" value={day.stats.unprocessed} suffix="个"
-                        valueStyle={{ fontSize: 16, color: day.stats.unprocessed > 0 ? '#ff4d4f' : '#8c8c8c' }} />
-                    </Col>
-                    <Col span={2}>
-                      <Statistic title="处理中" value={day.stats.processing} suffix="个"
-                        valueStyle={{ fontSize: 16, color: day.stats.processing > 0 ? '#fa8c16' : '#8c8c8c' }} />
-                    </Col>
-                    <Col span={2}>
-                      <Statistic title="已修复" value={day.stats.fixed} suffix="个"
-                        valueStyle={{ fontSize: 16, color: day.stats.fixed > 0 ? '#1677ff' : '#8c8c8c' }} />
-                    </Col>
-                    <Col span={2}>
-                      <Statistic title="已关闭" value={day.stats.closed} suffix="个"
-                        valueStyle={{ fontSize: 16, color: '#8c8c8c' }} />
-                    </Col>
-                    <Col span={4}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>处理率</Text>
-                        <Progress
-                          percent={dayRate}
-                          size="small"
-                          status={dayRate >= 80 ? 'success' : dayRate >= 40 ? 'active' : 'exception'}
-                          style={{ flex: 1, margin: 0 }}
-                        />
-                      </div>
-                    </Col>
-                  </Row>
-                }
-              >
-                <Table
-                  columns={jobColumns}
-                  dataSource={day.jobs}
-                  rowKey="id"
-                  pagination={false}
-                  scroll={{ x: 1300 }}
-                  size="small"
-                />
-              </Collapse.Panel>
-            )
-          })}
-        </Collapse>
-      )}
+      <Card>
+        {selectedRowKeys.length > 0 && (
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: '#e6f4ff', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Text strong>已选 {selectedRowKeys.length} 条</Text>
+            <Select
+              placeholder="批量更新状态"
+              style={{ width: 140 }}
+              onChange={(value) => {
+                batchUpdateMutation.mutate(
+                  { ids: selectedRowKeys as number[], data: { processing_status: value } },
+                  { onSuccess: () => { message.success(`已更新 ${selectedRowKeys.length} 条`); setSelectedRowKeys([]) },
+                    onError: (e: any) => message.error(e?.response?.data?.detail || '失败') }
+                )
+              }}
+              options={Object.entries(STATUS_CONFIG).map(([v, c]) => ({ label: c.label, value: v }))}
+            />
+            <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+          </div>
+        )}
+        <Table
+          columns={jobColumns}
+          dataSource={allJobs}
+          loading={isLoading}
+          rowKey={(record) => `${record._date}-${record.id}`}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+          }}
+          pagination={{
+            pageSize: 30,
+            showSizeChanger: false,
+            showTotal: (total) => `共 ${total} 条记录`,
+          }}
+          scroll={{ x: 1400 }}
+          size="middle"
+        />
+      </Card>
 
       {/* 编辑处理状态弹窗 */}
       <Modal
@@ -438,6 +414,27 @@ function DailyFailureTracking() {
                   label: <Space>{config.icon}<span>{config.label}</span></Space>,
                   value,
                 }))}
+              />
+            </div>
+            <div>
+              <Text type="secondary">问题分类：</Text>
+              <Select
+                value={editProblemCategory || undefined}
+                onChange={(v) => setEditProblemCategory(v)}
+                placeholder="选择问题分类"
+                allowClear
+                style={{ width: '100%', marginTop: 4 }}
+                options={PROBLEM_CATEGORIES.map(c => ({ label: c, value: c }))}
+              />
+            </div>
+            <div>
+              <Text type="secondary">关联 PR{editProblemCategory === '开发代码' ? ' (必填)' : ''}：</Text>
+              <Input
+                value={editRelatedPr}
+                onChange={(e) => setEditRelatedPr(e.target.value)}
+                placeholder="如 1234"
+                status={editProblemCategory === '开发代码' && !editRelatedPr ? 'error' : undefined}
+                style={{ marginTop: 4 }}
               />
             </div>
             <div>

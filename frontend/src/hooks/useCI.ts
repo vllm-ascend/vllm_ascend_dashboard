@@ -150,10 +150,26 @@ export const useUpdateFailureStatus = () => {
   })
 }
 
+export const useBatchUpdateFailureStatus = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ ids, data }: { ids: number[]; data: ciApi.DailyFailureUpdateRequest }) =>
+      ciApi.batchUpdateFailureStatus(ids, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['daily-failures'] })
+    },
+  })
+}
+
 /**
  * 获取 Nightly 用例列表
  */
-export const useNightlyTestCases = (params?: { workflow_name?: string; enabled?: boolean }) => {
+export const useNightlyTestCases = (params?: {
+  report_date?: string
+  source_branch?: string
+  workflow_name?: string
+  enabled?: boolean
+}) => {
   return useQuery({
     queryKey: ['nightly-test-cases', params],
     queryFn: () => ciApi.getNightlyTestCases(params),

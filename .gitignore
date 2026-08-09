@@ -120,6 +120,9 @@ backend/.agents/*
 # Screenshots
 docs/screenshots/
 
+# Design documents (local only)
+docs/design/
+
 # Mock / testing only
 *mock*
 

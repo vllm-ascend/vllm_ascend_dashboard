@@ -5,7 +5,9 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from datetime import date
+
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, field_validator
 
 from app.core.config import settings
 
@@ -306,12 +308,14 @@ class CIDailyReport(BaseModel):
 # ============ Daily Failure Tracking Schemas ============
 
 class DailyFailureJob(BaseModel):
-    """每日失败 Job（JOIN CIJob + JobOwner + processing_status）"""
+    """每日失败 Job"""
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     job_id: int
     run_id: int
+    report_date: str | None = None
+    source_branch: str = "main"
     workflow_name: str
     job_name: str
     conclusion: str | None = None
@@ -319,20 +323,18 @@ class DailyFailureJob(BaseModel):
     completed_at: datetime | None = None
     duration_seconds: int | None = None
     hardware: str | None = None
-    # 责任人（来自 JobOwner）
     owner: str | None = None
     owner_email: str | None = None
     display_name: str | None = None
-    # 用例元信息（来自 NightlyTestCase）
     test_model: str | None = None
     model_fo: str | None = None
     deployment_type: str | None = None
-    # 处理状态（来自 CIJob 新字段）
     processing_status: str = "未处理"
+    problem_category: str | None = None
+    related_pr: str | None = None
     notes: str | None = None
     updated_by: str | None = None
     status_updated_at: datetime | None = None
-    # GitHub 链接
     github_job_url: str | None = None
 
 
@@ -348,7 +350,9 @@ class DailyFailureStats(BaseModel):
 
 class DailyFailureUpdateRequest(BaseModel):
     """更新处理状态请求"""
-    processing_status: str = Field(..., pattern="^(未处理|处理中|已修复|已关闭)$")
+    processing_status: str = Field(..., pattern="^(未处理|处理中|已关闭)$")
+    problem_category: str | None = None
+    related_pr: str | None = None
     notes: str | None = None
 
 
@@ -363,6 +367,8 @@ class DailyFailureListResponse(BaseModel):
 
 class NightlyTestCaseBase(BaseModel):
     """Nightly 用例基础字段"""
+    report_date: date | str | None = None
+    source_branch: str = "main"
     workflow_name: str = Field(..., max_length=100)
     job_name: str = Field(..., max_length=500)
     display_name: str | None = Field(None, max_length=200)
@@ -381,6 +387,8 @@ class NightlyTestCaseCreate(NightlyTestCaseBase):
 
 class NightlyTestCaseUpdate(BaseModel):
     """更新用例（所有字段可选）"""
+    report_date: str | None = None
+    source_branch: str | None = None
     workflow_name: str | None = Field(None, max_length=100)
     job_name: str | None = Field(None, max_length=500)
     display_name: str | None = Field(None, max_length=200)
@@ -398,6 +406,14 @@ class NightlyTestCaseResponse(NightlyTestCaseBase):
     id: int
     created_at: datetime
     updated_at: datetime | None = None
+
+    @field_serializer('report_date')
+    def serialize_report_date(self, value: date | str | None) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, date):
+            return value.isoformat()
+        return value
 
 
 # ============ Model Schemas ============

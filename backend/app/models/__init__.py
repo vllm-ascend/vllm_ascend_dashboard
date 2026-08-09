@@ -174,6 +174,7 @@ class DailyFailureRecord(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     report_date = Column(Date, nullable=False, index=True)  # 失败日期（北京时间）
+    source_branch = Column(String(100), nullable=False, default="main", index=True)  # 来源分支
     workflow_name = Column(String(100), nullable=False, index=True)
     job_name = Column(String(500), nullable=False, index=True)
     run_id = Column(BigInteger, nullable=False)
@@ -191,6 +192,8 @@ class DailyFailureRecord(Base):
     deployment_type = Column(String(100))
     # 人工处理状态
     processing_status = Column(String(20), default="未处理", index=True)
+    problem_category = Column(String(50))  # 问题分类
+    related_pr = Column(String(20))  # 关联 PR 号
     notes = Column(Text)
     updated_by = Column(String(50))
     status_updated_at = Column(TIMESTAMP)
@@ -200,7 +203,8 @@ class DailyFailureRecord(Base):
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     __table_args__ = (
-        UniqueConstraint('report_date', 'workflow_name', 'job_name', name='uq_daily_failure_date_wf_job'),
+        UniqueConstraint('report_date', 'source_branch', 'workflow_name', 'job_name',
+                         name='uq_daily_failure_date_branch_wf_job'),
     )
 
 
@@ -266,25 +270,27 @@ class JobOwner(Base):
 
 
 class NightlyTestCase(Base):
-    """Nightly 静态用例表 — 定义 Nightly 流水线中有哪些用例及其元信息"""
+    """Nightly 时序快照表 — 每天从各分支的 nightly_config.yaml 快照一份"""
     __tablename__ = "nightly_test_cases"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    report_date = Column(Date, nullable=False, index=True)  # 快照日期（北京时间）
+    source_branch = Column(String(100), nullable=False, default="main", index=True)  # 来源分支
     workflow_name = Column(String(100), nullable=False, index=True)  # Nightly-A2 / Nightly-A3
     job_name = Column(String(500), nullable=False, index=True)  # job 名称
     display_name = Column(String(200))  # 显示名
     test_model = Column(String(200))  # 测试的模型名称
-    model_fo = Column(String(100))  # 模型 FO（Feature Owner）
+    model_fo = Column(String(100))  # 模型 FO
     owner = Column(String(100))  # 测试负责人
-    deployment_type = Column(String(100))  # 部署方式（如 pd-disagg / single-node 等）
+    deployment_type = Column(String(100))  # 部署方式
     notes = Column(Text)  # 备注
     enabled = Column(Boolean, default=True, index=True)  # 是否启用
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
-    # 唯一约束：workflow_name + job_name 组合唯一
     __table_args__ = (
-        UniqueConstraint('workflow_name', 'job_name', name='uq_nightly_test_case_workflow_job'),
+        UniqueConstraint('report_date', 'source_branch', 'workflow_name', 'job_name',
+                         name='uq_nightly_test_case_date_branch_wf_job'),
     )
 
 
