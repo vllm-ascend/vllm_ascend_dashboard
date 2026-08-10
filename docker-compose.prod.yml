@@ -59,6 +59,8 @@ services:
       # Runtime overrides
       - ENVIRONMENT=production
       - DEBUG=false
+      # Production schema changes are executed by scripts/deploy_prod.sh.
+      - AUTO_MIGRATE=false
     volumes:
       # Persistent data directory - survives container restarts
       # This includes /app/data/repos for git cache

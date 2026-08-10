@@ -461,34 +461,23 @@ async def get_system_status(
     """
     获取系统状态信息（所有登录用户可访问）
     """
-    from datetime import datetime
+    from datetime import UTC, datetime, timedelta
 
     from sqlalchemy import func, select
 
     from app.db.base import SessionLocal
-    from app.models import ModelSyncConfig, WorkflowConfig
+    from app.models import SchedulerHeartbeat, WorkflowConfig
     from app.services.scheduler import get_scheduler
 
     scheduler = get_scheduler()
 
-    # 获取 CI 同步任务状态
-    ci_job = scheduler.scheduler.get_job('ci_data_sync')
-    ci_next_sync = ci_job.next_run_time if ci_job else None
-
-    # 获取模型报告同步任务状态
-    model_job = scheduler.scheduler.get_job('model_report_sync')
-    model_next_sync = model_job.next_run_time if model_job else None
-
-    # 获取 Project Dashboard 缓存更新任务状态
-    cache_job = scheduler.scheduler.get_job('project_dashboard_cache_update')
-    cache_next_sync = cache_job.next_run_time if cache_job else None
-
-    # 获取项目动态同步任务状态
-    daily_summary_job = scheduler.scheduler.get_job('daily_summary_task')
-    daily_summary_next_sync = daily_summary_job.next_run_time if daily_summary_job else None
-
-    # 获取所有启用的 workflow 中最新的 last_sync_at
+    # 一次 DB 读取：调度器心跳 + 最近同步时间
     async with SessionLocal() as db:
+        try:
+            heartbeat = await db.get(SchedulerHeartbeat, 1)
+        except Exception as e:
+            logger.warning(f"Failed to read scheduler heartbeat: {e}")
+            heartbeat = None
         try:
             stmt = select(func.max(WorkflowConfig.last_sync_at)).where(WorkflowConfig.enabled == True)
             result = await db.execute(stmt)
@@ -497,30 +486,71 @@ async def get_system_status(
             logger.warning(f"Failed to get last sync time: {e}")
             last_sync = None
 
+    def _to_iso(v):
+        """datetime 或已是 ISO 字符串统一转为 ISO 字符串。"""
+        if v is None:
+            return None
+        if hasattr(v, "isoformat"):
+            return v.isoformat()
+        return str(v)
+
+    # 心跳新鲜度阈值：心跳间隔 20s，90s ≈ 4 次未刷新即判定调度器已停止
+    STALE_THRESHOLD = timedelta(seconds=90)
+    now = datetime.now(UTC)
+
+    if heartbeat is not None and heartbeat.updated_at is not None:
+        # 独立 scheduler 进程模式：用心跳判断存活（API 进程内 APScheduler 为空）
+        updated = heartbeat.updated_at
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=UTC)
+        running = (now - updated) < STALE_THRESHOLD and bool(heartbeat.running)
+        jobs_data = heartbeat.jobs or {}
+        # 调度器未运行时 next_sync 无意义，置空让前端显示"-"
+        hb_ci = jobs_data.get("ci_data_sync", {}).get("next_run") if running else None
+        hb_model = jobs_data.get("model_report_sync", {}).get("next_run") if running else None
+        hb_cache = jobs_data.get("project_dashboard_cache_update", {}).get("next_run") if running else None
+        hb_daily = jobs_data.get("daily_summary_task", {}).get("next_run") if running else None
+        ci_next_sync = _to_iso(hb_ci)
+        model_next_sync = _to_iso(hb_model)
+        cache_next_sync = _to_iso(hb_cache)
+        daily_summary_next_sync = _to_iso(hb_daily)
+    else:
+        # 无心跳行：嵌入式模式（API_START_SCHEDULER=true）或表尚未建立
+        # 回退到进程内 APScheduler 状态
+        running = bool(scheduler.scheduler.running)
+        ci_job = scheduler.scheduler.get_job('ci_data_sync')
+        model_job = scheduler.scheduler.get_job('model_report_sync')
+        cache_job = scheduler.scheduler.get_job('project_dashboard_cache_update')
+        daily_summary_job = scheduler.scheduler.get_job('daily_summary_task')
+        ci_next_sync = _to_iso(ci_job.next_run_time if ci_job else None)
+        model_next_sync = _to_iso(model_job.next_run_time if model_job else None)
+        cache_next_sync = _to_iso(cache_job.next_run_time if cache_job else None)
+        daily_summary_next_sync = _to_iso(daily_summary_job.next_run_time if daily_summary_job else None)
+
     return {
         "scheduler": {
-            "running": scheduler.scheduler.running,
+            "running": running,
             "sync_interval_minutes": settings.CI_SYNC_INTERVAL_MINUTES,
-            "last_sync": last_sync.isoformat() if last_sync else None,  # 上次同步时间
+            "last_sync": _to_iso(last_sync),  # 上次同步时间
             "tasks": {
                 "ci_sync": {
                     "name": "CI 数据同步",
-                    "next_sync": ci_next_sync.isoformat() if ci_next_sync else None,
+                    "next_sync": ci_next_sync,
                     "interval_minutes": settings.CI_SYNC_INTERVAL_MINUTES,
                 },
                 "model_report_sync": {
                     "name": "模型报告同步",
-                    "next_sync": model_next_sync.isoformat() if model_next_sync else None,
+                    "next_sync": model_next_sync,
                     "interval_minutes": settings.MODEL_SYNC_INTERVAL_MINUTES,
                 },
                 "project_dashboard_cache": {
                     "name": "Git 仓库缓存更新",
-                    "next_sync": cache_next_sync.isoformat() if cache_next_sync else None,
+                    "next_sync": cache_next_sync,
                     "interval_minutes": settings.PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES,
                 },
                 "daily_summary": {
                     "name": "项目动态同步",
-                    "next_sync": daily_summary_next_sync.isoformat() if daily_summary_next_sync else None,
+                    "next_sync": daily_summary_next_sync,
                     "enabled": getattr(settings, 'DAILY_SUMMARY_ENABLED', True),
                     "cron_hour": getattr(settings, 'DAILY_SUMMARY_CRON_HOUR', 8),
                     "cron_minute": getattr(settings, 'DAILY_SUMMARY_CRON_MINUTE', 0),

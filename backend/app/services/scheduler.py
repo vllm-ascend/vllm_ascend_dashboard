@@ -182,6 +182,20 @@ class DataSyncScheduler:
         else:
             logger.info("Scheduler already running")
 
+        # 心跳任务 — 让独立 scheduler 进程的存活状态对 API 进程可见
+        # （API 进程内的 APScheduler 为空，无法直接感知独立 scheduler）
+        try:
+            self.scheduler.add_job(
+                self.write_heartbeat,
+                trigger=IntervalTrigger(seconds=20),
+                id="scheduler_heartbeat",
+                name="Scheduler Heartbeat",
+                replace_existing=True,
+            )
+            logger.info("Scheduler heartbeat scheduled every 20s")
+        except Exception as e:
+            logger.error(f"Failed to add heartbeat job: {e}", exc_info=True)
+
         # NPU 指标采集任务 - 默认每 1 分钟执行
         try:
             metrics_interval = getattr(settings, 'RESOURCE_METRICS_INTERVAL_MINUTES', 1)
@@ -450,6 +464,48 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to update daily report schedule: {e}", exc_info=True)
 
+    # /status 接口向用户展示的 job id —— 心跳需快照这些 job 的 next_run_time
+    _HEARTBEAT_TRACKED_JOBS = (
+        "ci_data_sync",
+        "model_report_sync",
+        "project_dashboard_cache_update",
+        "daily_summary_task",
+    )
+
+    async def write_heartbeat(self, *, force_running: bool | None = None) -> None:
+        """将当前调度器状态写入 DB 心跳表，供 API 进程读取。
+
+        独立 scheduler 容器每 20s 调用一次；关闭前以 force_running=False 再调一次，
+        使 API 进程能立即感知调度器已停止（无需等待心跳过期）。
+        """
+        import os
+
+        from app.models import SchedulerHeartbeat
+
+        running = bool(self.scheduler.running) if force_running is None else force_running
+        jobs_payload: dict[str, dict] = {}
+        for job_id in self._HEARTBEAT_TRACKED_JOBS:
+            job = self.scheduler.get_job(job_id)
+            jobs_payload[job_id] = {
+                "name": job.name if job else None,
+                "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+            }
+
+        try:
+            async with SessionLocal() as db:
+                row = await db.get(SchedulerHeartbeat, 1)
+                if row is None:
+                    row = SchedulerHeartbeat(id=1)
+                    db.add(row)
+                row.running = running
+                row.jobs = jobs_payload
+                row.pid = os.getpid()
+                row.updated_at = datetime.now(UTC)
+                await db.commit()
+        except Exception as e:
+            # 心跳失败不应影响调度器主循环（如 DB 短暂抖动、表尚未由 backend init_db 建好）
+            logger.warning(f"Heartbeat write failed (non-fatal): {e}")
+
     def stop(self) -> None:
         """停止调度器"""
         if self.scheduler.running:
@@ -463,6 +519,11 @@ class DataSyncScheduler:
 
     async def close(self) -> None:
         """关闭调度器并清理资源（异步版本）"""
+        # 关闭前写入最终心跳（running=False），让 API 进程立即感知调度器已停止
+        try:
+            await self.write_heartbeat(force_running=False)
+        except Exception as e:
+            logger.warning(f"Final heartbeat write failed (non-fatal): {e}")
         self.stop()
         if self.github_client:
             await self.github_client.close()

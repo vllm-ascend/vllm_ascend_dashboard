@@ -36,6 +36,7 @@ __all__ = [
     "IssueDiagnosisHistory",
     "TestCase", "TestRun", "TestSuiteSnapshot", "FailureAnnotation",
     "AppLog", "AnalysisMemory", "AnalysisEmbedding",
+    "SchedulerHeartbeat",
 ]
 
 
@@ -846,3 +847,19 @@ class CodeMetricsFileHeatmap(Base):
     __table_args__ = (
         UniqueConstraint("repo", "file_path", name="uq_heatmap_repo_file"),
     )
+
+
+class SchedulerHeartbeat(Base):
+    """调度器心跳表 — 独立 scheduler 进程定期写入，API 进程读取以判断调度器是否在运行。
+
+    Phase A 将 scheduler 拆为独立容器后，API 进程内的 APScheduler 实例为空，
+    `/system/config/status` 无法再通过进程内状态判断调度器存活。
+    scheduler 进程每 20s 写入一行（单例 id=1），API 进程根据 updated_at 新鲜度判断。
+    """
+    __tablename__ = "scheduler_heartbeat"
+
+    id = Column(Integer, primary_key=True, autoincrement=False)  # 固定=1，单例
+    running = Column(Boolean, default=False)  # APScheduler.running 快照
+    jobs = Column(JSON)  # {job_id: {"name": str, "next_run": iso_str|null}, ...}
+    pid = Column(Integer)  # 写入进程 PID，便于调试
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))

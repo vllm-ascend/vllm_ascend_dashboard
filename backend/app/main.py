@@ -52,6 +52,12 @@ from app.services.scheduler import get_scheduler, start_scheduler_async, stop_sc
 
 # Scheduler 是否在 API 进程中启动（Phase A 拆出后设为 False）
 _API_START_SCHEDULER = os.environ.get("API_START_SCHEDULER", "false").lower() == "true"
+# Database DDL is allowed only for local development. Production migrations
+# must be executed by the explicit release/migration job before the API starts.
+_AUTO_MIGRATE = os.environ.get(
+    "AUTO_MIGRATE",
+    "false" if os.environ.get("ENVIRONMENT", "development").lower() == "production" else "true",
+).lower() == "true"
 
 # 配置日志
 logging.basicConfig(
@@ -70,6 +76,10 @@ logger = logging.getLogger(__name__)
 
 async def init_db():
     """初始化数据库表"""
+    if not _AUTO_MIGRATE:
+        logger.info("Automatic database initialization is disabled; use the explicit migration job")
+        return
+
     # 尝试建表；若库中已有完整 schema（如 Phase B 视图），则跳过
     try:
         async with engine.begin() as conn:
