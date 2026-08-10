@@ -1,6 +1,10 @@
 #!/bin/bash
+# Compatibility operations script. Production changes are delegated to
+# scripts/deploy_prod.sh.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SAFE_DEPLOY_SCRIPT="$SCRIPT_DIR/scripts/deploy_prod.sh"
 # Production Deployment Script for vLLM Ascend Dashboard
-# Usage: ./deploy.sh [start|stop|restart|logs|backup|migrate|rebuild|status]
+# Usage: ./deploy.sh [start|stop|restart|logs|backup|status]
 
 # 注意：不使用 set -e，因为我们需要自己控制错误处理逻辑
 set -o pipefail  # 管道中任何命令失败都会导致整个管道失败
@@ -448,21 +452,21 @@ show_help() {
     echo "Usage: $0 [command]"
     echo ""
     echo "Commands:"
-    echo "  start          Deploy or upgrade the application"
+    echo "  start          Run the verified production deployment"
     echo "  stop           Stop all services"
     echo "  restart        Restart all services"
     echo "  logs [service] Show logs (optionally filter by service)"
     echo "  status         Show service status"
     echo "  backup         Backup data (MySQL + backend)"
-    echo "  migrate        Run database migration only"
+    echo "  migrate        Disabled; use scripts/deploy_prod.sh"
     echo "  upgrade        Complete upgrade process (backup → stop → rebuild → migrate)"
-    echo "  rebuild        Rebuild and restart all services"
+    echo "  rebuild        Alias for the verified production deployment"
     echo "  help           Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0 start       # Start or upgrade"
     echo "  $0 upgrade     # Full upgrade process"
-    echo "  $0 migrate     # Run database migration"
+    echo "  Production changes use scripts/deploy_prod.sh"
     echo "  $0 backup      # Create backup"
     echo "  $0 logs backend"
     echo "  $0 status"
@@ -491,8 +495,7 @@ show_help() {
 # Main command handler
 case "${1:-help}" in
     start)
-        check_prerequisites
-        deploy
+        bash "$SAFE_DEPLOY_SCRIPT"
         ;;
     stop)
         check_prerequisites
@@ -514,24 +517,14 @@ case "${1:-help}" in
         backup_data
         ;;
     migrate)
-        check_prerequisites
-        migrate_database
+        log_error "Direct migration through deploy.sh is disabled. Run scripts/deploy_prod.sh instead."
+        exit 2
         ;;
     upgrade)
-        check_prerequisites
-        upgrade
+        bash "$SAFE_DEPLOY_SCRIPT"
         ;;
     rebuild)
-        check_prerequisites
-        log_info "Rebuilding all services..."
-        $DOCKER_COMPOSE -f $COMPOSE_FILE --env-file $ENV_FILE down
-        $DOCKER_COMPOSE -f $COMPOSE_FILE --env-file $ENV_FILE --profile full up -d --build
-        # Wait for MySQL first, then backend
-        if wait_for_mysql && wait_for_backend; then
-            show_status
-        else
-            exit 1
-        fi
+        bash "$SAFE_DEPLOY_SCRIPT"
         ;;
     help|--help|-h)
         show_help
