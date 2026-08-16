@@ -327,6 +327,8 @@ class DailyFailureJob(BaseModel):
     test_model: str | None = None
     model_fo: str | None = None
     deployment_type: str | None = None
+    processing_time: datetime | None = None
+    closure_time: datetime | None = None
     processing_status: str = "未处理"
     problem_category: str | None = None
     related_pr: str | None = None
@@ -353,6 +355,8 @@ class DailyFailureUpdateRequest(BaseModel):
     problem_category: str | None = None
     related_pr: str | None = None
     notes: str | None = None
+    processing_time: datetime | None = None
+    closure_time: datetime | None = None
 
 
 class DailyFailureListResponse(BaseModel):

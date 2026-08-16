@@ -191,6 +191,8 @@ class DailyFailureRecord(Base):
     model_fo = Column(String(100))
     owner = Column(String(100))
     deployment_type = Column(String(100))
+    processing_time = Column(TIMESTAMP)
+    closure_time = Column(TIMESTAMP)
     # 人工处理状态
     processing_status = Column(String(20), default="未处理", index=True)
     problem_category = Column(String(50))  # 问题分类

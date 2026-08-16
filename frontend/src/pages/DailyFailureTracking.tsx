@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Card,
   Table,
@@ -30,16 +30,57 @@ import {
   CheckSquareOutlined,
 } from '@ant-design/icons'
 import { useDailyFailures, useUpdateFailureStatus, useBatchUpdateFailureStatus } from '../hooks/useCI'
-import { formatDuration, renderConclusionTag, renderHardwareTag } from '../utils/ciRenderers'
+import { formatDuration, renderConclusionTag } from '../utils/ciRenderers'
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
 import type { DailyFailureJob } from '../services/ci'
 import dayjs, { Dayjs } from 'dayjs'
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ReferenceDot, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceDot, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts'
 
 const { RangePicker } = DatePicker
 const { Search } = Input
 const { Text, Title } = Typography
 const { TextArea } = Input
+
+function FailureChartTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null
+  const item = payload[0]
+  const name = item?.payload?.name || item?.name || '-'
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, boxShadow: '0 6px 18px rgba(15, 23, 42, 0.12)', padding: '8px 10px' }}>
+      <div style={{ color: '#334155', fontWeight: 600, marginBottom: 3 }}>{name}</div>
+      <div style={{ color: '#64748b' }}>失败数量：<span style={{ color: '#111827', fontWeight: 600 }}>{item.value}</span></div>
+    </div>
+  )
+}
+
+type DailyFailureRow = DailyFailureJob & { _date: string }
+type FailureDetailFilter = {
+  title: string
+  field?: keyof DailyFailureJob
+  value?: string
+  date?: string
+}
+
+type DailyFailurePreferences = {
+  dateRange?: { start: string | null; end: string | null } | null
+  workflowFilter?: string | null
+  statusFilter?: string | null
+  notesSearch?: string | null
+  displayMode?: 'list' | 'analysis'
+  breakdownDimension?: 'workflow' | 'owner'
+}
+
+const DAILY_FAILURE_PREFERENCES_KEY = 'ci-daily-failure-preferences'
+
+function readDailyFailurePreferences(): DailyFailurePreferences {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(DAILY_FAILURE_PREFERENCES_KEY)
+    return raw ? JSON.parse(raw) as DailyFailurePreferences : {}
+  } catch {
+    return {}
+  }
+}
 
 const STATUS_CONFIG: Record<string, { color: string; icon: React.ReactNode; label: string }> = {
   '未处理': { color: '#ff4d4f', icon: <ExclamationCircleOutlined />, label: '未处理' },
@@ -91,13 +132,6 @@ const jobColumns = [
     ),
   },
   {
-    title: '硬件',
-    dataIndex: 'hardware',
-    key: 'hardware',
-    width: 60,
-    render: renderHardwareTag,
-  },
-  {
     title: '责任人',
     dataIndex: 'owner',
     key: 'owner',
@@ -117,14 +151,6 @@ const jobColumns = [
     dataIndex: 'model_fo',
     key: 'model_fo',
     width: 80,
-    render: (text: string | null) => text || '-',
-  },
-  {
-    title: '部署方式',
-    dataIndex: 'deployment_type',
-    key: 'deployment_type',
-    width: 100,
-    ellipsis: true,
     render: (text: string | null) => text || '-',
   },
   {
@@ -192,19 +218,73 @@ const jobColumns = [
   },
 ]
 
+const failureTimingColumns: any[] = [
+  {
+    title: '处理时间',
+    dataIndex: 'processing_time',
+    key: 'processing_time',
+    width: 155,
+    render: (value: string | null) => value ? formatTimezone(value, 'YYYY-MM-DD HH:mm') : <Text type="secondary">-</Text>,
+  },
+  {
+    title: '闭环时间',
+    dataIndex: 'closure_time',
+    key: 'closure_time',
+    width: 155,
+    render: (value: string | null) => value ? formatTimezone(value, 'YYYY-MM-DD HH:mm') : <Text type="secondary">-</Text>,
+  },
+]
+
 function DailyFailureTracking() {
-  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>([dayjs(), dayjs()])
-  const [workflowFilter, setWorkflowFilter] = useState<string | undefined>('Nightly-A3')
-  const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
-  const [notesSearch, setNotesSearch] = useState<string | undefined>(undefined)
+  const [savedPreferences] = useState(readDailyFailurePreferences)
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(() => {
+    const savedRange = savedPreferences.dateRange
+    if (savedRange === null) return null
+    if (savedRange?.start || savedRange?.end) {
+      return [
+        savedRange.start ? dayjs(savedRange.start) : null,
+        savedRange.end ? dayjs(savedRange.end) : null,
+      ]
+    }
+    return [dayjs(), dayjs()]
+  })
+  const [workflowFilter, setWorkflowFilter] = useState<string | undefined>(() => (
+    savedPreferences.workflowFilter === null ? undefined : savedPreferences.workflowFilter ?? 'Nightly-A3'
+  ))
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(() => (
+    savedPreferences.statusFilter === null ? undefined : savedPreferences.statusFilter
+  ))
+  const [notesSearch, setNotesSearch] = useState<string | undefined>(() => (
+    savedPreferences.notesSearch === null ? undefined : savedPreferences.notesSearch
+  ))
   const [editingJob, setEditingJob] = useState<DailyFailureJob | null>(null)
   const [editStatus, setEditStatus] = useState<string>('未处理')
   const [editProblemCategory, setEditProblemCategory] = useState<string>('')
   const [editRelatedPr, setEditRelatedPr] = useState<string>('')
   const [editNotes, setEditNotes] = useState<string>('')
-  const [displayMode, setDisplayMode] = useState<'list' | 'analysis'>('list')
-  const [breakdownDimension, setBreakdownDimension] = useState<'workflow' | 'owner' | 'hardware' | 'deployment_type'>('workflow')
-  const [detailCategory, setDetailCategory] = useState<string | null>(null)
+  const [editProcessingTime, setEditProcessingTime] = useState<Dayjs | null>(null)
+  const [editClosureTime, setEditClosureTime] = useState<Dayjs | null>(null)
+  const [displayMode, setDisplayMode] = useState<'list' | 'analysis'>(() => savedPreferences.displayMode ?? 'list')
+  const [breakdownDimension, setBreakdownDimension] = useState<'workflow' | 'owner'>(() => (
+    savedPreferences.breakdownDimension === 'owner' ? 'owner' : 'workflow'
+  ))
+  const [detailFilter, setDetailFilter] = useState<FailureDetailFilter | null>(null)
+
+  useEffect(() => {
+    window.localStorage.setItem(DAILY_FAILURE_PREFERENCES_KEY, JSON.stringify({
+      dateRange: dateRange
+        ? {
+            start: dateRange[0]?.format('YYYY-MM-DD') ?? null,
+            end: dateRange[1]?.format('YYYY-MM-DD') ?? null,
+          }
+        : null,
+      workflowFilter: workflowFilter ?? null,
+      statusFilter: statusFilter ?? null,
+      notesSearch: notesSearch ?? null,
+      displayMode,
+      breakdownDimension,
+    } satisfies DailyFailurePreferences))
+  }, [dateRange, workflowFilter, statusFilter, notesSearch, displayMode, breakdownDimension])
 
   const startDate = dateRange?.[0]?.format('YYYY-MM-DD')
   const endDate = dateRange?.[1]?.format('YYYY-MM-DD')
@@ -227,6 +307,8 @@ function DailyFailureTracking() {
     setEditStatus(job.processing_status)
     setEditProblemCategory(job.problem_category || ''); setEditRelatedPr(job.related_pr || '')
     setEditNotes(job.notes || '')
+    setEditProcessingTime(job.processing_time ? dayjs(job.processing_time) : null)
+    setEditClosureTime(job.closure_time ? dayjs(job.closure_time) : null)
   }
 
   const handleSaveStatus = async () => {
@@ -234,7 +316,14 @@ function DailyFailureTracking() {
     try {
       await updateMutation.mutateAsync({
         jobDbId: editingJob.id,
-        data: { processing_status: editStatus, problem_category: editProblemCategory || null, related_pr: editRelatedPr || null, notes: editNotes || null },
+        data: {
+          processing_status: editStatus,
+          problem_category: editProblemCategory || null,
+          related_pr: editRelatedPr || null,
+          notes: editNotes || null,
+          processing_time: editProcessingTime?.toISOString() || null,
+          closure_time: editClosureTime?.toISOString() || null,
+        },
       })
       message.success('处理状态已更新')
       setEditingJob(null)
@@ -270,7 +359,7 @@ function DailyFailureTracking() {
     const dates = Array.from(byDate.keys()).sort()
     const start = startDate || dates[0]
     const end = endDate || dates[dates.length - 1]
-    const trend: Array<{ date: string; total: number; unprocessed: number; processing: number; closed: number; dataStatus?: string }> = []
+    const trend: Array<{ date: string; isoDate: string; total: number; unprocessed: number; processing: number; closed: number; dataStatus?: string }> = []
     if (start && end) {
       let cursor = dayjs(start)
       const last = dayjs(end)
@@ -278,8 +367,8 @@ function DailyFailureTracking() {
         const iso = cursor.format('YYYY-MM-DD')
         const day = byDate.get(iso)
         trend.push(day
-          ? { date: cursor.format('MM-DD'), total: day.stats.total_failed_jobs, unprocessed: day.stats.unprocessed, processing: day.stats.processing, closed: day.stats.closed }
-          : { date: cursor.format('MM-DD'), total: 0, unprocessed: 0, processing: 0, closed: 0, dataStatus: 'no-data' })
+          ? { date: cursor.format('MM-DD'), isoDate: iso, total: day.stats.total_failed_jobs, unprocessed: day.stats.unprocessed, processing: day.stats.processing, closed: day.stats.closed }
+          : { date: cursor.format('MM-DD'), isoDate: iso, total: 0, unprocessed: 0, processing: 0, closed: 0, dataStatus: 'no-data' })
         cursor = cursor.add(1, 'day')
       }
     }
@@ -288,7 +377,7 @@ function DailyFailureTracking() {
       result[key] = (result[key] || 0) + 1
       return result
     }, {})
-    const field = { workflow: 'workflow_name', owner: 'owner', hardware: 'hardware', deployment_type: 'deployment_type' }[breakdownDimension] as keyof DailyFailureJob
+    const field = { workflow: 'workflow_name', owner: 'owner' }[breakdownDimension] as keyof DailyFailureJob
     const breakdown = Object.entries(countBy(allJobs.map(job => String(job[field] || '')))).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10)
     const categories = Object.entries(countBy(allJobs.map(job => job.problem_category || '未分类'))).map(([name, value]) => ({ name, value }))
     const status = [
@@ -299,8 +388,20 @@ function DailyFailureTracking() {
     return { trend, breakdown, categories, status }
   }, [allJobs, breakdownDimension, data, endDate, startDate, totalStats])
 
-  const categoryDetails: Array<DailyFailureJob & { _date: string }> = detailCategory ? allJobs.filter(job => (job.problem_category || '未分类') === detailCategory) : []
-  const openCategoryDetail = (category: string) => setDetailCategory(category)
+  const openChartDetail = (title: string, field?: keyof DailyFailureJob, value?: string, date?: string) => {
+    setDetailFilter({ title, field, value, date })
+  }
+  const openCategoryDetail = (category: string) => openChartDetail(`${category} · 失败详情`, 'problem_category', category)
+  const detailJobs: DailyFailureRow[] = detailFilter
+    ? allJobs.filter(job => {
+        if (detailFilter.date && job._date !== detailFilter.date) return false
+        if (!detailFilter.field) return true
+        const rawValue = job[detailFilter.field]
+        const emptyLabel = detailFilter.field === 'problem_category' ? '未分类' : '未填写'
+        return (rawValue || emptyLabel) === detailFilter.value
+      })
+    : []
+  const breakdownField = { workflow: 'workflow_name', owner: 'owner' }[breakdownDimension] as keyof DailyFailureJob
 
   const workflowOptions = useMemo(() => {
     if (!data) return []
@@ -404,44 +505,62 @@ function DailyFailureTracking() {
             <Col xs={24} lg={14}>
               <Card size="small" title="每日失败趋势" extra={<Text type="secondary">灰色点：当天无失败记录或尚未同步</Text>}>
                 <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={chartData.trend} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
+                  <LineChart
+                    data={chartData.trend}
+                    margin={{ top: 20, right: 20, left: 0, bottom: 0 }}
+                    onClick={(event: any) => {
+                      const point = event?.activePayload?.[0]?.payload
+                      if (point?.isoDate && point.dataStatus !== 'no-data') openChartDetail(`${point.isoDate} · 失败详情`, undefined, undefined, point.isoDate)
+                    }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
                     <XAxis dataKey="date" /><YAxis allowDecimals={false} /><ChartTooltip /><Legend />
-                    <Area type="monotone" dataKey="total" name="失败总数" stroke="#ff4d4f" fill="#ff4d4f" fillOpacity={0.12} />
-                    <Area type="monotone" dataKey="unprocessed" name="未处理" stroke="#fa8c16" fill="none" />
-                    <Area type="monotone" dataKey="closed" name="已关闭" stroke="#52c41a" fill="none" />
+                    <Line type="monotone" dataKey="total" name="失败总数" stroke="#ff4d4f" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                    <Line type="monotone" dataKey="unprocessed" name="未处理" stroke="#fa8c16" strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="closed" name="已关闭" stroke="#52c41a" strokeWidth={2} dot={{ r: 3 }} />
                     {chartData.trend.filter(point => point.dataStatus === 'no-data').map(point => (
                       <ReferenceDot key={point.date} x={point.date} y={0} r={5} fill="#94a3b8" stroke="#fff" label={{ value: '无数据', position: 'top', fill: '#64748b', fontSize: 11 }} />
                     ))}
-                  </AreaChart>
+                  </LineChart>
                 </ResponsiveContainer>
               </Card>
             </Col>
             <Col xs={24} lg={10}>
               <Card size="small" title="处理状态分布">
                 <ResponsiveContainer width="100%" height={300}>
-                  <PieChart><Pie data={chartData.status} dataKey="value" nameKey="name" innerRadius={65} outerRadius={100} label>
+                  <PieChart><Pie data={chartData.status} dataKey="value" nameKey="name" innerRadius={65} outerRadius={100} paddingAngle={0} stroke="none" labelLine={false} onClick={(entry: any) => {
+                    const status = entry?.name || entry?.payload?.name
+                    if (status) openChartDetail(`${status} · 失败详情`, 'processing_status', status)
+                  }}>
                     {chartData.status.map(item => <Cell key={item.name} fill={item.color} />)}
                   </Pie><ChartTooltip /><Legend /></PieChart>
                 </ResponsiveContainer>
               </Card>
             </Col>
             <Col xs={24} lg={12}>
-              <Card size="small" title="失败来源排行" extra={<Select size="small" value={breakdownDimension} onChange={setBreakdownDimension} options={[{ label: 'Workflow', value: 'workflow' }, { label: '负责人', value: 'owner' }, { label: '硬件', value: 'hardware' }, { label: '部署方式', value: 'deployment_type' }]} />}>
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={chartData.breakdown} layout="vertical" margin={{ left: 20, right: 20 }}><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" allowDecimals={false} /><YAxis dataKey="name" type="category" width={100} /><ChartTooltip /><Bar dataKey="value" name="失败数量" fill="#1890ff" /></BarChart>
+              <Card size="small" title="失败来源排行" extra={<Select size="small" value={breakdownDimension} onChange={setBreakdownDimension} options={[{ label: 'Workflow', value: 'workflow' }, { label: '负责人', value: 'owner' }]} />}>
+                <ResponsiveContainer width="100%" height={230}>
+                  <BarChart data={chartData.breakdown} layout="vertical" barCategoryGap="42%" margin={{ left: 12, right: 18, top: 8, bottom: 8 }}>
+                    <CartesianGrid horizontal={false} stroke="#eef2f7" />
+                    <XAxis type="number" allowDecimals={false} tickLine={false} axisLine={false} />
+                    <YAxis dataKey="name" type="category" width={88} tickLine={false} axisLine={false} />
+                    <ChartTooltip content={<FailureChartTooltip />} cursor={false} />
+                    <Bar dataKey="value" name="失败数量" fill="#3788e8" radius={[0, 3, 3, 0]} barSize={12} activeBar={{ opacity: 0.72 }} cursor="pointer" onClick={(entry: any) => {
+                      const value = entry?.payload?.name || entry?.name
+                      if (value) openChartDetail(`${value} · 失败详情`, breakdownField, value)
+                    }} />
+                  </BarChart>
                 </ResponsiveContainer>
               </Card>
             </Col>
             <Col xs={24} lg={12}>
               <Card size="small" title="问题分类分布">
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={chartData.categories} onClick={(event: any) => openCategoryDetail(event?.activeLabel || event?.activePayload?.[0]?.payload?.name)}>
-                    <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis allowDecimals={false} /><ChartTooltip />
-                    <Bar dataKey="value" name="失败数量" fill="#fa8c16" cursor="pointer" onClick={(entry: any) => openCategoryDetail(entry?.payload?.name || entry?.name)} />
+                <ResponsiveContainer width="100%" height={230}>
+                  <BarChart data={chartData.categories} barCategoryGap="42%" margin={{ left: 8, right: 18, top: 8, bottom: 8 }} onClick={(event: any) => openCategoryDetail(event?.activeLabel || event?.activePayload?.[0]?.payload?.name)}>
+                    <CartesianGrid vertical={false} stroke="#eef2f7" /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} /><ChartTooltip content={<FailureChartTooltip />} cursor={false} />
+                    <Bar dataKey="value" name="失败数量" fill="#f59e0b" radius={[3, 3, 0, 0]} barSize={16} cursor="pointer" activeBar={{ opacity: 0.72 }} onClick={(entry: any) => openCategoryDetail(entry?.payload?.name || entry?.name)} />
                   </BarChart>
                 </ResponsiveContainer>
-                <Space wrap style={{ marginTop: 8 }}>{chartData.categories.map(category => <Tag key={category.name} color="orange" style={{ cursor: 'pointer' }} onClick={() => openCategoryDetail(category.name)}>{category.name}（{category.value}）</Tag>)}</Space>
               </Card>
             </Col>
           </Row>
@@ -468,7 +587,7 @@ function DailyFailureTracking() {
           </div>
         )}
         <Table
-          columns={jobColumns}
+          columns={[...jobColumns, ...failureTimingColumns]}
           dataSource={allJobs}
           loading={isLoading}
           rowKey={(record) => `${record._date}-${record.id}`}
@@ -481,26 +600,24 @@ function DailyFailureTracking() {
             showSizeChanger: false,
             showTotal: (total) => `共 ${total} 条记录`,
           }}
-          scroll={{ x: 1400 }}
+          scroll={{ x: 1280 }}
           size="middle"
         />
       </Card>}
 
-      <Drawer title={`${detailCategory || ''} · 失败详情`} open={!!detailCategory} onClose={() => setDetailCategory(null)} width={760}>
+      <Drawer title={detailFilter?.title || '失败详情'} open={!!detailFilter} onClose={() => setDetailFilter(null)} width={1200}>
         <Table
           rowKey={(record) => `${(record as DailyFailureJob & { _date: string })._date}-${record.id}`}
-          dataSource={categoryDetails}
+          dataSource={detailJobs}
           pagination={{ pageSize: 10 }}
           columns={[
             { title: '日期', dataIndex: '_date', width: 110 },
             { title: 'Workflow', dataIndex: 'workflow_name' },
             { title: '失败用例', dataIndex: 'display_name', render: (value: string | null, record: DailyFailureJob) => value || record.job_name },
             { title: '结果', dataIndex: 'conclusion', render: renderConclusionTag },
-            { title: '硬件', dataIndex: 'hardware', render: renderHardwareTag },
             { title: '负责人', dataIndex: 'owner', render: (value: string | null) => value || '-' },
-            { title: '部署方式', dataIndex: 'deployment_type', render: (value: string | null) => value || '-' },
-          ]}
-          scroll={{ x: 680 }}
+          ].concat(failureTimingColumns)}
+          scroll={{ x: 760 }}
           size="small"
         />
       </Drawer>
@@ -518,6 +635,28 @@ function DailyFailureTracking() {
       >
         {editingJob && (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <div>
+              <Text type="secondary">处理时间：</Text>
+              <DatePicker
+                value={editProcessingTime}
+                onChange={setEditProcessingTime}
+                showTime
+                allowClear
+                format="YYYY-MM-DD HH:mm:ss"
+                style={{ width: '100%', marginTop: 4 }}
+              />
+            </div>
+            <div>
+              <Text type="secondary">闭环时间：</Text>
+              <DatePicker
+                value={editClosureTime}
+                onChange={setEditClosureTime}
+                showTime
+                allowClear
+                format="YYYY-MM-DD HH:mm:ss"
+                style={{ width: '100%', marginTop: 4 }}
+              />
+            </div>
             <div>
               <Text strong>{editingJob.workflow_name}</Text>
               <Text type="secondary"> / </Text>

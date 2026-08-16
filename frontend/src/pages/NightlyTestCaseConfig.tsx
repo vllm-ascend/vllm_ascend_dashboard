@@ -34,11 +34,34 @@ const WORKFLOW_OPTIONS = [
   { label: 'Nightly-310P', value: 'Nightly-310P' },
 ]
 
-function NightlyTestCaseConfig() {
-  const [selectedDate, setSelectedDate] = useState<dayjs.Dayjs | null>(null)
-  const [selectedBranch, setSelectedBranch] = useState('main')
+type NightlyConfigPreferences = {
+  selectedDate?: string | null
+  selectedBranch?: string
+  workflowFilter?: string | null
+}
 
-  const [workflowFilter, setWorkflowFilter] = useState<string | undefined>('Nightly-A3')
+const NIGHTLY_CONFIG_PREFERENCES_KEY = 'ci-nightly-test-case-config-preferences'
+
+function readNightlyConfigPreferences(): NightlyConfigPreferences {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(NIGHTLY_CONFIG_PREFERENCES_KEY)
+    return raw ? JSON.parse(raw) as NightlyConfigPreferences : {}
+  } catch {
+    return {}
+  }
+}
+
+function NightlyTestCaseConfig() {
+  const [savedPreferences] = useState(readNightlyConfigPreferences)
+  const [selectedDate, setSelectedDate] = useState<dayjs.Dayjs | null>(() => (
+    savedPreferences.selectedDate ? dayjs(savedPreferences.selectedDate) : null
+  ))
+  const [selectedBranch, setSelectedBranch] = useState(() => savedPreferences.selectedBranch ?? 'main')
+
+  const [workflowFilter, setWorkflowFilter] = useState<string | undefined>(() => (
+    savedPreferences.workflowFilter === null ? undefined : savedPreferences.workflowFilter ?? 'Nightly-A3'
+  ))
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRecord, setEditingRecord] = useState<NightlyTestCase | null>(null)
   const [form] = Form.useForm()
@@ -48,6 +71,14 @@ function NightlyTestCaseConfig() {
     source_branch: selectedBranch,
     workflow_name: workflowFilter,
   })
+
+  useEffect(() => {
+    window.localStorage.setItem(NIGHTLY_CONFIG_PREFERENCES_KEY, JSON.stringify({
+      selectedDate: selectedDate?.format('YYYY-MM-DD') ?? null,
+      selectedBranch,
+      workflowFilter: workflowFilter ?? null,
+    }))
+  }, [selectedDate, selectedBranch, workflowFilter])
   // 自动选最新日期
   useEffect(() => {
     if (testCases && testCases.length > 0 && !selectedDate) {

@@ -22,7 +22,7 @@ from infrastructure.db.base import SessionLocal, engine
 logger = logging.getLogger("mysql_schema_migration")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-MIGRATION_VERSION = "20260814_01_daily_failure_and_heartbeat"
+MIGRATION_VERSION = "20260817_01_daily_failure_processing_times"
 TABLE_COLUMN_MIGRATIONS = {
     "user_login_logs": {
         "ip_address_hashed": "VARCHAR(64) NULL",
@@ -60,6 +60,8 @@ TABLE_COLUMN_MIGRATIONS = {
         "source_branch": "VARCHAR(100) NOT NULL DEFAULT 'main'",
         "problem_category": "VARCHAR(50) NULL",
         "related_pr": "VARCHAR(20) NULL",
+        "processing_time": "TIMESTAMP NULL",
+        "closure_time": "TIMESTAMP NULL",
     },
 }
 INDEX_MIGRATIONS = {

@@ -1593,6 +1593,8 @@ async def list_daily_failures(
             test_model=rec.test_model,
             model_fo=rec.model_fo,
             deployment_type=rec.deployment_type,
+            processing_time=rec.processing_time,
+            closure_time=rec.closure_time,
             processing_status=rec.processing_status or "未处理",
             problem_category=rec.problem_category,
             related_pr=rec.related_pr,
@@ -1649,6 +1651,8 @@ async def update_failure_status(
     rec.problem_category = update.problem_category
     rec.related_pr = update.related_pr
     rec.notes = update.notes
+    rec.processing_time = update.processing_time
+    rec.closure_time = update.closure_time
     rec.updated_by = current_user.username
     rec.status_updated_at = datetime.now(UTC)
     await db.commit()
@@ -1671,6 +1675,8 @@ async def update_failure_status(
         test_model=rec.test_model,
         model_fo=rec.model_fo,
         deployment_type=rec.deployment_type,
+        processing_time=rec.processing_time,
+        closure_time=rec.closure_time,
         processing_status=rec.processing_status or "未处理",
         problem_category=rec.problem_category,
         related_pr=rec.related_pr,

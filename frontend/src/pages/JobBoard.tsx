@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Space, Tag, Select, Typography, Button, Tooltip, Row, Col, Statistic } from 'antd'
 import {
@@ -18,12 +18,47 @@ const { Text } = Typography
 
 const { Title } = Typography
 
+type JobBoardPreferences = {
+  daysFilter?: number | 'all'
+  workflowFilter?: string[]
+  ownerFilter?: string[]
+  conclusionFilter?: string[]
+}
+
+const JOB_BOARD_PREFERENCES_KEY = 'ci-job-board-preferences'
+
+function readJobBoardPreferences(): JobBoardPreferences {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(JOB_BOARD_PREFERENCES_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    return {
+      daysFilter: parsed.daysFilter === 'all' || typeof parsed.daysFilter === 'number' ? parsed.daysFilter : undefined,
+      workflowFilter: Array.isArray(parsed.workflowFilter) ? parsed.workflowFilter : undefined,
+      ownerFilter: Array.isArray(parsed.ownerFilter) ? parsed.ownerFilter : undefined,
+      conclusionFilter: Array.isArray(parsed.conclusionFilter) ? parsed.conclusionFilter : undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
 function JobBoard() {
   const navigate = useNavigate()
-  const [daysFilter, setDaysFilter] = useState<number | 'all'>(7)
-  const [workflowFilter, setWorkflowFilter] = useState<string[]>([])
-  const [ownerFilter, setOwnerFilter] = useState<string[]>([])
-  const [conclusionFilter, setConclusionFilter] = useState<string[]>([])
+  const [savedPreferences] = useState(readJobBoardPreferences)
+  const [daysFilter, setDaysFilter] = useState<number | 'all'>(() => savedPreferences.daysFilter ?? 7)
+  const [workflowFilter, setWorkflowFilter] = useState<string[]>(() => savedPreferences.workflowFilter ?? [])
+  const [ownerFilter, setOwnerFilter] = useState<string[]>(() => savedPreferences.ownerFilter ?? [])
+  const [conclusionFilter, setConclusionFilter] = useState<string[]>(() => savedPreferences.conclusionFilter ?? [])
+
+  useEffect(() => {
+    window.localStorage.setItem(JOB_BOARD_PREFERENCES_KEY, JSON.stringify({
+      daysFilter,
+      workflowFilter,
+      ownerFilter,
+      conclusionFilter,
+    }))
+  }, [daysFilter, workflowFilter, ownerFilter, conclusionFilter])
 
   const { data: jobStats, isLoading, refetch } = useJobStats({
     days: daysFilter,

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Card, Space, Statistic, Row, Col, Typography, Tabs, Button, message, Modal } from 'antd'
 import {
@@ -25,17 +25,30 @@ dayjs.locale('zh-cn')
 
 const { Text, Title } = Typography
 
+const CI_BOARD_TABS = ['workflow', 'job', 'daily-failure', 'test-case-config'] as const
+type CIBoardTab = typeof CI_BOARD_TABS[number]
+const CI_BOARD_TAB_STORAGE_KEY = 'ci-board-active-tab'
+
+function isCIBoardTab(value: string | null): value is CIBoardTab {
+  return value !== null && (CI_BOARD_TABS as readonly string[]).includes(value)
+}
+
 function CIBoard() {
   const [searchParams] = useSearchParams()
 
   // 根据 URL 参数设置默认 Tab
   const [activeTab, setActiveTab] = useState(() => {
-    const tab = searchParams.get('tab')
-    if (tab === 'job') return 'job'
-    if (tab === 'daily-failure') return 'daily-failure'
-    if (tab === 'test-case-config') return 'test-case-config'
-    return 'workflow'
+    const requestedTab = searchParams.get('tab')
+    const storedTab = typeof window !== 'undefined'
+      ? window.localStorage.getItem(CI_BOARD_TAB_STORAGE_KEY)
+      : null
+    const tab = requestedTab || storedTab
+    return isCIBoardTab(tab) ? tab : 'workflow'
   })
+
+  useEffect(() => {
+    window.localStorage.setItem(CI_BOARD_TAB_STORAGE_KEY, activeTab)
+  }, [activeTab])
 
   const { data: stats, isLoading: statsLoading } = useCIStats()
 
@@ -76,7 +89,9 @@ function CIBoard() {
 
       <Tabs
           activeKey={activeTab}
-        onChange={setActiveTab}
+        onChange={(tab) => {
+          if (isCIBoardTab(tab)) setActiveTab(tab)
+        }}
         items={[
           {
             key: 'workflow',

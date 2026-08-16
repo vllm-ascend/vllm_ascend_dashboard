@@ -321,6 +321,12 @@ async def _migrate_daily_failure_records_columns():
             if "related_pr" not in existing:
                 await db.execute(text("ALTER" " TABLE daily_failure_records ADD COLUMN related_pr VARCHAR(20)"))
                 await db.commit()
+            if "processing_time" not in existing:
+                await db.execute(text("ALTER" " TABLE daily_failure_records ADD COLUMN processing_time TIMESTAMP NULL"))
+                await db.commit()
+            if "closure_time" not in existing:
+                await db.execute(text("ALTER" " TABLE daily_failure_records ADD COLUMN closure_time TIMESTAMP NULL"))
+                await db.commit()
             try:
                 await db.execute(text("ALTER" " TABLE daily_failure_records DROP INDEX uq_daily_failure_date_wf_job"))
                 await db.commit()

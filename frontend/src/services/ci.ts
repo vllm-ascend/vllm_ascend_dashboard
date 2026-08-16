@@ -222,6 +222,8 @@ export interface DailyFailureJob {
   test_model: string | null
   model_fo: string | null
   deployment_type: string | null
+  processing_time: string | null
+  closure_time: string | null
   processing_status: string
   problem_category: string | null
   related_pr: string | null
@@ -252,6 +254,8 @@ export interface DailyFailureUpdateRequest {
   problem_category?: string | null
   related_pr?: string | null
   notes?: string | null
+  processing_time?: string | null
+  closure_time?: string | null
 }
 
 /**

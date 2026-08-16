@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Button,
@@ -58,6 +58,28 @@ const getDefaultDateRange = (): [Dayjs, Dayjs] => {
   return [today.startOf('day'), today.endOf('day')]
 }
 
+type WorkflowExecutionPreferences = {
+  workflowFilter?: string[]
+  selectedWorkflow?: string | null
+  hardwareFilter?: string[]
+  statusFilter?: string[]
+  resultFilter?: string[]
+  logSearch?: string
+  dateRange?: { start: string | null; end: string | null } | null
+}
+
+const WORKFLOW_EXECUTION_PREFERENCES_KEY = 'ci-workflow-execution-preferences'
+
+function readWorkflowExecutionPreferences(): WorkflowExecutionPreferences {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(WORKFLOW_EXECUTION_PREFERENCES_KEY)
+    return raw ? JSON.parse(raw) as WorkflowExecutionPreferences : {}
+  } catch {
+    return {}
+  }
+}
+
 const toJobStatus = (job: CIJob) => job.status || (job.completed_at ? 'completed' : 'in_progress')
 
 const renderSteps = (steps: StepSummary[] | null | undefined) => {
@@ -77,13 +99,41 @@ const renderSteps = (steps: StepSummary[] | null | undefined) => {
 
 function WorkflowTestExecutionTable({ enabled }: WorkflowTestExecutionTableProps) {
   const navigate = useNavigate()
-  const [workflowFilter, setWorkflowFilter] = useState<string[]>([])
-  const [selectedWorkflow, setSelectedWorkflow] = useState<string | undefined>()
-  const [hardwareFilter, setHardwareFilter] = useState<string[]>([])
-  const [statusFilter, setStatusFilter] = useState<string[]>([])
-  const [resultFilter, setResultFilter] = useState<string[]>([])
-  const [logSearch, setLogSearch] = useState('')
-  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(() => getDefaultDateRange())
+  const [savedPreferences] = useState(readWorkflowExecutionPreferences)
+  const [workflowFilter, setWorkflowFilter] = useState<string[]>(() => savedPreferences.workflowFilter ?? [])
+  const [selectedWorkflow, setSelectedWorkflow] = useState<string | undefined>(() => savedPreferences.selectedWorkflow ?? undefined)
+  const [hardwareFilter, setHardwareFilter] = useState<string[]>(() => savedPreferences.hardwareFilter ?? [])
+  const [statusFilter, setStatusFilter] = useState<string[]>(() => savedPreferences.statusFilter ?? [])
+  const [resultFilter, setResultFilter] = useState<string[]>(() => savedPreferences.resultFilter ?? [])
+  const [logSearch, setLogSearch] = useState(() => savedPreferences.logSearch ?? '')
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(() => {
+    const savedRange = savedPreferences.dateRange
+    if (savedRange === null) return null
+    if (savedRange?.start || savedRange?.end) {
+      return [
+        savedRange.start ? dayjs(savedRange.start) : null,
+        savedRange.end ? dayjs(savedRange.end) : null,
+      ]
+    }
+    return getDefaultDateRange()
+  })
+
+  useEffect(() => {
+    window.localStorage.setItem(WORKFLOW_EXECUTION_PREFERENCES_KEY, JSON.stringify({
+      workflowFilter,
+      selectedWorkflow: selectedWorkflow ?? null,
+      hardwareFilter,
+      statusFilter,
+      resultFilter,
+      logSearch,
+      dateRange: dateRange
+        ? {
+            start: dateRange[0]?.format('YYYY-MM-DD') ?? null,
+            end: dateRange[1]?.format('YYYY-MM-DD') ?? null,
+          }
+        : null,
+    } satisfies WorkflowExecutionPreferences))
+  }, [workflowFilter, selectedWorkflow, hardwareFilter, statusFilter, resultFilter, logSearch, dateRange])
 
   const workflowsQuery = useWorkflows()
   const jobsQuery = useJobs({
