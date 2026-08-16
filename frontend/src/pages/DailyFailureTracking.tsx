@@ -15,6 +15,8 @@ import {
   message,
   Tooltip,
   DatePicker,
+  Segmented,
+  Drawer,
 } from 'antd'
 import {
   ReloadOutlined,
@@ -32,6 +34,7 @@ import { formatDuration, renderConclusionTag, renderHardwareTag } from '../utils
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
 import type { DailyFailureJob } from '../services/ci'
 import dayjs, { Dayjs } from 'dayjs'
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ReferenceDot, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts'
 
 const { RangePicker } = DatePicker
 const { Search } = Input
@@ -199,6 +202,9 @@ function DailyFailureTracking() {
   const [editProblemCategory, setEditProblemCategory] = useState<string>('')
   const [editRelatedPr, setEditRelatedPr] = useState<string>('')
   const [editNotes, setEditNotes] = useState<string>('')
+  const [displayMode, setDisplayMode] = useState<'list' | 'analysis'>('list')
+  const [breakdownDimension, setBreakdownDimension] = useState<'workflow' | 'owner' | 'hardware' | 'deployment_type'>('workflow')
+  const [detailCategory, setDetailCategory] = useState<string | null>(null)
 
   const startDate = dateRange?.[0]?.format('YYYY-MM-DD')
   const endDate = dateRange?.[1]?.format('YYYY-MM-DD')
@@ -259,6 +265,43 @@ function DailyFailureTracking() {
     return data.flatMap(day => day.jobs.map(job => ({ ...job, _date: day.date })))
   }, [data])
 
+  const chartData = useMemo(() => {
+    const byDate = new Map((data || []).map(day => [day.date, day]))
+    const dates = Array.from(byDate.keys()).sort()
+    const start = startDate || dates[0]
+    const end = endDate || dates[dates.length - 1]
+    const trend: Array<{ date: string; total: number; unprocessed: number; processing: number; closed: number; dataStatus?: string }> = []
+    if (start && end) {
+      let cursor = dayjs(start)
+      const last = dayjs(end)
+      while (cursor.isBefore(last, 'day') || cursor.isSame(last, 'day')) {
+        const iso = cursor.format('YYYY-MM-DD')
+        const day = byDate.get(iso)
+        trend.push(day
+          ? { date: cursor.format('MM-DD'), total: day.stats.total_failed_jobs, unprocessed: day.stats.unprocessed, processing: day.stats.processing, closed: day.stats.closed }
+          : { date: cursor.format('MM-DD'), total: 0, unprocessed: 0, processing: 0, closed: 0, dataStatus: 'no-data' })
+        cursor = cursor.add(1, 'day')
+      }
+    }
+    const countBy = (values: string[]) => values.reduce<Record<string, number>>((result, value) => {
+      const key = value || '未填写'
+      result[key] = (result[key] || 0) + 1
+      return result
+    }, {})
+    const field = { workflow: 'workflow_name', owner: 'owner', hardware: 'hardware', deployment_type: 'deployment_type' }[breakdownDimension] as keyof DailyFailureJob
+    const breakdown = Object.entries(countBy(allJobs.map(job => String(job[field] || '')))).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10)
+    const categories = Object.entries(countBy(allJobs.map(job => job.problem_category || '未分类'))).map(([name, value]) => ({ name, value }))
+    const status = [
+      { name: '未处理', value: totalStats.unprocessed, color: '#ff4d4f' },
+      { name: '处理中', value: totalStats.processing, color: '#fa8c16' },
+      { name: '已关闭', value: totalStats.closed, color: '#52c41a' },
+    ].filter(item => item.value > 0)
+    return { trend, breakdown, categories, status }
+  }, [allJobs, breakdownDimension, data, endDate, startDate, totalStats])
+
+  const categoryDetails: Array<DailyFailureJob & { _date: string }> = detailCategory ? allJobs.filter(job => (job.problem_category || '未分类') === detailCategory) : []
+  const openCategoryDetail = (category: string) => setDetailCategory(category)
+
   const workflowOptions = useMemo(() => {
     if (!data) return []
     const workflows = new Set<string>()
@@ -307,6 +350,11 @@ function DailyFailureTracking() {
             style={{ width: 160 }}
           />
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>刷新</Button>
+          <Segmented
+            value={displayMode}
+            onChange={(value) => setDisplayMode(value as 'list' | 'analysis')}
+            options={[{ label: '列表', value: 'list' }, { label: '视图', value: 'analysis' }]}
+          />
         </Space>
       </div>
 
@@ -350,7 +398,57 @@ function DailyFailureTracking() {
       </Row>
 
       {/* 按天分组的折叠面板 */}
-      <Card>
+      {displayMode === 'analysis' && (
+        <Card title="失败趋势与维度分析" style={{ marginBottom: 24 }}>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} lg={14}>
+              <Card size="small" title="每日失败趋势" extra={<Text type="secondary">灰色点：当天无失败记录或尚未同步</Text>}>
+                <ResponsiveContainer width="100%" height={300}>
+                  <AreaChart data={chartData.trend} margin={{ top: 20, right: 20, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+                    <XAxis dataKey="date" /><YAxis allowDecimals={false} /><ChartTooltip /><Legend />
+                    <Area type="monotone" dataKey="total" name="失败总数" stroke="#ff4d4f" fill="#ff4d4f" fillOpacity={0.12} />
+                    <Area type="monotone" dataKey="unprocessed" name="未处理" stroke="#fa8c16" fill="none" />
+                    <Area type="monotone" dataKey="closed" name="已关闭" stroke="#52c41a" fill="none" />
+                    {chartData.trend.filter(point => point.dataStatus === 'no-data').map(point => (
+                      <ReferenceDot key={point.date} x={point.date} y={0} r={5} fill="#94a3b8" stroke="#fff" label={{ value: '无数据', position: 'top', fill: '#64748b', fontSize: 11 }} />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </Card>
+            </Col>
+            <Col xs={24} lg={10}>
+              <Card size="small" title="处理状态分布">
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart><Pie data={chartData.status} dataKey="value" nameKey="name" innerRadius={65} outerRadius={100} label>
+                    {chartData.status.map(item => <Cell key={item.name} fill={item.color} />)}
+                  </Pie><ChartTooltip /><Legend /></PieChart>
+                </ResponsiveContainer>
+              </Card>
+            </Col>
+            <Col xs={24} lg={12}>
+              <Card size="small" title="失败来源排行" extra={<Select size="small" value={breakdownDimension} onChange={setBreakdownDimension} options={[{ label: 'Workflow', value: 'workflow' }, { label: '负责人', value: 'owner' }, { label: '硬件', value: 'hardware' }, { label: '部署方式', value: 'deployment_type' }]} />}>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={chartData.breakdown} layout="vertical" margin={{ left: 20, right: 20 }}><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" allowDecimals={false} /><YAxis dataKey="name" type="category" width={100} /><ChartTooltip /><Bar dataKey="value" name="失败数量" fill="#1890ff" /></BarChart>
+                </ResponsiveContainer>
+              </Card>
+            </Col>
+            <Col xs={24} lg={12}>
+              <Card size="small" title="问题分类分布">
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={chartData.categories} onClick={(event: any) => openCategoryDetail(event?.activeLabel || event?.activePayload?.[0]?.payload?.name)}>
+                    <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis allowDecimals={false} /><ChartTooltip />
+                    <Bar dataKey="value" name="失败数量" fill="#fa8c16" cursor="pointer" onClick={(entry: any) => openCategoryDetail(entry?.payload?.name || entry?.name)} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <Space wrap style={{ marginTop: 8 }}>{chartData.categories.map(category => <Tag key={category.name} color="orange" style={{ cursor: 'pointer' }} onClick={() => openCategoryDetail(category.name)}>{category.name}（{category.value}）</Tag>)}</Space>
+              </Card>
+            </Col>
+          </Row>
+        </Card>
+      )}
+
+      {displayMode === 'list' && <Card>
         {selectedRowKeys.length > 0 && (
           <div style={{ marginBottom: 12, padding: '8px 12px', background: '#e6f4ff', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
             <Text strong>已选 {selectedRowKeys.length} 条</Text>
@@ -386,7 +484,26 @@ function DailyFailureTracking() {
           scroll={{ x: 1400 }}
           size="middle"
         />
-      </Card>
+      </Card>}
+
+      <Drawer title={`${detailCategory || ''} · 失败详情`} open={!!detailCategory} onClose={() => setDetailCategory(null)} width={760}>
+        <Table
+          rowKey={(record) => `${(record as DailyFailureJob & { _date: string })._date}-${record.id}`}
+          dataSource={categoryDetails}
+          pagination={{ pageSize: 10 }}
+          columns={[
+            { title: '日期', dataIndex: '_date', width: 110 },
+            { title: 'Workflow', dataIndex: 'workflow_name' },
+            { title: '失败用例', dataIndex: 'display_name', render: (value: string | null, record: DailyFailureJob) => value || record.job_name },
+            { title: '结果', dataIndex: 'conclusion', render: renderConclusionTag },
+            { title: '硬件', dataIndex: 'hardware', render: renderHardwareTag },
+            { title: '负责人', dataIndex: 'owner', render: (value: string | null) => value || '-' },
+            { title: '部署方式', dataIndex: 'deployment_type', render: (value: string | null) => value || '-' },
+          ]}
+          scroll={{ x: 680 }}
+          size="small"
+        />
+      </Drawer>
 
       {/* 编辑处理状态弹窗 */}
       <Modal
