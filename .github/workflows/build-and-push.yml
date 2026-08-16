@@ -54,6 +54,11 @@ jobs:
         with:
           version: "0.11.28"
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Backend checks
         working-directory: backend
         env:
@@ -61,10 +66,13 @@ jobs:
           JWT_SECRET: test-jwt-secret-key-at-least-32-chars-long
           GITHUB_TOKEN: github_pat_test_token_for_ci_tests
         run: |
-          uv sync --locked --dev
-          uv run ruff check . ../tests
-          uv run pytest -q
-          uv run pip-audit --strict
+          # Tests import the source tree directly; do not build/install the
+          # application wheel just to run the quality gate. This keeps CI
+          # independent of Hatchling's editable-build path.
+          uv sync --locked --dev --no-install-project
+          uv run --no-sync ruff check . ../tests
+          uv run --no-sync pytest -q
+          uv run --no-sync pip-audit --strict
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
