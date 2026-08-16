@@ -75,6 +75,6 @@ def test_ci_publishes_versioned_images_with_supply_chain_metadata():
     assert "provenance: mode=max" in workflow
     assert "sbom: true" in workflow
     assert "outputs.digest" in workflow
-    assert "uv run pytest -q" in workflow
-    assert "uv run pip-audit --strict" in workflow
+    assert "uv run --no-sync pytest -q" in workflow
+    assert "uv run --no-sync pip-audit --strict" in workflow
     assert "pnpm audit --prod --audit-level=high" in workflow

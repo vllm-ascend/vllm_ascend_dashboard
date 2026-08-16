@@ -10,7 +10,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import bindparam, text
 
-from collector.ci import CICollector
 from infrastructure.clients.github_client import GitHubClient
 from infrastructure.core.config import settings
 from infrastructure.db.base import SessionLocal
@@ -1177,49 +1176,30 @@ class DataSyncScheduler:
                 "message": f"Unsupported sync type: {sync_type}",
             }
 
-        if not self.github_client:
-            self._initialize_github_client()
+        from infrastructure.tasks.task_manager import TaskManager
 
+        params = {
+            "days_back": days_back,
+            "max_runs": max_runs_per_workflow,
+            "force_full_refresh": force_full_refresh,
+        }
+        dedupe_key = f"ci_sync:manual:{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S')}"
         async with SessionLocal() as db:
-            try:
-                collector = CICollector(
-                    github_client=self.github_client,  # type: ignore
-                    db_session=db,
-                )
+            task_id = await TaskManager.create_task(
+                db,
+                "ci_sync",
+                params,
+                dedupe_key,
+                required_capability="python",
+            )
+            await db.commit()
 
-                collected = await collector.collect_workflow_runs(
-                    days_back=days_back,
-                    max_runs_per_workflow=max_runs_per_workflow,
-                    force_full_refresh=force_full_refresh,
-                )
-
-                # 同步完成后，更新进度
-                from infrastructure.tasks.sync_progress import get_sync_progress
-                progress = get_sync_progress()
-                progress.complete()
-
-                # 同步完成后，更新所有启用的 workflow 的 last_sync_at
-                from sqlalchemy import update
-
-                from infrastructure.persistence.models import WorkflowConfig
-
-                await db.execute(
-                    update(WorkflowConfig)
-                    .where(WorkflowConfig.enabled)
-                    .values(last_sync_at=datetime.now(UTC))
-                )
-                await db.commit()
-
-                return {
-                    "success": True,
-                    "message": f"Successfully collected {collected} CI runs",
-                    "collected_count": collected,
-                }
-
-            except Exception as e:
-                logger.error(f"Manual sync failed: {e}", exc_info=True)
-                # async with 会自动 rollback 和 close
-                raise
+        return {
+            "success": True,
+            "message": "CI synchronization task queued for Collector execution",
+            "task_id": task_id,
+            "queued": task_id is not None,
+        }
 
     def get_next_run_time(self, job_id: str) -> datetime | None:
         """
