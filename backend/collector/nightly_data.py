@@ -8,9 +8,9 @@ deployments.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, date, datetime, timedelta, timezone
-import logging
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
