@@ -2,7 +2,7 @@
 每日运行报告 Pydantic Schemas
 """
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,18 +25,18 @@ class DailyReportConfigResponse(BaseModel):
 
 class DailyReportConfigUpdate(BaseModel):
     """更新报告配置"""
-    smtp_host: Optional[str] = None
-    smtp_port: Optional[int] = Field(None, ge=1, le=65535)
-    smtp_username: Optional[str] = None
-    smtp_password: Optional[str] = None
-    smtp_use_tls: Optional[bool] = None
-    report_from_email: Optional[str] = None
-    report_recipients: Optional[str] = None
-    report_cc_recipients: Optional[str] = None
-    report_subject_template: Optional[str] = None
-    report_enabled: Optional[bool] = None
-    report_schedule_hour: Optional[int] = Field(None, ge=0, le=23)
-    report_schedule_minute: Optional[int] = Field(None, ge=0, le=59)
+    smtp_host: str | None = None
+    smtp_port: int | None = Field(None, ge=1, le=65535)
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool | None = None
+    report_from_email: str | None = None
+    report_recipients: str | None = None
+    report_cc_recipients: str | None = None
+    report_subject_template: str | None = None
+    report_enabled: bool | None = None
+    report_schedule_hour: int | None = Field(None, ge=0, le=23)
+    report_schedule_minute: int | None = Field(None, ge=0, le=59)
 
 
 class CISummaryData(BaseModel):
@@ -46,7 +46,7 @@ class CISummaryData(BaseModel):
     failure_runs: int = 0
     success_rate: float = 0.0
     avg_duration_seconds: float | None = None
-    failed_workflows: List[Dict[str, Any]] = []
+    failed_workflows: list[dict[str, Any]] = []
 
 
 class ModelSummaryData(BaseModel):
@@ -55,8 +55,8 @@ class ModelSummaryData(BaseModel):
     pass_count: int = 0
     fail_count: int = 0
     pass_rate: float = 0.0
-    new_models: List[str] = []
-    failed_models: List[Dict[str, Any]] = []
+    new_models: list[str] = []
+    failed_models: list[dict[str, Any]] = []
 
 
 class GitHubSummaryData(BaseModel):
@@ -101,10 +101,10 @@ class DailyReportHistoryResponse(BaseModel):
     status: str
     sent_at: datetime | None = None
     error_message: str | None = None
-    ci_summary: Dict[str, Any] | None = None
-    model_summary: Dict[str, Any] | None = None
-    github_summary: Dict[str, Any] | None = None
-    performance_summary: Dict[str, Any] | None = None
+    ci_summary: dict[str, Any] | None = None
+    model_summary: dict[str, Any] | None = None
+    github_summary: dict[str, Any] | None = None
+    performance_summary: dict[str, Any] | None = None
     ai_report_content: str | None = None
     created_at: datetime
 
@@ -112,7 +112,7 @@ class DailyReportHistoryResponse(BaseModel):
 class DailyReportHistoryListResponse(BaseModel):
     """报告发送历史列表响应"""
     total: int
-    items: List[DailyReportHistoryResponse]
+    items: list[DailyReportHistoryResponse]
 
 
 class DailyReportTriggerResponse(BaseModel):

@@ -2,29 +2,28 @@
 Log Center Pydantic Schemas
 """
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class TimeRange(BaseModel):
     """时间范围过滤"""
-    start: Optional[datetime] = None
-    end: Optional[datetime] = None
+    start: datetime | None = None
+    end: datetime | None = None
 
 
 class LogQueryRequest(BaseModel):
     """日志查询请求"""
-    sources: Optional[list[str]] = Field(
+    sources: list[str] | None = Field(
         default=None,
         description="日志源: claude_cli, failure_analysis, app, scheduler",
     )
-    levels: Optional[list[str]] = Field(
+    levels: list[str] | None = Field(
         default=None,
         description="级别: debug, info, warning, error",
     )
-    time_range: Optional[TimeRange] = None
-    search: Optional[str] = Field(
+    time_range: TimeRange | None = None
+    search: str | None = Field(
         default=None, description="全文搜索关键词"
     )
     page: int = Field(default=1, ge=1, description="页码，从 1 开始")
@@ -38,26 +37,26 @@ class LogEntryMetadata(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     # claude_cli
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    duration_seconds: Optional[float] = None
-    exit_code: Optional[int] = None
-    route: Optional[str] = None
+    provider: str | None = None
+    model: str | None = None
+    duration_seconds: float | None = None
+    exit_code: int | None = None
+    route: str | None = None
 
     # failure_analysis
-    workflow_name: Optional[str] = None
-    job_name: Optional[str] = None
-    job_id: Optional[int] = None
-    analysis_status: Optional[str] = None
+    workflow_name: str | None = None
+    job_name: str | None = None
+    job_id: int | None = None
+    analysis_status: str | None = None
 
     # app / scheduler
-    module: Optional[str] = None
-    function_name: Optional[str] = None
-    line_number: Optional[int] = None
+    module: str | None = None
+    function_name: str | None = None
+    line_number: int | None = None
 
     # scheduler
-    task_name: Optional[str] = None
-    status: Optional[str] = None
+    task_name: str | None = None
+    status: str | None = None
 
 
 class LogEntryResponse(BaseModel):
@@ -84,7 +83,7 @@ class LogSourceInfo(BaseModel):
     key: str
     label: str
     count: int
-    last_entry: Optional[datetime] = None
+    last_entry: datetime | None = None
 
 
 class LogSourcesResponse(BaseModel):

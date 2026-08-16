@@ -22,12 +22,12 @@ os.environ.setdefault("GITHUB_REPO", "vllm-ascend")
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from infrastructure.persistence.models.test_board import TestCase as _TC
-from contracts.schemas.test_board import TestCaseResponse, TestCaseUpdateRequest
-from tooling.analytics.test_health_calculator import TestHealthCalculator
 from tests.conftest import make_test_case, make_test_run
 from tests.mysql_test_db import create_test_engine, reset_tables
+
+from contracts.schemas.test_board import TestCaseResponse, TestCaseUpdateRequest
+from infrastructure.persistence.models.test_board import TestCase as _TC
+from tooling.analytics.test_health_calculator import TestHealthCalculator
 
 
 class TestFlakyManualProtection:

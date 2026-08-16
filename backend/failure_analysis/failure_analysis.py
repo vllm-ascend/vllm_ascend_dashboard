@@ -3,17 +3,21 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
-from sqlalchemy import select, delete, and_, func, desc, text
+from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructure.persistence.models import CIJob, CIResult, ProjectDashboardConfig, JobFailureAnalysis
+from infrastructure.core.config import settings
+from infrastructure.persistence.models import (
+    CIJob,
+    CIResult,
+    JobFailureAnalysis,
+    ProjectDashboardConfig,
+)
 from infrastructure.persistence.models.daily_summary import LLMProviderConfig
 from infrastructure.storage.failure_analysis_file_store import FailureAnalysisFileStore
-from infrastructure.core.config import settings
 
 logger = logging.getLogger(__name__)
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
@@ -52,7 +56,7 @@ class FailureAnalysisService:
         ]
 
     async def _get_llm_config(self, db: AsyncSession):
-        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
+        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active).limit(1)
         result = await db.execute(stmt)
         config = result.scalar_one_or_none()
         if not config:
@@ -444,6 +448,7 @@ class FailureAnalysisService:
         """Persist live agent progress using an isolated session."""
         try:
             from sqlalchemy import update
+
             from infrastructure.db.base import SessionLocal
 
             async with SessionLocal() as progress_db:
@@ -505,32 +510,31 @@ class FailureAnalysisService:
         from agent.agent_service import AgentResult, AgentService, AgentTask
         from agent.agent_tools import (
             FAILURE_ANALYSIS_TOOLS,
-            grep_content,
-            list_files,
-            read_log_file,
-            read_log_excerpt,
-            git_show_commit,
+            git_compare_file,
             git_read_file,
             git_search_symbol,
-            git_compare_file,
-        )
-        from failure_analysis.failure_analysis_pipeline import (
-            LEDGER_SCHEMA,
-            extract_json_object,
-            extract_required_regression_candidates,
-            enrich_ledger_from_trace,
-            investigation_prompt,
-            normalize_ledger,
-            normalize_auditor_validation,
-            programmatic_validate,
-            revision_prompt,
-            report_prompt,
-            enforce_validation_on_report,
-            verification_prompt,
+            git_show_commit,
+            grep_content,
+            read_log_excerpt,
+            read_log_file,
         )
         from failure_analysis.failure_analysis_knowledge_graph import (
             build_failure_analysis_knowledge_graph,
             summarize_graph_for_agent,
+        )
+        from failure_analysis.failure_analysis_pipeline import (
+            LEDGER_SCHEMA,
+            enforce_validation_on_report,
+            enrich_ledger_from_trace,
+            extract_json_object,
+            extract_required_regression_candidates,
+            investigation_prompt,
+            normalize_auditor_validation,
+            normalize_ledger,
+            programmatic_validate,
+            report_prompt,
+            revision_prompt,
+            verification_prompt,
         )
 
         # Reserve the configured max_steps for the worst case:
@@ -954,7 +958,7 @@ class FailureAnalysisService:
         return results
 
     async def _build_job_context(self, job: CIJob, db: AsyncSession, max_turns: int = 80, timeout_seconds: int = 1800, inline_logs: bool = False) -> str:
-        timeout_min = timeout_seconds // 60
+        timeout_seconds // 60
         lines = []
         if inline_logs:
             lines.append("请分析以下 CI 失败，直接基于已内联的数据输出分析报告。")
@@ -1065,7 +1069,7 @@ class FailureAnalysisService:
                     all_steps_summary.append(f"  - Step #{step_number} `{step_name}` 鈫?status={step_status}, conclusion={step_conclusion}")
 
             if failed_steps:
-                lines.append(f"\n### Failed Steps:\n")
+                lines.append("\n### Failed Steps:\n")
                 lines.extend(failed_steps)
                 lines.append(
                     "\n以上失败步骤名称来自 GitHub steps_data。分析时应在完整 Job 日志中定位这些步骤对应的时间段和失败片段；"
@@ -1073,19 +1077,19 @@ class FailureAnalysisService:
                 )
 
             if all_steps_summary:
-                lines.append(f"\n### Other Non-Success Steps:\n")
+                lines.append("\n### Other Non-Success Steps:\n")
                 lines.extend(all_steps_summary)
         except (json.JSONDecodeError, TypeError):
-            lines.append(f"- **Steps Data**: (unparseable)")
+            lines.append("- **Steps Data**: (unparseable)")
 
         annotations = await self._fetch_job_annotations(job.job_id, db)
         if annotations:
-            lines.append(f"\n### GitHub Actions Annotations (鍏抽敭閿欒淇℃伅):\n")
+            lines.append("\n### GitHub Actions Annotations (鍏抽敭閿欒淇℃伅):\n")
             for ann in annotations:
                 level = ann.get("annotation_level", "notice")
                 title = ann.get("title", "")
                 message = ann.get("message", "")
-                path_info = ann.get("path", "")
+                ann.get("path", "")
                 if title:
                     lines.append(f"  - [{level}] **{title}**: {message}")
                 else:
@@ -1110,7 +1114,7 @@ class FailureAnalysisService:
         # 纭繚鏈湴 Git 浠撳簱宸?clone
         from infrastructure.clients.github_cache import ensure_analysis_repos_ready
         analysis_repos = await asyncio.to_thread(ensure_analysis_repos_ready, update=True)
-        repo_path = analysis_repos["vllm_ascend"]
+        analysis_repos["vllm_ascend"]
         ref_value = tested_commit or (ci_result.head_sha if ci_result and ci_result.head_sha else "main")
 
         # 棰勬媺鍙栨墍鏈夊彲鐢ㄦ棩蹇楀埌鏈湴锛孋LI 鍙鏈湴鏂囦欢涓?curl
@@ -1136,7 +1140,7 @@ class FailureAnalysisService:
             if logs["jobs_list"]:
                 lines.append(f"- Run 全部 job 列表：`{logs['jobs_list']}`，用于定位多节点/worker job 日志")
         lines.append("- Annotations、Steps、历史对比、Commit Diff：下方已预加载")
-        lines.append(f"")
+        lines.append("")
         lines.append("**源码分析工具建议：**")
         lines.append("  grep_content(pattern, log_path)               -> 先定位关键日志行号")
         lines.append("  read_log_excerpt(log_path, start, end)        -> 按行号读取失败附近片段；大日志禁止反复整文件读取")
@@ -1820,7 +1824,7 @@ class FailureAnalysisService:
             await db.refresh(analysis)
         return analysis
 
-    async def list_analyses(self, filters: Optional[dict] = None, db: AsyncSession = None):
+    async def list_analyses(self, filters: dict | None = None, db: AsyncSession = None):
         stmt = select(JobFailureAnalysis)
         if filters:
             if filters.get("problem_category"):
@@ -1887,7 +1891,7 @@ class FailureAnalysisService:
                             metadata: dict | None = None) -> str | None:
         """Generate a PDF file from a markdown report and return its path."""
         import html as html_lib
-        from pathlib import Path
+
         from weasyprint import HTML
 
         try:
@@ -1952,8 +1956,8 @@ class FailureAnalysisService:
 
     async def _download_all_logs(self, job: CIJob) -> dict[str, str | None]:
         """Download available logs to local files and return their paths."""
+
         import aiohttp
-        from pathlib import Path
 
         request_timeout = aiohttp.ClientTimeout(total=60, connect=10, sock_read=30)
 

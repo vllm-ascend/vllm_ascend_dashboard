@@ -1,15 +1,14 @@
 import logging
 import time
-import asyncio
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 
-from sqlalchemy import select, and_, desc
+from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.skill_registry import get_skill_registry
+from infrastructure.clients.llm_client import LLMClient, LLMError
 from infrastructure.persistence.models import CIJob, CIResult, ProjectDashboardConfig
 from infrastructure.persistence.models.daily_summary import LLMProviderConfig
-from infrastructure.clients.llm_client import LLMClient, LLMError
-from agent.skill_registry import get_skill_registry
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,7 @@ class IssueDiagnosisService:
         return continuation
 
     async def _get_llm_config(self, db: AsyncSession) -> LLMProviderConfig:
-        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
+        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active).limit(1)
         result = await db.execute(stmt)
         config = result.scalar_one_or_none()
         if not config:
@@ -95,8 +94,8 @@ class IssueDiagnosisService:
 
     async def _collect_commit_context(
         self,
-        run_id: Optional[int],
-        commit_sha: Optional[str],
+        run_id: int | None,
+        commit_sha: str | None,
         db: AsyncSession,
     ) -> str:
         lines = ["## Commit 分析上下文\n"]
@@ -122,12 +121,12 @@ class IssueDiagnosisService:
     async def stream_diagnose(
         self,
         data_source_type: str,
-        pr_number: Optional[int],
-        job_id: Optional[int],
-        run_id: Optional[int],
-        commit_sha: Optional[str],
-        user_prompt: Optional[str],
-        conversation_history: Optional[list[dict]],
+        pr_number: int | None,
+        job_id: int | None,
+        run_id: int | None,
+        commit_sha: str | None,
+        user_prompt: str | None,
+        conversation_history: list[dict] | None,
         db: AsyncSession,
     ) -> AsyncGenerator[dict, None]:
         try:
@@ -281,7 +280,7 @@ class IssueDiagnosisService:
             }
 
     async def get_failed_ci_jobs(self, days_back: int, db: AsyncSession) -> list[dict]:
-        from datetime import datetime, timedelta, UTC
+        from datetime import UTC, datetime, timedelta
 
         cutoff = datetime.now(UTC) - timedelta(days=days_back)
         stmt = select(CIJob).where(
@@ -306,7 +305,7 @@ class IssueDiagnosisService:
         ]
 
     async def get_recent_commits(self, days_back: int, db: AsyncSession) -> list[dict]:
-        from datetime import datetime, timedelta, UTC
+        from datetime import UTC, datetime, timedelta
 
         cutoff = datetime.now(UTC) - timedelta(days=days_back)
         stmt = select(CIResult).where(

@@ -8,15 +8,15 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from contracts.schemas.resource_metrics import RESOURCE_METRICS_CONFIG_KEY
+from infrastructure.clients.resource_sync import get_remote_resource_dashboard_client
+from infrastructure.core.config import settings
 from infrastructure.persistence.models import (
     KubernetesClusterConfig,
     ProjectDashboardConfig,
     ResourceNodeMetrics,
     ResourceNpuMetrics,
 )
-from infrastructure.core.config import settings
-from contracts.schemas.resource_metrics import RESOURCE_METRICS_CONFIG_KEY
-from infrastructure.clients.resource_sync import get_remote_resource_dashboard_client
 from resource_dashboard.service import ResourceDashboardService
 
 logger = logging.getLogger(__name__)

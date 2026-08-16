@@ -7,9 +7,6 @@ from sqlalchemy import case, desc, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Unicode
 
-from infrastructure.core.config import settings
-from infrastructure.persistence.models import PullRequest
-from tooling.company_detector import detect_company
 from contracts.schemas.pr_pipeline import (
     PRPipelineContributor,
     PRPipelineContributorsResponse,
@@ -23,6 +20,8 @@ from contracts.schemas.pr_pipeline import (
     PRPipelineTrendsResponse,
     PullRequestResponse,
 )
+from infrastructure.persistence.models import PullRequest
+from tooling.company_detector import detect_company
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +117,7 @@ class PRPipelineService:
         if state:
             conditions.append(PullRequest.state == state)
         if not include_draft:
-            conditions.append(PullRequest.is_draft == False)
+            conditions.append(not PullRequest.is_draft)
 
         stmt = select(PullRequest).where(*conditions).order_by(PullRequest.updated_at.desc())
         result = await db.execute(stmt)
@@ -288,10 +287,6 @@ class PRPipelineService:
             "lines_added": desc("lines_added"),
             "lines_removed": desc("lines_removed"),
         }
-        reviewer_sort_map = {
-            "review_count": None,  # sorted separately
-            "avg_first_response_hours": None,
-        }
         order_clause = author_sort_map.get(sort_by, desc("pr_count"))
 
         contributors: list[PRPipelineContributor] = []
@@ -411,7 +406,7 @@ class PRPipelineService:
                     if row[0] and row[1]:
                         reviewer_emails[row[0]] = row[1]
 
-    
+
             # Build sorted contributor list with company info
             sorted_contribs = []
             for login, stats in sorted_reviewers:
@@ -422,9 +417,9 @@ class PRPipelineService:
 
             # Company filter at Python level (reviewer company comes from DB/GitHub lookup)
             if company == "华为":
-                sorted_contribs = [(l, s, a, c) for l, s, a, c in sorted_contribs if c == "华为"]
+                sorted_contribs = [(username, stats, avg, company) for username, stats, avg, company in sorted_contribs if company == "华为"]
             elif company == "none":
-                sorted_contribs = [(l, s, a, c) for l, s, a, c in sorted_contribs if c is None]
+                sorted_contribs = [(username, stats, avg, company) for username, stats, avg, company in sorted_contribs if company is None]
 
             # Sort reviewers
             if sort_by == "avg_first_response_hours":

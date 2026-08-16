@@ -1,20 +1,21 @@
 """告警规则 API（条件组模型）"""
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from api.deps import CurrentUser, DbSession
-from infrastructure.persistence.models import AlertCondition, AlertConditionGroup, AlertHistory as AlertHistoryModel, AlertRule
 from contracts.schemas import (
     AlertConditionCreate,
-    AlertConditionResponse,
     AlertConditionGroupCreate,
     AlertConditionGroupResponse,
+    AlertConditionResponse,
     AlertHistoryResponse,
     AlertRuleCreate,
     AlertRuleResponse,
     AlertRuleUpdate,
 )
+from infrastructure.persistence.models import AlertCondition, AlertConditionGroup, AlertRule
+from infrastructure.persistence.models import AlertHistory as AlertHistoryModel
 
 router = APIRouter()
 

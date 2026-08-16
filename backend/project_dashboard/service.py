@@ -3,10 +3,10 @@ Project Dashboard Service
 Provides data for the vllm-ascend project dashboard
 """
 import logging
-from datetime import UTC, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
-from infrastructure.clients.github_cache import get_github_cache, DOCKER_MIRRORS
+from infrastructure.clients.github_cache import get_github_cache
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class ProjectDashboardService:
     def __init__(self):
         self.github_cache = get_github_cache()
 
-    def get_releases(self, recommended_only: bool = False) -> List[Dict[str, Any]]:
+    def get_releases(self, recommended_only: bool = False) -> list[dict[str, Any]]:
         """获取 release 版本信息
 
         Args:
@@ -25,11 +25,11 @@ class ProjectDashboardService:
         """
         return self.github_cache.get_releases(recommended_only=recommended_only)
 
-    def get_all_tags(self) -> List[str]:
+    def get_all_tags(self) -> list[str]:
         """获取所有 tags 列表"""
         return self.github_cache.get_all_tags()
 
-    def get_main_branch_versions(self) -> Optional[Dict[str, Any]]:
+    def get_main_branch_versions(self) -> dict[str, Any] | None:
         """获取 main 分支的 vllm 版本信息"""
         versions = self.github_cache.get_conf_py_versions()
         if not versions:
@@ -47,18 +47,18 @@ class ProjectDashboardService:
             "updated_at": datetime.now(UTC).isoformat(),
         }
 
-    def get_model_support_matrix(self) -> Optional[Dict[str, Any]]:
+    def get_model_support_matrix(self) -> dict[str, Any] | None:
         """获取模型支持矩阵（从数据库配置）"""
         # 这个方法已废弃，模型支持矩阵现在完全由用户在后台配置
         # 不再从 GitHub markdown 文件解析
         return None
 
-    def update_model_support_matrix(self, entries: List[Dict[str, Any]]) -> bool:
+    def update_model_support_matrix(self, entries: list[dict[str, Any]]) -> bool:
         """更新模型支持矩阵（保存到配置）"""
         # This will be saved to database via the config API
         return True
 
-    def get_stale_issues(self, days: int = 7) -> List[Dict[str, Any]]:
+    def get_stale_issues(self, days: int = 7) -> list[dict[str, Any]]:
         """获取超期未 review 的 issues"""
         # This requires GitHub API access, will be implemented later
         # For now, return empty list
@@ -67,7 +67,7 @@ class ProjectDashboardService:
 
 
 # Singleton instance
-_service_instance: Optional[ProjectDashboardService] = None
+_service_instance: ProjectDashboardService | None = None
 
 
 def get_project_dashboard_service() -> ProjectDashboardService:

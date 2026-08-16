@@ -11,9 +11,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from infrastructure.clients.github_client import GitHubAuthenticationError, GitHubClient
 from infrastructure.core.config import settings
 from infrastructure.persistence.models import ModelConfig, ModelReport, ModelSyncConfig
-from infrastructure.clients.github_client import GitHubAuthenticationError, GitHubClient
 from tooling.parsers.model_report_parser import ModelReportParser
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class ModelSyncService:
             (total_configs, collected_count)
         """
         # 获取所有启用的同步配置
-        stmt = select(ModelSyncConfig).where(ModelSyncConfig.enabled == True)
+        stmt = select(ModelSyncConfig).where(ModelSyncConfig.enabled)
         result = await self.db.execute(stmt)
         configs = result.scalars().all()
 
@@ -197,8 +197,6 @@ class ModelSyncService:
             是否成功保存
         """
         # GitHub API 总是返回 ZIP 格式，所以直接处理 ZIP
-        import io
-        import zipfile
 
         # 解析 file_patterns
         file_patterns = []
@@ -246,10 +244,10 @@ class ModelSyncService:
             with zipfile.ZipFile(io.BytesIO(artifact_content)) as zip_file:
                 # 获取 ZIP 内所有文件列表
                 namelist = zip_file.namelist()
-                
+
                 # 过滤掉目录项
                 file_list = [name for name in namelist if not name.endswith('/')]
-                
+
                 logger.info(f"Artifact '{artifact_name}' contains {len(file_list)} file(s): {file_list}")
 
                 # 如果没有指定 file_patterns，使用默认模式
@@ -276,14 +274,12 @@ class ModelSyncService:
                 # 读取第一个匹配的文件作为报告
                 report_content = None
                 report_type = "yaml"
-                report_file_path = ""
                 for file_path in matched_files:
                     try:
                         content = zip_file.read(file_path)
                         report_content = content.decode("utf-8")
                         # 根据扩展名判断类型
                         report_type = "json" if file_path.endswith(".json") else "yaml"
-                        report_file_path = file_path
                         logger.info(f"Found report file: {file_path} ({report_type})")
                         break
                     except Exception as e:
@@ -382,7 +378,7 @@ class ModelSyncService:
         # 获取模型配置
         stmt = select(ModelConfig).where(ModelConfig.id == model_config_id)
         result = await self.db.execute(stmt)
-        model_config = result.scalar_one()
+        result.scalar_one()
 
         # 从报告内容中提取 vllm_version 和 hardware（如果上传参数未提供）
         if not vllm_version:

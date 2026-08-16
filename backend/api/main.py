@@ -19,6 +19,7 @@ if sys.platform == 'win32':
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.middleware.usage_tracking import UsageTrackingMiddleware
 from api.v1 import (
     alert_rules,
     auth,
@@ -29,6 +30,7 @@ from api.v1 import (
     daily_summary,
     issue_diagnosis,
     job_owners,
+    logs,
     model_sync_configs,
     models,
     performance,
@@ -41,13 +43,12 @@ from api.v1 import (
     test_board,
     users,
     workflows,
-    logs,
 )
 from infrastructure.core.config import settings
 from infrastructure.core.logging import setup_db_logging
 from infrastructure.db.base import engine
-from api.middleware.usage_tracking import UsageTrackingMiddleware
 from infrastructure.persistence.models import Base
+
 # Database DDL is allowed only for local development. Production migrations
 # must be executed by the explicit release/migration job before the API starts.
 _AUTO_MIGRATE = os.environ.get(
@@ -181,12 +182,12 @@ async def _warmup_claude_code_cli():
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-        from infrastructure.persistence.models.daily_summary import LLMProviderConfig
         from infrastructure.clients.claude_code_cli import ClaudeCodeCLI
+        from infrastructure.persistence.models.daily_summary import LLMProviderConfig
 
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
-            stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
+            stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active).limit(1)
             result = await db.execute(stmt)
             config = result.scalar_one_or_none()
 
@@ -340,8 +341,9 @@ async def _migrate_daily_failure_records_columns():
 async def _sync_litellm_providers():
     """同步启用的 LLM provider 到 LiteLLM 网关"""
     try:
-        from model_sync.litellm_sync import get_litellm_sync
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        from model_sync.litellm_sync import get_litellm_sync
 
         sync = get_litellm_sync()
         if not sync.available:

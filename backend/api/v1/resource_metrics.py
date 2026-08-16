@@ -1,12 +1,12 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query
 
 from api.deps import CurrentAdminUser, CurrentSuperAdminUser, CurrentUser, DbSession
 from contracts.schemas import (
-    NpuMetricsResponse,
     NodeMetricsResponse,
+    NpuMetricsResponse,
     ResourceMetricsConfigResponse,
     ResourceMetricsConfigUpdate,
 )

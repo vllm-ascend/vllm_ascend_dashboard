@@ -12,7 +12,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_active_admin_user, get_current_active_super_admin_user, get_current_user, get_db
+from api.deps import (
+    get_current_active_admin_user,
+    get_current_active_super_admin_user,
+    get_current_user,
+    get_db,
+)
 from infrastructure.core.config import settings
 from infrastructure.core.email import SMTP_CONFIG_KEY
 from infrastructure.persistence.models import ProjectDashboardConfig, User
@@ -37,17 +42,18 @@ async def get_system_config(
     返回可公开的配置信息（敏感数据如 token 会脱敏显示）
     """
     # 时区配置从数据库读取，默认 Asia/Shanghai
+    from sqlalchemy import select
+
     from infrastructure.core.app_runtime_config import load_app_runtime_config
     from infrastructure.core.github_config import load_github_runtime_config
     from infrastructure.tasks.scheduler_config import load_scheduler_runtime_config
-    from sqlalchemy import select
 
     await load_app_runtime_config()
     await load_github_runtime_config()
     await load_scheduler_runtime_config()
-    from infrastructure.persistence.models import ProjectDashboardConfig
     from infrastructure.db.base import SessionLocal
-    
+    from infrastructure.persistence.models import ProjectDashboardConfig
+
     timezone_str = 'Asia/Shanghai'  # 默认时区
     try:
         async with SessionLocal() as db:
@@ -60,7 +66,7 @@ async def get_system_config(
                 timezone_str = config.config_value['timezone']
     except Exception as e:
         logger.warning(f"Failed to load timezone from database, using default: {timezone_str}. Error: {e}")
-    
+
     # 只返回非敏感配置
     return {
         "app_config": {
@@ -126,23 +132,23 @@ async def update_app_config(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"日志级别必须是：{', '.join(valid_levels)}",
             )
-        
+
         # 更新运行时配置
         old_level = settings.LOG_LEVEL
         settings.LOG_LEVEL = log_level.upper()
         runtime_updates['log_level'] = log_level.upper()
         updates.append(f"日志级别：{old_level} → {log_level.upper()}")
-        
+
         # 动态调整 logging 级别（无需重启）
         try:
             new_level = getattr(logging, log_level.upper())
             root_logger = logging.getLogger()
             root_logger.setLevel(new_level)
-            
+
             # 更新所有 handler 的级别
             for handler in root_logger.handlers:
                 handler.setLevel(new_level)
-            
+
             updates.append("✅ 日志级别已动态调整（无需重启）")
             logger.info(f"Log level dynamically changed from {old_level} to {log_level.upper()}")
         except Exception as e:
@@ -458,10 +464,9 @@ async def get_system_status(
     """
     获取系统状态信息（所有登录用户可访问）
     """
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timedelta
 
-    from sqlalchemy import func, select
-    from sqlalchemy import text
+    from sqlalchemy import func, select, text
 
     from infrastructure.db.base import SessionLocal
     from infrastructure.persistence.models import SchedulerHeartbeat, WorkflowConfig
@@ -474,7 +479,7 @@ async def get_system_status(
             logger.warning(f"Failed to read scheduler heartbeat: {e}")
             heartbeat = None
         try:
-            stmt = select(func.max(WorkflowConfig.last_sync_at)).where(WorkflowConfig.enabled == True)
+            stmt = select(func.max(WorkflowConfig.last_sync_at)).where(WorkflowConfig.enabled)
             result = await db.execute(stmt)
             last_sync = result.scalar()
         except Exception as e:
@@ -643,7 +648,10 @@ async def sync_git_cache(
 
     支持同步指定仓库或所有仓库
     """
-    from infrastructure.clients.github_cache import get_github_cache, get_github_cache_for_repo, ensure_repo_cloned, update_repo
+    from infrastructure.clients.github_cache import (
+        get_github_cache,
+        get_github_cache_for_repo,
+    )
 
     results = []
 
@@ -703,8 +711,8 @@ async def get_daily_summary_config(
 
     所有登录用户可访问
     """
-    from infrastructure.persistence.models.daily_summary import LLMProviderConfig
     from infrastructure.persistence.models import ProjectDashboardConfig
+    from infrastructure.persistence.models.daily_summary import LLMProviderConfig
 
     try:
         # 获取定时任务配置
@@ -713,21 +721,20 @@ async def get_daily_summary_config(
         )
         schedule_result = await db.execute(schedule_stmt)
         schedule_config = schedule_result.scalar_one_or_none()
-        
+
         # 获取项目配置
         projects_stmt = select(ProjectDashboardConfig).where(
             ProjectDashboardConfig.config_key == 'daily_summary_projects'
         )
         projects_result = await db.execute(projects_stmt)
         projects_config = projects_result.scalar_one_or_none()
-        
+
         # 获取 LLM 提供商列表
         llm_stmt = select(LLMProviderConfig).order_by(LLMProviderConfig.display_order)
         llm_result = await db.execute(llm_stmt)
         llm_providers = llm_result.scalars().all()
-        
+
         # 检查 API Key 是否配置
-        import os
         llm_list = []
         for llm in llm_providers:
             llm_list.append({
@@ -739,7 +746,7 @@ async def get_daily_summary_config(
                 "display_order": llm.display_order,
                 "api_key_configured": bool(llm.api_key),
             })
-        
+
         return {
             "enabled": schedule_config.config_value.get('enabled', True) if schedule_config else True,
             "cron_hour": schedule_config.config_value.get('cron_hour', 8) if schedule_config else 8,
@@ -780,7 +787,7 @@ async def update_daily_summary_config(
             )
             schedule_result = await db.execute(schedule_stmt)
             schedule_config = schedule_result.scalar_one_or_none()
-            
+
             if schedule_config:
                 schedule_config.config_value.update({
                     'enabled': config.get('enabled', True),
@@ -800,7 +807,7 @@ async def update_daily_summary_config(
                     description='每日总结定时任务配置',
                 )
                 db.add(schedule_config)
-        
+
         # 更新项目配置
         if 'projects' in config:
             projects_stmt = select(ProjectDashboardConfig).where(
@@ -808,7 +815,7 @@ async def update_daily_summary_config(
             )
             projects_result = await db.execute(projects_stmt)
             projects_config = projects_result.scalar_one_or_none()
-            
+
             if projects_config:
                 projects_config.config_value = config['projects']
             else:
@@ -818,7 +825,7 @@ async def update_daily_summary_config(
                     description='每日总结项目配置',
                 )
                 db.add(projects_config)
-        
+
         await db.commit()
 
         return {
@@ -914,7 +921,7 @@ async def update_llm_provider(
             # 如果设置为激活，需要先取消其他所有 provider 的激活状态
             if config['is_active']:
                 deactivate_stmt = select(LLMProviderConfig).where(
-                    LLMProviderConfig.is_active == True
+                    LLMProviderConfig.is_active
                 )
                 deactivate_result = await db.execute(deactivate_stmt)
                 active_providers = deactivate_result.scalars().all()
@@ -940,7 +947,7 @@ async def update_llm_provider(
         # 只有当前激活的 provider 或其配置变化时才同步 LiteLLM
         should_sync = (
             provider_config.is_active or
-            config.get('is_active') == True
+            config.get('is_active')
         )
         if should_sync:
             try:
@@ -978,8 +985,8 @@ async def create_llm_provider(
     db: AsyncSession = Depends(get_db)
 ):
     """创建新的 LLM 提供商（需 super_admin）"""
-    from infrastructure.persistence.models.daily_summary import LLMProviderConfig
     from infrastructure.core.security import encrypt_api_key
+    from infrastructure.persistence.models.daily_summary import LLMProviderConfig
 
     provider_name = config.get("provider", "").strip()
     if not provider_name:
@@ -1004,7 +1011,7 @@ async def create_llm_provider(
     )
 
     if new_config.is_active:
-        deactivate_stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True)
+        deactivate_stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active)
         deactivate_result = await db.execute(deactivate_stmt)
         for active_p in deactivate_result.scalars().all():
             active_p.is_active = False
@@ -1368,9 +1375,11 @@ async def test_smtp_connection(
     db: AsyncSession = Depends(get_db),
 ):
     """测试 SMTP 连通性（admin 权限）"""
-    from infrastructure.core.email import get_smtp_config as _read
-    import aiosmtplib
     from email.mime.text import MIMEText
+
+    import aiosmtplib
+
+    from infrastructure.core.email import get_smtp_config as _read
 
     config = await _read(db)
     host = config.get("smtp_host", "")

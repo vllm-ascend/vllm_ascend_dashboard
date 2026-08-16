@@ -1,16 +1,16 @@
 """PR 问题诊断服务 — 从 GitHub API 获取 CI 失败详情 + 跨 PR 分析 + agentic LLM 深层次定位"""
 import asyncio
 import base64
-import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from infrastructure.clients.llm_client import LLMClient
 from infrastructure.core.config import settings
 from infrastructure.persistence.models import PullRequest
 from infrastructure.persistence.models.daily_summary import LLMProviderConfig
-from infrastructure.clients.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ class PRDiagnosisService:
             "head_sha": pr_data.get("head", {}).get("sha", ""),
             "head_branch": pr_data.get("head", {}).get("ref", ""),
             "base_branch": pr_data.get("base", {}).get("ref", ""),
-            "labels": [l.get("name", "") for l in pr_data.get("labels", [])],
+            "labels": [label.get("name", "") for label in pr_data.get("labels", [])],
             "additions": pr_data.get("additions", 0),
             "deletions": pr_data.get("deletions", 0),
             "changed_files": pr_data.get("changed_files", 0),
@@ -277,7 +277,7 @@ class PRDiagnosisService:
                 prs.append({
                     "number": pr.get("number"),
                     "title": pr.get("title", ""),
-                    "labels": [l.get("name", "") for l in pr.get("labels", [])],
+                    "labels": [label.get("name", "") for label in pr.get("labels", [])],
                     "merged_at": pr.get("merged_at"),
                     "user": pr.get("user", {}).get("login", ""),
                 })
@@ -344,10 +344,10 @@ class PRDiagnosisService:
                 start = max(0, i - 2)
                 end = min(len(lines), i + 8)
                 for j in range(start, end):
-                    l = lines[j].strip()
-                    if l and l not in seen:
-                        seen.add(l)
-                        error_lines.append(l[:500])
+                    line_text = lines[j].strip()
+                    if line_text and line_text not in seen:
+                        seen.add(line_text)
+                        error_lines.append(line_text[:500])
 
         result = "\n".join(error_lines[:80])
         return result[:10000]
@@ -373,7 +373,7 @@ class PRDiagnosisService:
         labels = pr.get("labels", [])
         if labels:
             lines.append(f"- 标签: {', '.join(labels)}")
-            skip_labels = [l for l in labels if "skip" in l.lower()]
+            skip_labels = [label for label in labels if "skip" in label.lower()]
             if skip_labels:
                 lines.append(f"  ⚠️ 包含 skip 相关标签: {', '.join(skip_labels)}")
         else:
@@ -416,7 +416,7 @@ class PRDiagnosisService:
             for rp in recent_prs:
                 rp_labels = rp.get("labels", [])
                 has_ready = "ready" in rp_labels
-                has_skip = any("skip" in l.lower() for l in rp_labels)
+                has_skip = any("skip" in label.lower() for label in rp_labels)
                 label_str = f" 标签: {', '.join(rp_labels)}" if rp_labels else " 无标签"
                 ready_flag = ""
                 if not has_ready:
@@ -427,7 +427,7 @@ class PRDiagnosisService:
 
         # CI 工作流配置
         if workflow_config:
-            lines.append(f"\n### CI 工作流配置（分析 ready/skip 标签逻辑）")
+            lines.append("\n### CI 工作流配置（分析 ready/skip 标签逻辑）")
             lines.append(workflow_config)
 
         # 诊断指令
@@ -463,7 +463,7 @@ class PRDiagnosisService:
 
     async def _get_llm_config(self):
         """获取活跃的 LLM 配置"""
-        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True).limit(1)
+        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active).limit(1)
         result = await self.db.execute(stmt)
         config = result.scalar_one_or_none()
         if not config:

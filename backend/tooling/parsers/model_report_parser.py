@@ -18,7 +18,7 @@ class ModelReportParser:
     def parse_yaml_report(self, yaml_content: str) -> dict[str, Any]:
         """
         解析 YAML 格式的模型报告
-        
+
         YAML 格式示例：
         ```yaml
         model_name: "Qwen/Qwen3-8B"
@@ -139,7 +139,7 @@ class ModelReportParser:
                     "target": task.get("target", {}),
                     "pass_fail": task.get("pass_fail", "pass")
                 }
-                
+
                 # 提取 task 的 metrics
                 if "metrics" in task and isinstance(task["metrics"], dict):
                     task_data["metrics"] = task["metrics"]
@@ -147,7 +147,7 @@ class ModelReportParser:
                     for metric_name, metric_value in task["metrics"].items():
                         key = f"{task_data['name']}.{metric_name}"
                         normalized["metrics"][key] = metric_value
-                
+
                 normalized["tasks"].append(task_data)
 
         # 如果是 lm_eval 格式（results 嵌套，旧格式兼容）
@@ -175,16 +175,16 @@ class ModelReportParser:
     def _calculate_overall_pass_fail(self, tasks: list) -> str:
         """
         计算总体 pass_fail
-        
+
         规则：所有 task 都 pass 才算 pass，否则为 fail
         """
         if not tasks:
             return "pass"
-        
+
         for task in tasks:
             if task.get("pass_fail", "pass") != "pass":
                 return "fail"
-        
+
         return "pass"
 
     def evaluate_pass_fail(
@@ -194,7 +194,7 @@ class ModelReportParser:
     ) -> tuple[str, dict[str, Any]]:
         """
         根据阈值评估 Pass/Fail
-        
+
         Args:
             metrics: 扁平化的 metrics 字典
             thresholds: 阈值配置，格式如：
@@ -202,7 +202,7 @@ class ModelReportParser:
                     "gsm8k.exact_match,strict-match": 0.85,
                     "ceval-valid.acc,none": 0.80
                 }
-        
+
         Returns:
             (pass_fail, details)
             pass_fail: "pass" 或 "fail"
@@ -260,7 +260,7 @@ class ModelReportParser:
     def extract_known_issues(self, report_data: dict[str, Any]) -> str:
         """
         从报告中提取已知问题
-        
+
         优先级：
         1. known_issues 字段
         2. failed_metrics 自动生成

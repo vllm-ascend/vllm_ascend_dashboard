@@ -1,5 +1,4 @@
 import logging
-from datetime import UTC, datetime
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -52,6 +51,7 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
             if username:
                 try:
                     from sqlalchemy import select
+
                     from infrastructure.persistence.models import User
                     async with SessionLocal() as db:
                         user_id = (await db.execute(select(User.id).where(User.username == username))).scalar_one_or_none()

@@ -1,10 +1,9 @@
 import logging
-from typing import Any
 
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructure.persistence.models import JobFailureAnalysis, CIJob
+from infrastructure.persistence.models import CIJob, JobFailureAnalysis
 from infrastructure.persistence.models.test_board import TestRun
 
 logger = logging.getLogger(__name__)

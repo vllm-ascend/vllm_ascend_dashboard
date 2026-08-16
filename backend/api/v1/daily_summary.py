@@ -2,23 +2,29 @@
 每日总结 API 路由
 """
 import logging
-from datetime import datetime, timedelta, date as DateType, timezone
-from typing import Annotated, Optional
+from datetime import UTC, datetime, timedelta
+from datetime import date as DateType
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_current_active_super_admin_user, get_db
-from infrastructure.persistence.models import User
+from api.deps import get_current_active_super_admin_user, get_current_user, get_db
 from contracts.schemas.daily_summary import (
-    GenerateSummaryRequest, FetchDataRequest,
-    DailySummaryResponse, DailySummaryListResponse, DailySummaryListItem,
-    FetchDataResponse, GenerateSummaryResponse,
-    TrendDataResponse, TrendDataItem,
+    DailySummaryListItem,
+    DailySummaryListResponse,
+    DailySummaryResponse,
+    FetchDataRequest,
+    FetchDataResponse,
+    GenerateSummaryRequest,
+    GenerateSummaryResponse,
+    TrendDataItem,
+    TrendDataResponse,
 )
-from reporting.daily_summary import DailySummaryService
-from reporting.daily_report import _today_shanghai
+from infrastructure.persistence.models import User
 from infrastructure.storage.daily_data_file_store import DailyDataFileStore
+from reporting.daily_report import _today_shanghai
+from reporting.daily_summary import DailySummaryService
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +32,16 @@ logger = logging.getLogger(__name__)
 def format_datetime_utc(dt: datetime | None) -> str | None:
     """
     格式化 datetime 为 ISO 格式，确保带 UTC 时区标识
-    
+
     如果 datetime 不带时区信息，假设为 UTC 时间并添加 +00:00 标识
     """
     if dt is None:
         return None
-    
+
     # 如果 datetime 不带时区信息，假设为 UTC
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    
+        dt = dt.replace(tzinfo=UTC)
+
     return dt.isoformat()
 
 router = APIRouter(prefix="/daily-summary", tags=["每日总结"])
@@ -264,7 +270,7 @@ async def regenerate_daily_summary(
     project: str,
     date: str,
     current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
-    llm_provider: Optional[str] = Query(None),
+    llm_provider: str | None = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
     """

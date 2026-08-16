@@ -4,7 +4,7 @@ GitHub API 客户端
 """
 import asyncio
 import logging
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -33,7 +33,7 @@ class GitHubRateLimitError(GitHubAPIError):
 class GitHubClient:
     """
     GitHub API 异步客户端
-    
+
     特性：
     - 自动处理速率限制
     - 指数退避重试
@@ -54,7 +54,7 @@ class GitHubClient:
     def __init__(self, token: str, owner: str | None = None, repo: str | None = None):
         """
         初始化 GitHub 客户端
-        
+
         Args:
             token: GitHub Personal Access Token
             owner: GitHub 组织名
@@ -256,7 +256,7 @@ class GitHubClient:
             params["branch"] = branch
         if event:
             params["event"] = event
-        
+
         # 处理时间过滤：优先使用 created 参数，如果提供了 days_back 则自动生成
         if created:
             params["created"] = created
@@ -273,10 +273,10 @@ class GitHubClient:
     async def get_workflow_run(self, run_id: int) -> dict[str, Any]:
         """
         获取单次 workflow run 详情
-        
+
         Args:
             run_id: workflow run ID
-            
+
         Returns:
             workflow run 详情
         """
@@ -381,7 +381,7 @@ class GitHubClient:
             "GET",
             f"/repos/{self.owner}/{self.repo}/actions/artifacts/{artifact_id}"
         )
-        
+
         # 从 artifact 信息中获取 archive_download_url
         download_url = artifact_info.get("archive_download_url", "")
         if not download_url:
@@ -715,9 +715,9 @@ class GitHubClient:
         logger.info(f"Fetching pull requests by date range ({start_time} to {end_time})")
 
         # 将 start_time 和 end_time 转换为 UTC 进行比较
-        start_time_utc = start_time.astimezone(timezone.utc) if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
-        end_time_utc = end_time.astimezone(timezone.utc) if end_time.tzinfo else end_time.replace(tzinfo=timezone.utc)
-        
+        start_time_utc = start_time.astimezone(UTC) if start_time.tzinfo else start_time.replace(tzinfo=UTC)
+        end_time_utc = end_time.astimezone(UTC) if end_time.tzinfo else end_time.replace(tzinfo=UTC)
+
         prs = []
         page = 1
 
@@ -732,14 +732,14 @@ class GitHubClient:
             for pr in result:
                 # GitHub API 返回的 created_at 是 UTC 时间（格式：2026-04-08T12:34:56Z）
                 created_at = datetime.fromisoformat(pr["created_at"].replace("Z", "+00:00"))
-                created_at_utc = created_at.astimezone(timezone.utc)
-                
+                created_at_utc = created_at.astimezone(UTC)
+
                 if created_at_utc < start_time_utc:
                     # 因为是按 created 降序排列，一旦找到早于 start_time 的 PR，后面的都更早，可以停止
                     logger.info(f"Stopping pagination at page {page} - PR {pr['number']} created at {created_at_utc} is before start time {start_time_utc}")
                     found_in_range = False
                     break
-                
+
                 if start_time_utc <= created_at_utc <= end_time_utc:
                     # 获取该 PR 的 commits 列表
                     commits = await self.get_pr_commits(owner, repo, pr["number"])
@@ -1093,9 +1093,9 @@ class GitHubClient:
         logger.info(f"Fetching issues by date range ({start_time} to {end_time})")
 
         # 将 start_time 和 end_time 转换为 UTC 进行比较
-        start_time_utc = start_time.astimezone(timezone.utc) if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
-        end_time_utc = end_time.astimezone(timezone.utc) if end_time.tzinfo else end_time.replace(tzinfo=timezone.utc)
-        
+        start_time_utc = start_time.astimezone(UTC) if start_time.tzinfo else start_time.replace(tzinfo=UTC)
+        end_time_utc = end_time.astimezone(UTC) if end_time.tzinfo else end_time.replace(tzinfo=UTC)
+
         issues = []
         page = 1
 
@@ -1110,17 +1110,17 @@ class GitHubClient:
             for issue in result:
                 if "pull_request" in issue:  # 跳过 PR
                     continue
-                
+
                 # GitHub API 返回的 created_at 是 UTC 时间（格式：2026-04-08T12:34:56Z）
                 created_at = datetime.fromisoformat(issue["created_at"].replace("Z", "+00:00"))
-                created_at_utc = created_at.astimezone(timezone.utc)
-                
+                created_at_utc = created_at.astimezone(UTC)
+
                 if created_at_utc < start_time_utc:
                     # 因为是按 created 降序排列，一旦找到早于 start_time 的 issue，后面的都更早，可以停止
                     logger.info(f"Stopping pagination at page {page} - Issue {issue['number']} created at {created_at_utc} is before start time {start_time_utc}")
                     found_in_range = False
                     break
-                
+
                 if start_time_utc <= created_at_utc <= end_time_utc:
                     issues.append(issue)
                     found_in_range = True

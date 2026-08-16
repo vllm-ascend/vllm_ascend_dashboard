@@ -1,9 +1,7 @@
-import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
-from sqlalchemy import select, and_, or_, desc, delete
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.persistence.models.test_board import TestCase, TestRun, TestSuiteSnapshot
@@ -207,7 +205,7 @@ class TestHealthCalculator:
             by_sha.setdefault(r.head_sha or "", []).append(r.result)
         flips = 0
         comparable = 0
-        for sha, results in by_sha.items():
+        for _sha, results in by_sha.items():
             if len(results) < 2:
                 continue
             for i in range(1, len(results)):
@@ -222,7 +220,7 @@ class TestHealthCalculator:
         for r in runs:
             by_sha.setdefault(r.head_sha or "", []).append(r.result)
         evidence_count = 0
-        for sha, results in by_sha.items():
+        for _sha, results in by_sha.items():
             if len(results) < 2:
                 continue
             has_flip = any(
@@ -236,16 +234,12 @@ class TestHealthCalculator:
         sha_count = len([sha for sha, results in by_sha.items() if len(results) >= 2])
         if sha_count < 2:
             is_flaky = False
-            flaky_marking = "insufficient_data"
         elif evidence_count >= 2 and flip_rate > 0:
             is_flaky = True
-            flaky_marking = "is_flaky"
         elif evidence_count >= 1 and flip_rate > 0:
             is_flaky = False
-            flaky_marking = "flaky_candidate"
         else:
             is_flaky = False
-            flaky_marking = "stable"
         return is_flaky, flip_rate, evidence_count
 
     def _calc_flip_count(self, runs: list[TestRun]) -> int:
@@ -253,7 +247,7 @@ class TestHealthCalculator:
         for r in runs:
             by_sha.setdefault(r.head_sha or "", []).append(r.result)
         count = 0
-        for sha, results in by_sha.items():
+        for _sha, results in by_sha.items():
             for i in range(1, len(results)):
                 if results[i] != results[i-1] and results[i] in ("passed", "failed") and results[i-1] in ("passed", "failed"):
                     count += 1

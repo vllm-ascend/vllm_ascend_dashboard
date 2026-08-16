@@ -10,8 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_active_admin_user, get_current_user
 from api.deps import get_db as get_db_session
-from infrastructure.db.base import get_db
-from infrastructure.persistence.models import User
 from contracts.schemas import (
     PRActionRequest,
     ProjectDashboardConfigUpdate,
@@ -20,6 +18,8 @@ from contracts.schemas import (
 )
 from infrastructure.clients.github_api import get_github_api_service
 from infrastructure.clients.github_cache import ensure_repo_cloned, get_github_cache, update_repo
+from infrastructure.db.base import get_db
+from infrastructure.persistence.models import User
 from project_dashboard.service import get_project_dashboard_service
 
 logger = logging.getLogger(__name__)

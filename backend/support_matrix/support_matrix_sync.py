@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from infrastructure.clients.github_cache import get_github_cache
 from infrastructure.core.config import settings
 from infrastructure.persistence.models import (
     FeatureCompatibility,
@@ -19,7 +20,6 @@ from infrastructure.persistence.models import (
     ModelRegistry,
     ProjectDashboardConfig,
 )
-from infrastructure.clients.github_cache import get_github_cache
 from tooling.parsers.support_matrix_parser import (
     parse_feature_compatibility,
     parse_supported_features,

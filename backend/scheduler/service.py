@@ -2,18 +2,18 @@
 数据同步定时任务调度器
 使用 APScheduler 实现定时数据采集
 """
-import asyncio
 import logging
-from datetime import UTC, datetime, date, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import bindparam, text
 
+from collector.ci import CICollector
+from infrastructure.clients.github_client import GitHubClient
 from infrastructure.core.config import settings
 from infrastructure.db.base import SessionLocal
-from infrastructure.clients.github_client import GitHubClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ async def _read_config_async(config_key: str) -> dict | None:
     """从数据库读取配置（仅限异步上下文调用）。"""
     try:
         from sqlalchemy import select as sa_select
+
         from infrastructure.persistence.models import ProjectDashboardConfig
         async with SessionLocal() as db:
             stmt = sa_select(ProjectDashboardConfig).where(
@@ -40,7 +41,7 @@ async def _read_config_async(config_key: str) -> dict | None:
 class DataSyncScheduler:
     """
     数据同步定时任务调度器
-    
+
     功能：
     - 定时同步 CI 数据（可配置间隔）
     - 手动触发同步
@@ -83,7 +84,7 @@ class DataSyncScheduler:
         logger.info("=" * 60)
         logger.info("SCHEDULER STARTING - Adding scheduled jobs")
         logger.info("=" * 60)
-        
+
         if not self._initialized:
             self._initialize_github_client()
 
@@ -385,7 +386,7 @@ class DataSyncScheduler:
                 name="Code Metrics Cleanup",
                 replace_existing=True,
             )
-            logger.info(f"Code metrics cleanup scheduled at 03:00 daily")
+            logger.info("Code metrics cleanup scheduled at 03:00 daily")
         except Exception as e:
             logger.error(f"Failed to add code metrics cleanup job: {e}")
 
@@ -399,7 +400,7 @@ class DataSyncScheduler:
                 name="Code Metrics Heatmap Sync",
                 replace_existing=True,
             )
-            logger.info(f"Code metrics heatmap sync scheduled at 04:00 daily")
+            logger.info("Code metrics heatmap sync scheduled at 04:00 daily")
         except Exception as e:
             logger.error(f"Failed to add heatmap sync job: {e}")
 
@@ -413,7 +414,7 @@ class DataSyncScheduler:
                 name="Code Metrics Collection",
                 replace_existing=True,
             )
-            logger.info(f"Code metrics collection scheduled at 05:00 daily")
+            logger.info("Code metrics collection scheduled at 05:00 daily")
         except Exception as e:
             logger.error(f"Failed to add code metrics collection job: {e}")
 
@@ -682,13 +683,12 @@ class DataSyncScheduler:
 
         # 1. 更新所有启用 workflow 的 last_sync_at
         try:
-            from sqlalchemy import update
-
             from app.models import WorkflowConfig
+            from sqlalchemy import update
 
             await db.execute(
                 update(WorkflowConfig)
-                .where(WorkflowConfig.enabled == True)
+                .where(WorkflowConfig.enabled)
                 .values(last_sync_at=datetime.now(UTC))
             )
             await db.commit()
@@ -781,7 +781,12 @@ class DataSyncScheduler:
         async with SessionLocal() as db:
             try:
                 from sqlalchemy import delete as sa_delete
-                from infrastructure.persistence.models import UserLoginLog, FeatureUsageLog, TokenBlacklist
+
+                from infrastructure.persistence.models import (
+                    FeatureUsageLog,
+                    TokenBlacklist,
+                    UserLoginLog,
+                )
                 lr = await db.execute(sa_delete(UserLoginLog).where(UserLoginLog.login_time < cutoff))
                 ur = await db.execute(sa_delete(FeatureUsageLog).where(FeatureUsageLog.access_time < cutoff))
                 tr = await db.execute(sa_delete(TokenBlacklist).where(TokenBlacklist.expires_at < datetime.now(UTC)))
@@ -798,10 +803,13 @@ class DataSyncScheduler:
         logger.info("=" * 60)
 
         try:
-            from infrastructure.clients.github_cache import get_github_cache, get_github_cache_for_repo
-            
+            from infrastructure.clients.github_cache import (
+                get_github_cache,
+                get_github_cache_for_repo,
+            )
+
             results = []
-            
+
             # 更新 vllm-ascend 仓库
             logger.info("Updating vllm-ascend repository...")
             ascend_cache = get_github_cache()
@@ -811,7 +819,7 @@ class DataSyncScheduler:
             else:
                 success = ascend_cache.pull()
                 results.append(f"vllm-ascend: {'pulled' if success else 'pull failed'}")
-            
+
             # 更新 vllm 仓库
             logger.info("Updating vllm repository...")
             vllm_cache = get_github_cache_for_repo(owner="vllm-project", repo="vllm")
@@ -821,12 +829,12 @@ class DataSyncScheduler:
             else:
                 success = vllm_cache.pull()
                 results.append(f"vllm: {'pulled' if success else 'pull failed'}")
-            
+
             logger.info(f"Cache update results: {', '.join(results)}")
             logger.info("=" * 60)
             logger.info("PROJECT DASHBOARD CACHE UPDATE JOB COMPLETED")
             logger.info("=" * 60)
-            
+
         except Exception as e:
             logger.error("=" * 60)
             logger.error(f"PROJECT DASHBOARD CACHE UPDATE JOB FAILED - Error: {e}", exc_info=True)
@@ -862,16 +870,17 @@ class DataSyncScheduler:
         logger.info("=" * 60)
         logger.info("DAILY SUMMARY GENERATION JOB STARTED")
         logger.info("=" * 60)
-        
+
         try:
-            from datetime import date, timedelta
-            from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-            from sqlalchemy.orm import sessionmaker
-            from infrastructure.persistence.models.daily_summary import DailySummary
-            from infrastructure.persistence.models import ProjectDashboardConfig
-            from reporting.daily_summary import DailySummaryService
-            from reporting.daily_report import _today_shanghai
+            from datetime import timedelta
+
             from sqlalchemy import select
+            from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+            from sqlalchemy.orm import sessionmaker
+
+            from infrastructure.persistence.models import ProjectDashboardConfig
+            from reporting.daily_report import _today_shanghai
+            from reporting.daily_summary import DailySummaryService
 
             # 创建数据库会话
             engine = create_async_engine(settings.DATABASE_URL, echo=False)
@@ -933,12 +942,18 @@ class DataSyncScheduler:
         logger.info("=" * 60)
 
         try:
-            from datetime import date, timedelta
+            from datetime import timedelta
+
+            from sqlalchemy import select
             from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
             from sqlalchemy.orm import sessionmaker
-            from sqlalchemy import select
+
             from infrastructure.persistence.models import ProjectDashboardConfig
-            from reporting.daily_report import DailyReportService, REPORT_CONFIG_KEY, _today_shanghai
+            from reporting.daily_report import (
+                REPORT_CONFIG_KEY,
+                DailyReportService,
+                _today_shanghai,
+            )
 
             if not settings.REPORT_ENABLED:
                 logger.info("Report disabled, skipping")
@@ -1190,7 +1205,7 @@ class DataSyncScheduler:
 
                 await db.execute(
                     update(WorkflowConfig)
-                    .where(WorkflowConfig.enabled == True)
+                    .where(WorkflowConfig.enabled)
                     .values(last_sync_at=datetime.now(UTC))
                 )
                 await db.commit()
@@ -1209,10 +1224,10 @@ class DataSyncScheduler:
     def get_next_run_time(self, job_id: str) -> datetime | None:
         """
         获取任务下次执行时间
-        
+
         Args:
             job_id: 任务 ID
-            
+
         Returns:
             下次执行时间，任务不存在时返回 None
         """
@@ -1224,7 +1239,7 @@ class DataSyncScheduler:
     def get_job_info(self) -> list[dict]:
         """
         获取所有任务信息
-        
+
         Returns:
             任务信息列表
         """
@@ -1256,8 +1271,14 @@ class DataSyncScheduler:
     async def _cleanup_code_metrics_job(self):
         """定时清理过期代码度量明细数据（365天保留）"""
         try:
-            from infrastructure.persistence.models import CodeMetricsSnapshot, CodeComplexityDetail, CodeDuplicationDetail, CodeSecurityDetail
             from sqlalchemy import delete, select
+
+            from infrastructure.persistence.models import (
+                CodeComplexityDetail,
+                CodeDuplicationDetail,
+                CodeMetricsSnapshot,
+                CodeSecurityDetail,
+            )
             cutoff_date = date.today() - timedelta(days=365)
             async with SessionLocal() as db:
                 old_ids = [row[0] for row in (await db.execute(

@@ -4,7 +4,6 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from api.deps import CurrentAdminUser, CurrentUser, DbSession
-from infrastructure.persistence.models import KubernetesClusterConfig
 from contracts.schemas import (
     ClusterResourceSummary,
     KubernetesClusterCreate,
@@ -15,9 +14,10 @@ from contracts.schemas import (
     ResourceDashboardResponse,
 )
 from infrastructure.clients.kubernetes_client import encrypt_kubeconfig
-from resource_dashboard.service import ResourceDashboardService
-from resource_dashboard.metrics_query import PersistedResourceMetricsService
 from infrastructure.core.config import settings
+from infrastructure.persistence.models import KubernetesClusterConfig
+from resource_dashboard.metrics_query import PersistedResourceMetricsService
+from resource_dashboard.service import ResourceDashboardService
 
 router = APIRouter()
 

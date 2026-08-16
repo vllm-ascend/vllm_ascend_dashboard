@@ -9,13 +9,25 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from api.deps import DbSession, get_current_user
-from infrastructure.core.security import (
-    anonymize_ip, create_access_token, create_refresh_token,
-    decode_token, hash_ip, hash_password, verify_password,
+from contracts.schemas import (
+    LoginRequest,
+    Message,
+    PasswordChange,
+    RegisterRequest,
+    Token,
+    UserResponse,
 )
-from infrastructure.persistence.models import User, UserLoginLog, TokenBlacklist
-from contracts.schemas import LoginRequest, Message, PasswordChange, RegisterRequest, Token, UserResponse
 from infrastructure.core.rate_limiter import check_rate_limit
+from infrastructure.core.security import (
+    anonymize_ip,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_ip,
+    hash_password,
+    verify_password,
+)
+from infrastructure.persistence.models import TokenBlacklist, User, UserLoginLog
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

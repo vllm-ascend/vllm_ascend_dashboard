@@ -6,7 +6,7 @@ AnalysisEmbedding — 向量表，存储记忆的 embedding（预留，阶段二
 """
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, ForeignKey, Integer, String, Text, TIMESTAMP
+from sqlalchemy import TIMESTAMP, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.types import JSON
 

@@ -3,11 +3,10 @@ LLM Client - 大模型调用客户端
 支持多种 LLM 提供商：OpenAI, Anthropic, 通义千问
 API Key 从数据库配置中获取，不再依赖环境变量
 """
-import asyncio
 import logging
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from typing import AsyncGenerator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +36,13 @@ class LLMStreamChunk:
     """流式响应片段及模型结束原因。"""
 
     content: str = ""
-    finish_reason: Optional[str] = None
+    finish_reason: str | None = None
 
 
 class BaseLLMClient:
     """LLM 客户端基类"""
 
-    def __init__(self, api_key: str, api_base: Optional[str] = None):
+    def __init__(self, api_key: str, api_base: str | None = None):
         self.api_key = api_key
         self.api_base = api_base
 
@@ -316,7 +315,7 @@ PROVIDER_CLIENTS = {
 }
 
 
-def create_client(provider: str, api_key: str, api_base: Optional[str] = None) -> BaseLLMClient:
+def create_client(provider: str, api_key: str, api_base: str | None = None) -> BaseLLMClient:
     """
     创建 LLM 客户端实例
 
@@ -343,7 +342,7 @@ class LLMClient:
         provider: str,
         model: str,
         api_key: str,
-        api_base: Optional[str] = None,
+        api_base: str | None = None,
         system_prompt: str = "",
         user_prompt: str = "",
         temperature: float = 0.7,
@@ -387,12 +386,12 @@ class LLMClient:
         provider: str,
         model: str,
         api_key: str,
-        api_base: Optional[str] = None,
+        api_base: str | None = None,
         system_prompt: str = "",
         user_prompt: str = "",
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        messages: Optional[list[dict]] = None,
+        messages: list[dict] | None = None,
     ):
         if not api_key:
             raise LLMError(f"API Key not configured for provider: {provider}")

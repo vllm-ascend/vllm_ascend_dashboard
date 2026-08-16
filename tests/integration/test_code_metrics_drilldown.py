@@ -15,11 +15,17 @@ backend_dir = str(Path(__file__).resolve().parents[2] / "backend")
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-from api.deps import get_db  # noqa: E402
-from infrastructure.core.security import create_access_token  # noqa: E402
-from api.main import app  # noqa: E402
-from infrastructure.persistence.models import Base, CodeComplexityDetail, CodeMetricsSnapshot, User  # noqa: E402
 from tests.mysql_test_db import create_test_engine, reset_tables  # noqa: E402
+
+from api.deps import get_db  # noqa: E402
+from api.main import app  # noqa: E402
+from infrastructure.core.security import create_access_token  # noqa: E402
+from infrastructure.persistence.models import (  # noqa: E402
+    Base,
+    CodeComplexityDetail,
+    CodeMetricsSnapshot,
+    User,
+)
 
 
 @pytest_asyncio.fixture

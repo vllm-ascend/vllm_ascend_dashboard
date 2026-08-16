@@ -29,12 +29,12 @@ class ModelTrendService:
     ) -> list[dict[str, Any]]:
         """
         获取模型趋势数据
-        
+
         Args:
             model_config_id: 模型配置 ID
             days: 获取多少天的数据
             metric_keys: 需要提取的 metric keys，None 表示提取所有
-        
+
         Returns:
             趋势数据列表：
             [
@@ -107,12 +107,12 @@ class ModelTrendService:
     ) -> dict[str, list[dict[str, Any]]]:
         """
         获取关键指标的趋势数据（按指标分组）
-        
+
         Args:
             model_config_id: 模型配置 ID
             key_metrics: 关键指标列表
             days: 获取多少天的数据
-        
+
         Returns:
             {
                 "gsm8k.exact_match": [
@@ -147,7 +147,7 @@ class ModelTrendService:
     ) -> list[dict[str, Any]]:
         """
         获取 Pass/Fail 历史记录
-        
+
         Returns:
             [
                 {
@@ -196,10 +196,10 @@ class ModelTrendService:
     ) -> list[dict[str, Any]]:
         """
         获取用于对比的报告数据
-        
+
         Args:
             report_ids: 报告 ID 列表
-        
+
         Returns:
             报告数据列表
         """
@@ -248,11 +248,11 @@ class ModelTrendService:
     ) -> dict[str, Any]:
         """
         计算指标变化
-        
+
         Args:
             baseline_metrics: 基准指标
             current_metrics: 当前指标
-        
+
         Returns:
             {
                 "metric_name": {

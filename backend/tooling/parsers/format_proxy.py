@@ -8,11 +8,9 @@ Anthropic Messages API ↔ OpenAI Chat Completions API 格式翻译代理
   Claude Code CLI → localhost:{port} → FormatProxy → 上游 API provider
                       (Anthropic 格式)        (OpenAI 格式)
 """
-import asyncio
 import json
 import logging
 import time
-from typing import Optional
 
 import aiohttp
 from aiohttp import web
@@ -571,7 +569,7 @@ class FormatProxy:
                 }))
 
             # 修正: 使用上一次 content_block_stop 的 index（实际存在的 index）
-            max_content_idx = len(state["pending_tool_calls"]) - 1 if state["pending_tool_calls"] else 0
+            len(state["pending_tool_calls"]) - 1 if state["pending_tool_calls"] else 0
 
             # 解析 tool_use 完成的数据
             for tc_index, pending in state["pending_tool_calls"].items():

@@ -3,9 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, status
 
 from api.deps import CurrentAdminUser, CurrentUser, DbSession
-from infrastructure.core.config import settings
 from contracts.schemas.pr_pipeline import (
-    PRPipelineContributor,
     PRPipelineContributorsResponse,
     PRPipelineHistoricalSyncRequest,
     PRPipelineKanban,
@@ -16,6 +14,7 @@ from contracts.schemas.pr_pipeline import (
     PRPipelineTrendsResponse,
     PullRequestResponse,
 )
+from infrastructure.core.config import settings
 from pr_pipeline.pr_pipeline_service import PRPipelineService
 
 logger = logging.getLogger(__name__)
@@ -143,6 +142,7 @@ async def sync_pr_pipeline(
 async def sync_status():
     """Return the latest durable PR sync task status."""
     from sqlalchemy import text
+
     from infrastructure.db.base import SessionLocal
 
     async with SessionLocal() as db:

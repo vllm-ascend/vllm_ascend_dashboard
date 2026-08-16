@@ -1,7 +1,7 @@
-import logging
-import zipfile
 import io
+import logging
 import xml.etree.ElementTree as ET
+import zipfile
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class JUnitXMLParser:
                 with zf.open(xml_files[0]) as f:
                     tree = ET.parse(f)
                     root = tree.getroot()
-        except (zipfile.BadZipFile, ET.ParseError) as e:
+        except (zipfile.BadZipFile, ET.ParseError):
             try:
                 root = ET.fromstring(artifact_content.decode('utf-8'))
             except (ET.ParseError, UnicodeDecodeError) as parse_err:

@@ -8,8 +8,6 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from api.deps import CurrentAdminUser, DbSession
-from infrastructure.core.config import settings
-from infrastructure.persistence.models import ModelSyncConfig
 from contracts.schemas import (
     Message,
     ModelSyncConfigCreate,
@@ -17,6 +15,8 @@ from contracts.schemas import (
     ModelSyncConfigUpdate,
 )
 from infrastructure.clients.github_client import GitHubClient
+from infrastructure.core.config import settings
+from infrastructure.persistence.models import ModelSyncConfig
 from model_sync.model_sync_service import ModelSyncService
 
 router = APIRouter()
@@ -78,11 +78,11 @@ async def create_sync_config(
 
     # 准备数据，处理 JSON 字段
     config_dict = config_data.model_dump()
-    
+
     # 将 file_patterns 列表转为 JSON 字符串
     if config_dict.get("file_patterns") is not None:
         config_dict["file_patterns"] = json.dumps(config_dict["file_patterns"])
-    
+
     # 创建配置
     config = ModelSyncConfig(**config_dict)
     db.add(config)

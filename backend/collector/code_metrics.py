@@ -3,15 +3,15 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 from datetime import date
-from pathlib import Path
 
-from sqlalchemy import select, delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.persistence.models import (
-    CodeMetricsSnapshot, CodeComplexityDetail, CodeDuplicationDetail,
+    CodeComplexityDetail,
+    CodeDuplicationDetail,
+    CodeMetricsSnapshot,
     CodeSecurityDetail,
 )
 
@@ -156,7 +156,6 @@ class CodeMetricsCollector:
             import lizard as lizard_lib
 
             def _analyze():
-                import lizard as lizard_lib
                 results = []
                 for root, dirs, files in os.walk(repo_path):
                     dirs[:] = [d for d in dirs if d not in ['.git', 'build', '__pycache__', 'node_modules', '.venv', 'dist']]
@@ -200,7 +199,7 @@ class CodeMetricsCollector:
             method_lines = [f["nloc"] for f in functions]
             method_lines_total = sum(method_lines)
             lines_per_method = method_lines_total / total_functions if total_functions > 0 else 0
-            huge_method_count = sum(1 for l in method_lines if l > 80)
+            huge_method_count = sum(1 for line_count in method_lines if line_count > 80)
             huge_method_ratio = (huge_method_count / total_functions * 100) if total_functions > 0 else 0
 
             # Detail: top 500 by complexity
@@ -300,15 +299,13 @@ class CodeMetricsCollector:
                 total = statistics.get("total", {})
                 if isinstance(total, dict):
                     total_lines = total.get("lines", 0)
-                    dup_lines_stat = total.get("duplicatedLines", 0)
+                    total.get("duplicatedLines", 0)
                     dup_percentage = total.get("percentageDuplicatedLines", 0)
                 else:
                     total_lines = total
-                    dup_lines_stat = 0
                     dup_percentage = 0
             else:
                 total_lines = 0
-                dup_lines_stat = 0
                 dup_percentage = 0
 
             dup_blocks = len(duplicates) if isinstance(duplicates, list) else 0

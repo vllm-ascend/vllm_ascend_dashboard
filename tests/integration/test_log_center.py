@@ -36,14 +36,15 @@ backend_dir = str(Path(__file__).resolve().parents[2] / "backend")
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-from infrastructure.persistence.models import AppLog  # noqa: E402
+from tests.mysql_test_db import create_test_engine, reset_tables  # noqa: E402
+
 from contracts.schemas.logs import LogQueryRequest  # noqa: E402
+from infrastructure.persistence.models import AppLog  # noqa: E402
 from log_center.service import (  # noqa: E402
     LogService,
     _parse_cli_log_file,
     _parse_failure_analysis_file,
 )
-from tests.mysql_test_db import create_test_engine, reset_tables  # noqa: E402
 
 # ============================================================================
 # Helpers

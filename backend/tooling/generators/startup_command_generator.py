@@ -69,11 +69,11 @@ class StartupCommandGenerator:
     def generate_from_yaml(self, config_yaml: str, vllm_version: str | None = None) -> str:
         """
         从 YAML 配置生成启动命令
-        
+
         Args:
             config_yaml: YAML 格式的配置文件
             vllm_version: vLLM 版本（用于注释）
-        
+
         Returns:
             完整的 vllm serve 命令
         """
@@ -98,11 +98,11 @@ class StartupCommandGenerator:
     ) -> str:
         """
         从字典配置生成启动命令
-        
+
         Args:
             config: 配置字典
             vllm_version: vLLM 版本
-        
+
         Returns:
             完整的 vllm serve 命令
         """
@@ -165,11 +165,11 @@ class StartupCommandGenerator:
     ) -> dict[str, str]:
         """
         生成多个 vLLM 版本的启动命令
-        
+
         Args:
             config_yaml: YAML 配置文件
             versions: vLLM 版本列表，如 ["v0.16.0", "v0.17.0"]
-        
+
         Returns:
             {version: command} 字典
         """
@@ -181,10 +181,10 @@ class StartupCommandGenerator:
     def parse_command_to_dict(self, command: str) -> dict[str, Any]:
         """
         解析启动命令回字典格式（用于编辑）
-        
+
         Args:
             command: vllm serve 命令字符串
-        
+
         Returns:
             配置字典
         """

@@ -11,7 +11,11 @@ if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
 from infrastructure.persistence.models import CIResult, PullRequest, WorkflowConfig  # noqa: E402
-from infrastructure.persistence.models.test_board import TestCase, TestRun, TestSuiteSnapshot  # noqa: E402
+from infrastructure.persistence.models.test_board import (  # noqa: E402
+    TestCase,
+    TestRun,
+    TestSuiteSnapshot,
+)
 from tests.mysql_test_db import create_test_engine, reset_tables  # noqa: E402
 
 

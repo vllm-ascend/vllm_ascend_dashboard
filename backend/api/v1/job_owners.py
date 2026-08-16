@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, case, func, select
 
 from api.deps import DbSession
-from infrastructure.persistence.models import CIJob, JobOwner, WorkflowConfig
 from contracts.schemas import (
     CIJobResponse,
     JobOwnerCreate,
@@ -16,6 +15,7 @@ from contracts.schemas import (
     JobOwnerUpdate,
     JobStats,
 )
+from infrastructure.persistence.models import CIJob, JobOwner, WorkflowConfig
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ async def list_hidden_jobs(
     db: DbSession
 ):
     """获取所有隐藏的 Job（通过 JobOwner.is_hidden 字段）"""
-    stmt = select(JobOwner).where(JobOwner.is_hidden == True).order_by(JobOwner.workflow_name, JobOwner.job_name)
+    stmt = select(JobOwner).where(JobOwner.is_hidden).order_by(JobOwner.workflow_name, JobOwner.job_name)
     result = await db.execute(stmt)
     return result.scalars().all()
 
@@ -90,7 +90,7 @@ async def get_available_jobs(
     只返回启用的 workflow 的 job
     """
     # 获取启用的 workflow 名称列表
-    enabled_stmt = select(WorkflowConfig.workflow_name).where(WorkflowConfig.enabled == True)
+    enabled_stmt = select(WorkflowConfig.workflow_name).where(WorkflowConfig.enabled)
     if workflow_name:
         enabled_stmt = enabled_stmt.where(WorkflowConfig.workflow_name == workflow_name)
     enabled_result = await db.execute(enabled_stmt)
@@ -279,7 +279,7 @@ async def delete_job_owner(
 
 
 @router.post("/{owner_id}/toggle-hidden")
-async def toggle_job_hidden(
+async def toggle_job_hidden_by_id(
     owner_id: int,
     db: DbSession
 ):
@@ -326,7 +326,7 @@ async def get_job_summary_stats(
         WorkflowConfig.workflow_name,
         WorkflowConfig.stats_start_hour,
         WorkflowConfig.stats_end_hour,
-    ).where(WorkflowConfig.enabled == True)
+    ).where(WorkflowConfig.enabled)
     if workflow_name:
         enabled_stmt = enabled_stmt.where(WorkflowConfig.workflow_name == workflow_name)
     enabled_result = await db.execute(enabled_stmt)

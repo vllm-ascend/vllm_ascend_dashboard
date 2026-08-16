@@ -2,7 +2,7 @@
 PR Pipeline Kanban 相关的 Pydantic Schemas
 """
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 

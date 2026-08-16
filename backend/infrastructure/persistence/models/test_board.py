@@ -7,13 +7,13 @@ from sqlalchemy import (
     Column,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
-    Index,
 )
-from sqlalchemy.types import JSON
 from sqlalchemy.orm import relationship
+from sqlalchemy.types import JSON
 
 from . import Base
 

@@ -7,8 +7,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from api.deps import DbSession
-from infrastructure.persistence.models import PerformanceData
 from contracts.schemas import Message, PerformanceComparison, PerformanceDataResponse
+from infrastructure.persistence.models import PerformanceData
 
 router = APIRouter()
 
@@ -72,7 +72,7 @@ async def get_performance_trends(
     days: int = Query(30, ge=1, le=365)
 ):
     """获取性能趋势
-    
+
     Phase 3 实现
     """
     return {
@@ -95,7 +95,7 @@ async def compare_performance(
     compare_date: str
 ):
     """性能对比
-    
+
     Phase 3 实现
     """
     return {
@@ -108,7 +108,7 @@ async def compare_performance(
 @router.post("/upload", response_model=Message)
 async def upload_performance_data():
     """手动上传性能数据
-    
+
     Phase 3 实现
     """
     return {"message": "Not implemented in Phase 1"}
@@ -117,7 +117,7 @@ async def upload_performance_data():
 @router.post("/sync", response_model=Message)
 async def trigger_sync():
     """触发数据同步
-    
+
     Phase 3 实现
     """
     return {"message": "Not implemented in Phase 1"}

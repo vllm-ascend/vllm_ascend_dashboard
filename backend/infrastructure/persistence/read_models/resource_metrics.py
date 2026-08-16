@@ -1,17 +1,16 @@
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from contracts.schemas.resource_metrics import RESOURCE_METRICS_CONFIG_KEY
 from infrastructure.persistence.models import (
     KubernetesClusterConfig,
     ProjectDashboardConfig,
     ResourceNodeMetrics,
     ResourceNpuMetrics,
 )
-from contracts.schemas.resource_metrics import RESOURCE_METRICS_CONFIG_KEY
 
 logger = logging.getLogger(__name__)
 

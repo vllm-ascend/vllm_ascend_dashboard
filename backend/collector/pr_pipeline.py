@@ -1,5 +1,4 @@
 import base64
-import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -8,8 +7,8 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructure.persistence.models import CIResult, ProjectDashboardConfig, PullRequest
 from infrastructure.clients.github_client import GitHubAPIError, GitHubClient, GitHubRateLimitError
+from infrastructure.persistence.models import CIResult, ProjectDashboardConfig, PullRequest
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +94,6 @@ class PRPipelineCollector:
         count = 0
         processed_source_times: list[datetime] = []
         processing_failed = False
-        rate_limited = False
         failed_source_cursors: list[tuple[datetime, int]] = []
         for pr in prs:
             try:
@@ -136,7 +134,6 @@ class PRPipelineCollector:
                         )
             except GitHubRateLimitError as e:
                 logger.error(f"Rate limit exceeded while processing PRs: {e}")
-                rate_limited = True
                 processing_failed = True
                 source_time = self._source_updated_at(pr)
                 if source_time and isinstance(pr.get("number"), int):
@@ -534,7 +531,7 @@ class PRPipelineCollector:
                 continue
             latest_by_user[login] = state
 
-        for login, state in latest_by_user.items():
+        for _login, state in latest_by_user.items():
             if state == "APPROVED":
                 has_approved = True
             elif state == "CHANGES_REQUESTED":

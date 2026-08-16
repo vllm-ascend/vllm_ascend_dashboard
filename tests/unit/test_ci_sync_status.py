@@ -22,8 +22,8 @@ class _Session:
 
 @pytest.mark.asyncio
 async def test_ci_sync_status_reads_scheduler_heartbeat(monkeypatch):
-    from api.v1 import ci
     import infrastructure.db.base as db_base
+    from api.v1 import ci
 
     heartbeat = SimpleNamespace(
         running=True,
@@ -51,8 +51,8 @@ async def test_ci_sync_status_reads_scheduler_heartbeat(monkeypatch):
 async def test_ci_sync_status_reports_stale_heartbeat(monkeypatch):
     from datetime import timedelta
 
-    from api.v1 import ci
     import infrastructure.db.base as db_base
+    from api.v1 import ci
 
     heartbeat = SimpleNamespace(
         running=True,

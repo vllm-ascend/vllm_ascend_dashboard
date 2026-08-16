@@ -2,10 +2,8 @@
 Pydantic Schemas 定义
 """
 import json
-from datetime import datetime
-from typing import Any, Dict, List, Optional
-
-from datetime import date
+from datetime import date, datetime
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, field_validator
 
@@ -484,7 +482,7 @@ class ModelReportUpdate(BaseModel):
     vllm_ascend_version: str | None = None
     hardware: str | None = None
     report_json: dict[str, Any] | None = None
-    
+
     # 新模板字段
     dtype: str | None = None
     features: list[str] | None = None
@@ -862,7 +860,7 @@ class ReleaseInfo(BaseModel):
     version: str
     is_stable: bool
     published_at: datetime
-    docker_commands: Dict[str, str]  # mirror name -> docker pull command
+    docker_commands: dict[str, str]  # mirror name -> docker pull command
 
 
 class VllmVersionInfo(BaseModel):
@@ -902,7 +900,7 @@ class ModelSupportEntry(BaseModel):
 
 class ModelSupportMatrix(BaseModel):
     """模型支持矩阵"""
-    entries: List[ModelSupportEntry]
+    entries: list[ModelSupportEntry]
     source_url: str
     updated_at: datetime
 
@@ -916,7 +914,7 @@ class StaleIssue(BaseModel):
     updated_at: datetime
     days_stale: int
     author: str | None = None
-    labels: List[str] = []
+    labels: list[str] = []
 
 
 class PRActionRequest(BaseModel):
@@ -947,11 +945,11 @@ class TagComparisonResult(BaseModel):
     base_tag: str
     head_tag: str
     total_commits: int
-    commits: List[CommitInfo]
-    summary: Dict[str, int]  # category -> count
-    bug_fixes: List[CommitInfo]
-    features: List[CommitInfo]
-    performance_improvements: List[CommitInfo]
+    commits: list[CommitInfo]
+    summary: dict[str, int]  # category -> count
+    bug_fixes: list[CommitInfo]
+    features: list[CommitInfo]
+    performance_improvements: list[CommitInfo]
 
 
 class VersionQualityReportRequest(BaseModel):
@@ -967,30 +965,30 @@ class VersionQualityReportMeta(BaseModel):
     base_tag: str
     head_tag: str
     generated_at: str
-    llm_provider: Optional[str] = None
-    llm_model: Optional[str] = None
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-    generation_time_seconds: Optional[float] = None
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    generation_time_seconds: float | None = None
     total_commits: int = 0
     open_bugs: int = 0
     merged_prs: int = 0
-    ci_success_rate: Optional[float] = None
-    stars: Optional[int] = None
-    forks: Optional[int] = None
-    data_sources: List[str] = Field(default_factory=list)
+    ci_success_rate: float | None = None
+    stars: int | None = None
+    forks: int | None = None
+    data_sources: list[str] = Field(default_factory=list)
 
 
 class ProjectDashboardConfigBase(BaseModel):
     """项目看板配置基础 Schema"""
     config_key: str = Field(..., max_length=100)
-    config_value: Dict[str, Any]
+    config_value: dict[str, Any]
     description: str | None = Field(None, max_length=500)
 
 
 class ProjectDashboardConfigUpdate(BaseModel):
     """更新项目看板配置 Schema"""
-    config_value: Dict[str, Any]
+    config_value: dict[str, Any]
     description: str | None = Field(None, max_length=500)
 
 
@@ -1004,12 +1002,55 @@ class ProjectDashboardConfigResponse(ProjectDashboardConfigBase):
 
 
 # Import Daily Summary schemas
-from .daily_summary import (
-    GenerateSummaryRequest, FetchDataRequest, DailySummaryResponse,
-    DailySummaryListResponse, DailySummaryListItem, FetchDataResponse,
-    GenerateSummaryResponse, LLMProviderResponse, DailySummaryConfigResponse
+from .alert_rules import (
+    AlertConditionCreate,
+    AlertConditionGroupCreate,
+    AlertConditionGroupResponse,
+    AlertConditionResponse,
+    AlertHistoryResponse,
+    AlertRuleCreate,
+    AlertRuleResponse,
+    AlertRuleUpdate,
 )
-
+from .daily_summary import (
+    DailySummaryConfigResponse,
+    DailySummaryListItem,
+    DailySummaryListResponse,
+    DailySummaryResponse,
+    FetchDataRequest,
+    FetchDataResponse,
+    GenerateSummaryRequest,
+    GenerateSummaryResponse,
+    LLMProviderResponse,
+)
+from .issue_diagnosis import (
+    CIJobOption,
+    CommitOption,
+    IssueDiagnosisRequest,
+)
+from .logs import (
+    LogEntryResponse,
+    LogQueryRequest,
+    LogQueryResponse,
+    LogSourceInfo,
+    LogSourcesResponse,
+)
+from .pr_pipeline import (
+    PRPipelineContributor,
+    PRPipelineHistoricalSyncRequest,
+    PRPipelineKanban,
+    PRPipelineListFilter,
+    PRPipelineListResponse,
+    PRPipelineMetrics,
+    PRPipelineOverview,
+    PRPipelinePercentileMetric,
+    PRPipelineStageDistribution,
+    PRPipelineSyncRequest,
+    PRPipelineTrendPoint,
+    PRPipelineTrendsResponse,
+    PullRequestBase,
+    PullRequestResponse,
+)
 from .resource_dashboard import (
     ClusterResourceSummary,
     KubernetesClusterCreate,
@@ -1021,77 +1062,33 @@ from .resource_dashboard import (
     ResourcePodInfo,
     ResourceQuantity,
 )
-
 from .resource_metrics import (
-    NpuMetricPoint,
-    ClusterNpuMetrics,
-    NpuMetricsResponse,
-    NodeMetricPoint,
-    NodeSeries,
+    RESOURCE_METRICS_CONFIG_KEY,
     ClusterNodeMetrics,
+    ClusterNpuMetrics,
+    NodeMetricPoint,
     NodeMetricsResponse,
+    NodeSeries,
+    NpuMetricPoint,
+    NpuMetricsResponse,
     ResourceMetricsConfigResponse,
     ResourceMetricsConfigUpdate,
-    RESOURCE_METRICS_CONFIG_KEY,
 )
-
-from .alert_rules import (
-    AlertConditionCreate,
-    AlertConditionResponse,
-    AlertConditionGroupCreate,
-    AlertConditionGroupResponse,
-    AlertRuleCreate,
-    AlertRuleUpdate,
-    AlertRuleResponse,
-    AlertHistoryResponse,
-)
-
-from .issue_diagnosis import (
-    IssueDiagnosisRequest,
-    CIJobOption,
-    CommitOption,
-)
-
-from .pr_pipeline import (
-    PullRequestBase,
-    PullRequestResponse,
-    PRPipelineOverview,
-    PRPipelineStageDistribution,
-    PRPipelineMetrics,
-    PRPipelinePercentileMetric,
-    PRPipelineContributor,
-    PRPipelineKanban,
-    PRPipelineListFilter,
-    PRPipelineListResponse,
-    PRPipelineTrendPoint,
-    PRPipelineTrendsResponse,
-    PRPipelineSyncRequest,
-    PRPipelineHistoricalSyncRequest,
-)
-
 from .test_board import (
-    TestHealthScore,
-    TestCaseResponse,
-    TestRunResponse,
-    TestSuiteResponse,
-    TestOverviewResponse,
-    FlakyCaseDetail,
+    FailureAnnotationRequest,
     FailureCategoryBreakdown,
-    OwnerMatrixItem,
+    FlakyCaseDetail,
     ModuleHealthItem,
+    OwnerMatrixItem,
+    TestBoardSyncRequest,
     TestCaseFeatureColumn,
+    TestCaseFeatureMatrixResponse,
     TestCaseFeatureMatrixRow,
     TestCaseFeatureMatrixStatistics,
-    TestCaseFeatureMatrixResponse,
-    TestBoardSyncRequest,
-    FailureAnnotationRequest,
+    TestCaseResponse,
     TestCaseUpdateRequest,
-)
-
-from .logs import (
-    LogQueryRequest,
-    LogEntryResponse,
-    LogQueryResponse,
-    LogSourceInfo,
-    LogSourcesResponse,
+    TestHealthScore,
+    TestOverviewResponse,
+    TestRunResponse,
+    TestSuiteResponse,
 )

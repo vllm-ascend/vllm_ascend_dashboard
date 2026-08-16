@@ -3,17 +3,25 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, func, and_, or_, desc, asc, delete, text, case
+from sqlalchemy import and_, asc, case, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructure.core.config import settings
-from infrastructure.persistence.models import CIJob, CIResult, JobOwner, JobFailureAnalysis, WorkflowConfig
-from infrastructure.persistence.models.test_board import TestCase, TestRun, TestSuiteSnapshot, FailureAnnotation
-from tooling.parsers.test_timing_parser import TestTimingParser
-from tooling.parsers.junit_xml_parser import JUnitXMLParser
-from tooling.analytics.test_health_calculator import TestHealthCalculator
-from tooling.analytics.failure_classifier import FailureClassifier
 from infrastructure.clients.github_client import GitHubClient
+from infrastructure.core.config import settings
+from infrastructure.persistence.models import (
+    CIJob,
+    CIResult,
+    JobOwner,
+)
+from infrastructure.persistence.models.test_board import (
+    TestCase,
+    TestRun,
+    TestSuiteSnapshot,
+)
+from tooling.analytics.failure_classifier import FailureClassifier
+from tooling.analytics.test_health_calculator import TestHealthCalculator
+from tooling.parsers.junit_xml_parser import JUnitXMLParser
+from tooling.parsers.test_timing_parser import TestTimingParser
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +72,7 @@ class TestBoardService:
         total_stmt = self._apply_active(select(func.count(TestCase.id)), include_stale)
         total = (await self.db.execute(total_stmt)).scalar() or 0
 
-        flaky_stmt = self._apply_active(select(func.count(TestCase.id)).where(TestCase.is_flaky == True), include_stale)
+        flaky_stmt = self._apply_active(select(func.count(TestCase.id)).where(TestCase.is_flaky), include_stale)
         flaky_count = (await self.db.execute(flaky_stmt)).scalar() or 0
 
         attention_stmt = self._apply_active(select(func.count(TestCase.id)).where(
@@ -134,7 +142,7 @@ class TestBoardService:
     async def get_suites(self, include_stale: bool = False) -> list[dict[str, Any]]:
         stmt = self._apply_active(select(TestCase.test_suite, TestCase.test_type, TestCase.hardware,
                        func.count(TestCase.id), func.avg(TestCase.health_score), func.avg(TestCase.pass_rate_7d),
-                       func.sum(case((TestCase.is_flaky == True, 1), else_=0)),
+                       func.sum(case((TestCase.is_flaky, 1), else_=0)),
                        func.avg(TestCase.avg_duration_seconds)).group_by(
             TestCase.test_suite, TestCase.test_type, TestCase.hardware), include_stale)
         rows = (await self.db.execute(stmt)).all()
@@ -185,12 +193,12 @@ class TestBoardService:
                     "lifetime_failures": TestCase.lifetime_failures,
                     "issues_found": TestCase.issues_found,
                     "effective_issues_found": case(
-                        (TestCase.issues_found_override == True, TestCase.issues_found),
+                        (TestCase.issues_found_override, TestCase.issues_found),
                         else_=TestCase.auto_issues_found,
                     ),
                     "suspected_test_issue_count": TestCase.suspected_test_issue_count,
                     "effective_suspected_test_issue_count": case(
-                        (TestCase.issues_found_override == True, TestCase.suspected_test_issue_count),
+                        (TestCase.issues_found_override, TestCase.suspected_test_issue_count),
                         else_=TestCase.auto_suspected_test_issue_count,
                     )}
         sort_col = sort_map.get(sort, TestCase.health_score)
@@ -213,7 +221,7 @@ class TestBoardService:
         return {"case": case, "runs": runs}
 
     async def get_flaky_cases(self, min_flip_rate: float = 0.01, days: int = 30, filters: dict = None, page: int = 1, per_page: int = 20) -> dict[str, Any]:
-        stmt = select(TestCase).where(TestCase.is_flaky == True, TestCase.flaky_rate >= min_flip_rate, _active_case_filter())
+        stmt = select(TestCase).where(TestCase.is_flaky, TestCase.flaky_rate >= min_flip_rate, _active_case_filter())
         if filters:
             if filters.get("test_suite"):
                 stmt = stmt.where(TestCase.test_suite == filters["test_suite"])
@@ -230,14 +238,14 @@ class TestBoardService:
         items = list((await self.db.execute(stmt)).scalars().all())
 
         flaky_details = []
-        for case in items:
-            runs = await self._get_recent_results(case.id, days)
-            suggested = "紧急修复" if case.flaky_rate > 0.25 else "需要治理" if case.flaky_rate > 0.10 else "观察期"
+        for test_case in items:
+            runs = await self._get_recent_results(test_case.id, days)
+            suggested = "紧急修复" if test_case.flaky_rate > 0.25 else "需要治理" if test_case.flaky_rate > 0.10 else "观察期"
             flaky_details.append({
-                "test_name": case.test_name, "test_suite": case.test_suite,
-                "module_name": case.module_name, "owner": case.owner,
-                "flip_rate": case.flaky_rate, "total_runs": case.total_runs,
-                "flip_count": case.flip_count_30d, "recent_results": runs[:10],
+                "test_name": test_case.test_name, "test_suite": test_case.test_suite,
+                "module_name": test_case.module_name, "owner": test_case.owner,
+                "flip_rate": test_case.flaky_rate, "total_runs": test_case.total_runs,
+                "flip_count": test_case.flip_count_30d, "recent_results": runs[:10],
                 "suggested_action": suggested,
             })
         return {"total": total, "items": flaky_details, "page": page, "page_size": per_page}
@@ -263,7 +271,7 @@ class TestBoardService:
         infra = cat_counts.get("infrastructure", 0)
         unk = cat_counts.get("unknown", 0)
         flaky_fail_stmt = select(func.count(TestCase.id)).where(
-            TestCase.is_flaky == True, TestCase.last_result == "failed", active
+            TestCase.is_flaky, TestCase.last_result == "failed", active
         )
         flaky_failures = (await self.db.execute(flaky_fail_stmt)).scalar() or 0
         return {
@@ -286,7 +294,7 @@ class TestBoardService:
     async def get_owner_matrix(self) -> list[dict[str, Any]]:
         active = _active_case_filter()
         stmt = select(TestCase.owner, TestCase.module_name, func.count(TestCase.id),
-                       func.avg(TestCase.pass_rate_7d), func.sum(case((TestCase.is_flaky == True, 1), else_=0)),
+                       func.avg(TestCase.pass_rate_7d), func.sum(case((TestCase.is_flaky, 1), else_=0)),
                        func.sum(case((TestCase.last_result == "failed", 1), else_=0))).where(active).group_by(TestCase.owner, TestCase.module_name)
         rows = (await self.db.execute(stmt)).all()
         owner_map: dict[str, dict] = {}
@@ -304,7 +312,7 @@ class TestBoardService:
     async def get_module_health(self) -> list[dict[str, Any]]:
         active = _active_case_filter()
         stmt = select(TestCase.module_name, TestCase.owner, func.count(TestCase.id),
-                       func.avg(TestCase.pass_rate_7d), func.sum(case((TestCase.is_flaky == True, 1), else_=0)),
+                       func.avg(TestCase.pass_rate_7d), func.sum(case((TestCase.is_flaky, 1), else_=0)),
                        func.sum(case((TestCase.last_result == "failed", 1), else_=0)),
                        func.avg(TestCase.health_score)).where(active).group_by(TestCase.module_name, TestCase.owner)
         rows = (await self.db.execute(stmt)).all()
@@ -512,10 +520,14 @@ class TestBoardService:
         if module is None and "nightly" in wf:
             module = "e2e"
         confidence = 0.0
-        if test_type != "unknown": confidence += 0.25
-        if hw != "unknown": confidence += 0.25
-        if card is not None: confidence += 0.25
-        if module is not None: confidence += 0.25
+        if test_type != "unknown":
+            confidence += 0.25
+        if hw != "unknown":
+            confidence += 0.25
+        if card is not None:
+            confidence += 0.25
+        if module is not None:
+            confidence += 0.25
         return {"test_type": test_type, "category": category, "test_suite": workflow_name, "hardware": hw, "card_count": card, "module_name": module, "inference_confidence": confidence}
 
     async def _get_recent_results(self, test_case_id: int, days: int) -> list[str]:

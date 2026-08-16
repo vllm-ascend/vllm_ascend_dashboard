@@ -16,7 +16,10 @@ from httpx import ASGITransport, AsyncClient
 from api.deps import get_current_user
 from api.v1.test_board import router as test_board_router
 from infrastructure.persistence.models import User
-from tooling.analytics.test_case_matrix_service import get_case_feature_matrix, resolve_case_matrix_path
+from tooling.analytics.test_case_matrix_service import (
+    get_case_feature_matrix,
+    resolve_case_matrix_path,
+)
 
 
 def test_case_matrix_snapshot_is_bundled():

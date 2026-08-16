@@ -2,10 +2,10 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from tests.conftest import make_test_case, make_test_run
 
 from test_board.test_board_service import TestBoardService
 from tooling.analytics.test_health_calculator import TestHealthCalculator
-from tests.conftest import make_test_case, make_test_run
 
 # ============================================================================
 # B1: calculate_all_health_scores must be awaited — health scores populated

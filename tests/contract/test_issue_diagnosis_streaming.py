@@ -1,6 +1,7 @@
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError
-from types import SimpleNamespace
 
 from contracts.schemas.issue_diagnosis import IssueDiagnosisRequest
 from failure_analysis.issue_diagnosis_service import IssueDiagnosisService

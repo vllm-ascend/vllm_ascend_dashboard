@@ -1,8 +1,7 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
+from pydantic import BaseModel, Field
 
 RESOURCE_METRICS_CONFIG_KEY = "resource_metrics_config"
 
@@ -15,17 +14,17 @@ class NpuMetricPoint(BaseModel):
     npu_available: float = 0
     executing_pods_count: int = 0
     pr_count: int = 0
-    top_pods: List[Dict[str, Any]] = Field(default_factory=list)
+    top_pods: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ClusterNpuMetrics(BaseModel):
     cluster_id: int
     cluster_name: str
-    metrics: List[NpuMetricPoint] = Field(default_factory=list)
+    metrics: list[NpuMetricPoint] = Field(default_factory=list)
 
 
 class NpuMetricsResponse(BaseModel):
-    clusters: List[ClusterNpuMetrics] = Field(default_factory=list)
+    clusters: list[ClusterNpuMetrics] = Field(default_factory=list)
 
 
 class NodeMetricPoint(BaseModel):
@@ -43,19 +42,19 @@ class NodeMetricPoint(BaseModel):
 class NodeSeries(BaseModel):
     """单台机器的趋势序列"""
     node_name: str
-    metrics: List[NodeMetricPoint] = Field(default_factory=list)
+    metrics: list[NodeMetricPoint] = Field(default_factory=list)
 
 
 class ClusterNodeMetrics(BaseModel):
     """单个集群下的机器指标集合"""
     cluster_id: int
     cluster_name: str
-    nodes: List[NodeSeries] = Field(default_factory=list)
+    nodes: list[NodeSeries] = Field(default_factory=list)
 
 
 class NodeMetricsResponse(BaseModel):
     """机器维度指标查询响应"""
-    clusters: List[ClusterNodeMetrics] = Field(default_factory=list)
+    clusters: list[ClusterNodeMetrics] = Field(default_factory=list)
 
 
 class ResourceMetricsConfigResponse(BaseModel):
@@ -64,5 +63,5 @@ class ResourceMetricsConfigResponse(BaseModel):
 
 
 class ResourceMetricsConfigUpdate(BaseModel):
-    interval_minutes: Optional[int] = Field(None, ge=1, le=60)
-    retention_days: Optional[int] = Field(None, ge=1, le=365)
+    interval_minutes: int | None = Field(None, ge=1, le=60)
+    retention_days: int | None = Field(None, ge=1, le=365)

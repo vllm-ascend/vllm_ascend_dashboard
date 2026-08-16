@@ -2,25 +2,31 @@
 每日运行报告 API 路由
 """
 import logging
-from datetime import date as DateType, timedelta
-from typing import Annotated, Optional
+from datetime import date as DateType
+from datetime import timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_active_admin_user, get_current_active_super_admin_user, get_current_user, get_db
-from infrastructure.core.config import settings
-from infrastructure.core.email import DEFAULT_SMTP_CONFIG, SMTP_CONFIG_KEY, get_smtp_config
-from infrastructure.persistence.models import ProjectDashboardConfig, User
+from api.deps import (
+    get_current_active_admin_user,
+    get_current_active_super_admin_user,
+    get_current_user,
+    get_db,
+)
 from contracts.schemas.daily_report import (
     DailyReportConfigResponse,
     DailyReportConfigUpdate,
-    DailyReportHistoryResponse,
     DailyReportHistoryListResponse,
+    DailyReportHistoryResponse,
     DailyReportTriggerResponse,
 )
+from infrastructure.core.config import settings
+from infrastructure.core.email import SMTP_CONFIG_KEY, get_smtp_config
+from infrastructure.persistence.models import ProjectDashboardConfig, User
 from reporting.daily_report import DailyReportService, _today_shanghai
 
 logger = logging.getLogger(__name__)
@@ -142,7 +148,7 @@ async def update_report_config(
         )
 
 
-def _resolve_report_date(report_date: Optional[str]) -> DateType:
+def _resolve_report_date(report_date: str | None) -> DateType:
     target_date = DateType.fromisoformat(report_date) if report_date else _today_shanghai() - timedelta(days=1)
     if target_date > _today_shanghai():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="报告日期不能是未来日期")
@@ -153,7 +159,7 @@ def _resolve_report_date(report_date: Optional[str]) -> DateType:
 async def generate_report_draft(
     current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
     db: AsyncSession = Depends(get_db),
-    report_date: Optional[str] = Query(None),
+    report_date: str | None = Query(None),
 ):
     """Generate a reviewable draft. This endpoint never sends email."""
     try:
@@ -212,7 +218,7 @@ async def preview_report_draft(
 async def trigger_report(
     current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
     db: AsyncSession = Depends(get_db),
-    report_date: Optional[str] = Query(None, description="报告日期，默认为昨天，格式 YYYY-MM-DD"),
+    report_date: str | None = Query(None, description="报告日期，默认为昨天，格式 YYYY-MM-DD"),
 ):
     """手动触发一次报告生成和发送（super_admin 权限）"""
     try:

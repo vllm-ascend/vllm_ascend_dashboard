@@ -1,6 +1,5 @@
-from datetime import UTC, datetime, timedelta
-from typing import Any, Optional
 import re
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 

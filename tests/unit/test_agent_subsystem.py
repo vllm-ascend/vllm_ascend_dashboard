@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from agent import agent_service, agent_tools
-from agent.agent_service import AgentService, AgentTask
 from agent.agent_runtime import recover_tool_calls
+from agent.agent_service import AgentService, AgentTask
 from agent.memory_manager import MemoryManager, MemoryRecord, extract_keywords
 from agent.skill_registry import SkillInfo, SkillRegistry
 
@@ -361,7 +361,7 @@ async def test_memory_store_sanitizes_recalled_fields():
 
 
 def test_memory_prompt_marks_records_untrusted_and_limits_content():
-    from agent.memory_manager import MemorySearchResult, MemoryManager
+    from agent.memory_manager import MemoryManager, MemorySearchResult
 
     prompt = MemoryManager.format_memories_for_prompt([
         MemorySearchResult(

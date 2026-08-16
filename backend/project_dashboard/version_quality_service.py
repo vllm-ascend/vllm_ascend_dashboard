@@ -16,13 +16,13 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructure.core.config import settings
-from infrastructure.persistence.models import CIResult, ProjectDashboardConfig
-from infrastructure.persistence.models.daily_summary import LLMProviderConfig
+from agent.skill_registry import get_skill_registry
 from infrastructure.clients.github_cache import get_github_cache
 from infrastructure.clients.github_client import GitHubClient
 from infrastructure.clients.llm_client import LLMClient, LLMResult
-from agent.skill_registry import get_skill_registry
+from infrastructure.core.config import settings
+from infrastructure.persistence.models import CIResult, ProjectDashboardConfig
+from infrastructure.persistence.models.daily_summary import LLMProviderConfig
 from infrastructure.storage.version_quality_file_store import VersionQualityFileStore
 
 logger = logging.getLogger(__name__)

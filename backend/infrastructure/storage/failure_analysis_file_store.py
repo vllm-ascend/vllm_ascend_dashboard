@@ -3,14 +3,12 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
 
 from infrastructure.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-import hashlib
 
 
 def sanitize_path_component(component: str) -> str:
@@ -26,7 +24,7 @@ def sanitize_path_component(component: str) -> str:
 
 class FailureAnalysisFileStore:
 
-    def __init__(self, base_dir: Optional[Path] = None):
+    def __init__(self, base_dir: Path | None = None):
         if base_dir is None:
             base_dir = Path(settings.DATA_DIR) / "failure-analysis"
         self.base_dir = base_dir
@@ -58,12 +56,12 @@ class FailureAnalysisFileStore:
             logger.error(f"Failed to save failure analysis report: {e}")
             raise
 
-    async def read_report(self, workflow_name: str, job_name: str, job_id: int) -> Optional[str]:
+    async def read_report(self, workflow_name: str, job_name: str, job_id: int) -> str | None:
         file_path = await self.get_report_path(workflow_name, job_name, job_id)
         if not os.path.exists(file_path):
             return None
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
             return content
         except Exception as e:
@@ -81,11 +79,11 @@ class FailureAnalysisFileStore:
                 logger.error(f"Failed to delete failure analysis report: {e}")
         return False
 
-    async def read_report_by_path(self, file_path: str) -> Optional[str]:
+    async def read_report_by_path(self, file_path: str) -> str | None:
         if not file_path or not os.path.exists(file_path):
             return None
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
             return content
         except Exception as e:

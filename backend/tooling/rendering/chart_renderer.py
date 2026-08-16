@@ -12,6 +12,7 @@ import logging
 from io import BytesIO
 
 import matplotlib
+
 matplotlib.use("Agg")  # 非交互式后端，必须在 import pyplot 之前
 
 import matplotlib.pyplot as plt
@@ -110,8 +111,8 @@ def _render_nightly_case_pass_rate(report_data: dict) -> bytes:
     width = 0.52
     pass_bars = ax.bar(x, passed, width, color=GREEN, label="Passed", zorder=3)
     fail_bars = ax.bar(x, failed, width, bottom=passed, color=RED, label="Failed", zorder=3)
-    max_total = max([p + f for p, f in zip(passed, failed)] + [1])
-    for idx, (pass_bar, fail_bar, rate) in enumerate(zip(pass_bars, fail_bars, rates)):
+    max_total = max([p + f for p, f in zip(passed, failed, strict=False)] + [1])
+    for idx, (pass_bar, _fail_bar, rate) in enumerate(zip(pass_bars, fail_bars, rates, strict=False)):
         total = passed[idx] + failed[idx]
         center = pass_bar.get_x() + pass_bar.get_width() / 2
         if total == 0:
@@ -164,7 +165,7 @@ def _render_ci_trend(report_data: dict) -> bytes:
     ax1.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f%%"))
 
     # 在柱子上标注数值
-    for bar, rate in zip(bars, rates):
+    for bar, rate in zip(bars, rates, strict=False):
         ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
                  f"{rate:.1f}%", ha="center", va="bottom", fontsize=9, color=DARK)
 
@@ -256,7 +257,7 @@ def _render_pr_pipeline(report_data: dict) -> bytes:
     fig.patch.set_facecolor("white")
 
     bars = ax.bar(categories, values, color=colors, alpha=0.85, width=0.5, zorder=3)
-    for bar, val in zip(bars, values):
+    for bar, val in zip(bars, values, strict=False):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(values) * 0.02,
                 str(val), ha="center", va="bottom", fontsize=11, fontweight="bold", color=DARK)
 
@@ -300,8 +301,8 @@ def _render_npu_utilization(report_data: dict) -> bytes:
     utils = [c.get("avg_npu_utilization", 0) for c in clusters]
 
     # 按利用率排序
-    sorted_pairs = sorted(zip(utils, names), key=lambda x: x[0])
-    utils_sorted, names_sorted = zip(*sorted_pairs) if sorted_pairs else ([], [])
+    sorted_pairs = sorted(zip(utils, names, strict=False), key=lambda x: x[0])
+    utils_sorted, names_sorted = zip(*sorted_pairs, strict=False) if sorted_pairs else ([], [])
 
     # 根据利用率着色
     bar_colors = []
@@ -326,7 +327,7 @@ def _render_npu_utilization(report_data: dict) -> bytes:
     ax.set_xlim(0, max(max(utils_sorted) * 1.2, 100) if utils_sorted else 100)
     ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f%%"))
 
-    for bar, u in zip(bars, utils_sorted):
+    for bar, u in zip(bars, utils_sorted, strict=False):
         ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height() / 2,
                 f"{u:.1f}%", va="center", fontsize=9, fontweight="bold",
                 color=DARK)

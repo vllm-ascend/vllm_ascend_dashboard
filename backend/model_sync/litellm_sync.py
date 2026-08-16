@@ -6,7 +6,6 @@ LiteLLM Provider 同步服务
 """
 import logging
 from pathlib import Path
-from typing import Optional
 
 import aiohttp
 
@@ -90,7 +89,7 @@ router_settings:
 class LiteLLMSync:
     """同步数据库 provider 配置到 LiteLLM 网关"""
 
-    def __init__(self, litellm_url: Optional[str] = None):
+    def __init__(self, litellm_url: str | None = None):
         self.litellm_url = (litellm_url or settings.LITELLM_PROXY_URL).rstrip("/")
         self.master_key = settings.LITELLM_MASTER_KEY or "sk-litellm-master-key-change-me"
 
@@ -111,9 +110,10 @@ class LiteLLMSync:
     async def sync_from_db(self, db_session) -> int:
         """从 DB 读取 provider → 生成 YAML → 写入文件 → 热加载"""
         from sqlalchemy import select
+
         from infrastructure.persistence.models.daily_summary import LLMProviderConfig
 
-        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active == True)
+        stmt = select(LLMProviderConfig).where(LLMProviderConfig.is_active)
         result = await db_session.execute(stmt)
         configs = result.scalars().all()
 
@@ -172,7 +172,7 @@ class LiteLLMSync:
         logger.warning("LiteLLM needs a manual restart to pick up the new config")
         return False
 
-_litellm_sync: Optional[LiteLLMSync] = None
+_litellm_sync: LiteLLMSync | None = None
 
 
 def get_litellm_sync() -> LiteLLMSync:

@@ -165,7 +165,7 @@ def parse_supported_models(md_content: str) -> list[dict[str, Any]]:
                 continue
             if len(cells) < 2 or columns is None:
                 continue
-            row = dict(zip(columns, cells))
+            row = dict(zip(columns, cells, strict=False))
             model_name_raw = row.get("model", "").strip()
             model_name = _strip_html(model_name_raw)
             if not model_name:
@@ -241,7 +241,7 @@ def parse_supported_features(md_content: str) -> list[dict[str, Any]]:
         if columns is None:
             columns = [c.strip().lower() for c in cells]
             continue
-        row = dict(zip(columns, cells))
+        row = dict(zip(columns, cells, strict=False))
         results.append({
             "feature": row.get("feature", "").strip(),
             "status": row.get("status", "").strip(),

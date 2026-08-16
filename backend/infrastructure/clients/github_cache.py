@@ -6,11 +6,10 @@ import logging
 import os
 import re
 import subprocess
-import tempfile
 import threading
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from infrastructure.core.config import settings
 
@@ -68,7 +67,7 @@ class GitHubLocalCache:
     def _get_git_env(self) -> dict:
         """获取 git 命令的环境变量，包括代理配置"""
         env = os.environ.copy()
-        
+
         # 尝试从 git config 读取代理配置
         try:
             result = subprocess.run(
@@ -84,13 +83,13 @@ class GitHubLocalCache:
                 logger.debug(f"Using git proxy: {proxy_url}")
         except Exception as e:
             logger.debug(f"Failed to read git proxy config: {e}")
-        
+
         # 也检查系统环境变量
         for proxy_var in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"]:
             if proxy_var in os.environ:
                 env[proxy_var] = os.environ[proxy_var]
                 logger.debug(f"Using proxy from env: {proxy_var}")
-        
+
         return env
 
     def clone(self) -> bool:
@@ -179,7 +178,7 @@ class GitHubLocalCache:
             git_dir / "HEAD.lock",
             git_dir / "config.lock",
         ]
-        
+
         for lock_file in lock_files:
             if lock_file.exists():
                 try:
@@ -200,7 +199,7 @@ class GitHubLocalCache:
         try:
             env = self._get_git_env()
             logger.info(f"Pulling latest changes from {self.clone_url}")
-            
+
             # 先 reset 到远程状态，避免本地修改冲突
             subprocess.run(
                 ["git", "reset", "--hard", "HEAD"],
@@ -209,7 +208,7 @@ class GitHubLocalCache:
                 timeout=30,
                 env=env,
             )
-            
+
             # 清理未跟踪的文件
             subprocess.run(
                 ["git", "clean", "-fd"],
@@ -218,7 +217,7 @@ class GitHubLocalCache:
                 timeout=30,
                 env=env,
             )
-            
+
             # 拉取最新代码
             # Upstream release tags are occasionally recreated. Force-sync
             # them before pulling so Git does not abort with
@@ -352,7 +351,7 @@ class GitHubLocalCache:
             if lock_file.exists():
                 logger.info(f"Removing stale lock file: {lock_file}")
                 lock_file.unlink()
-            
+
             # 检查是否是浅克隆
             shallow_file = self.cache_dir / ".git" / "shallow"
             if not shallow_file.exists():
@@ -366,7 +365,7 @@ class GitHubLocalCache:
                     env=env,
                 )
                 return True
-            
+
             logger.info("Fetching full git history and tags...")
             # 取消浅克隆限制，获取完整历史
             result = subprocess.run(
@@ -379,7 +378,7 @@ class GitHubLocalCache:
             if result.returncode != 0:
                 logger.error(f"Failed to unshallow: {result.stderr.decode() if result.stderr else 'unknown error'}")
                 return False
-            
+
             # 获取所有 tags
             subprocess.run(
                 ["git", "fetch", "--tags", "--force"],
@@ -401,7 +400,7 @@ class GitHubLocalCache:
             logger.error(f"Failed to fetch full history: {str(e)}")
             return False
 
-    def _run_git_command(self, args: List[str]) -> Optional[str]:
+    def _run_git_command(self, args: list[str]) -> str | None:
         """运行 git 命令并返回输出"""
         if not self._is_repo_cloned():
             if not self.clone():
@@ -420,7 +419,7 @@ class GitHubLocalCache:
             logger.error(f"Git command failed: {str(e)}")
             return None
 
-    def get_file_content(self, file_path: str, branch: str = "main") -> Optional[str]:
+    def get_file_content(self, file_path: str, branch: str = "main") -> str | None:
         """获取指定分支的文件内容"""
         if not self._is_repo_cloned():
             if not self.clone():
@@ -439,7 +438,7 @@ class GitHubLocalCache:
             logger.error(f"Failed to get file content: {str(e)}")
             return None
 
-    def get_all_tags(self) -> List[str]:
+    def get_all_tags(self) -> list[str]:
         """获取所有 tags 列表"""
         if not self._is_repo_cloned():
             if not self.clone():
@@ -459,9 +458,9 @@ class GitHubLocalCache:
             logger.error(f"Failed to get tags: {str(e)}")
             return []
 
-    def get_releases(self, recommended_only: bool = False) -> List[Dict[str, Any]]:
+    def get_releases(self, recommended_only: bool = False) -> list[dict[str, Any]]:
         """获取所有 release 标签信息
-        
+
         Args:
             recommended_only: 如果为 True，只返回推荐版本（最新 2 个 stable + 最新 1 个 pre-release）
         """
@@ -513,7 +512,7 @@ class GitHubLocalCache:
             if recommended_only:
                 stable_releases = [r for r in releases if r["is_stable"]]
                 prerelease_releases = [r for r in releases if not r["is_stable"]]
-                
+
                 # Take latest 1 stable and 1 pre-release
                 recommended = stable_releases[:1] + prerelease_releases[:1]
                 # Sort by date again
@@ -526,7 +525,7 @@ class GitHubLocalCache:
             return []
 
     @staticmethod
-    def _parse_mkdocs_extra(content: str) -> Dict[str, str]:
+    def _parse_mkdocs_extra(content: str) -> dict[str, str]:
         """Parse version values from the repository's top-level ``extra`` block."""
         version_keys = {
             "vllm_version",
@@ -539,7 +538,7 @@ class GitHubLocalCache:
             "main_pytorch_torch_npu_version",
             "main_triton_ascend_version",
         }
-        versions: Dict[str, str] = {}
+        versions: dict[str, str] = {}
         in_extra = False
         extra_indent: int | None = None
 
@@ -574,7 +573,7 @@ class GitHubLocalCache:
 
         return versions
 
-    def get_conf_py_versions(self) -> Optional[Dict[str, str]]:
+    def get_conf_py_versions(self) -> dict[str, str] | None:
         """Get main-branch version metadata from current and legacy layouts."""
         mkdocs_content = self.get_file_content("mkdocs.yml", "main")
         if mkdocs_content:
@@ -591,7 +590,7 @@ class GitHubLocalCache:
 
         return self._get_legacy_conf_py_versions()
 
-    def _get_legacy_conf_py_versions(self) -> Optional[Dict[str, str]]:
+    def _get_legacy_conf_py_versions(self) -> dict[str, str] | None:
         """从 conf.py 获取 main 分支的 vllm 版本信息"""
         content = self.get_file_content("docs/source/conf.py", "main")
         if not content:
@@ -623,7 +622,7 @@ class GitHubLocalCache:
 
         return versions
 
-    def get_commits_between_tags(self, base_tag: str, head_tag: str) -> List[Dict[str, Any]]:
+    def get_commits_between_tags(self, base_tag: str, head_tag: str) -> list[dict[str, Any]]:
         """获取两个 tag 之间的 commits
 
         Args:
@@ -736,7 +735,7 @@ class GitHubLocalCache:
         else:
             return "Misc"
 
-    def _extract_pr_number(self, text: str) -> Optional[int]:
+    def _extract_pr_number(self, text: str) -> int | None:
         """从 commit 信息中提取 PR 号"""
         import re
 
@@ -754,7 +753,7 @@ class GitHubLocalCache:
 
         return None
 
-    def get_latest_pr_commits(self, pr_number: int) -> List[Dict[str, Any]]:
+    def get_latest_pr_commits(self, pr_number: int) -> list[dict[str, Any]]:
         """获取指定 PR 的最新 commits"""
         if not self._is_repo_cloned():
             if not self.clone():
@@ -806,7 +805,7 @@ class GitHubLocalCache:
         self,
         start_time: datetime,
         end_time: datetime
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         获取指定时间范围内的 commits
 
@@ -873,7 +872,7 @@ class GitHubLocalCache:
             logger.error(f"Failed to get commits by date range: {str(e)}")
             return []
 
-    def get_latest_commit(self) -> Optional[Dict[str, Any]]:
+    def get_latest_commit(self) -> dict[str, Any] | None:
         """获取最新 commit 信息"""
         if not self._is_repo_cloned():
             if not self.clone():
@@ -891,7 +890,7 @@ class GitHubLocalCache:
             output = result.stdout.decode().strip()
             if not output:
                 return None
-            
+
             parts = output.split('|')
             if len(parts) >= 5:
                 return {
@@ -908,7 +907,7 @@ class GitHubLocalCache:
 
 
 # Singleton instances for different repos
-_cache_instances: Dict[str, GitHubLocalCache] = {}
+_cache_instances: dict[str, GitHubLocalCache] = {}
 _analysis_repos_lock = threading.Lock()
 
 
@@ -920,18 +919,18 @@ def get_github_cache() -> GitHubLocalCache:
 def get_github_cache_for_repo(owner: str | None = None, repo: str | None = None) -> GitHubLocalCache:
     """
     获取指定仓库的 GitHub 本地缓存服务实例
-    
+
     Args:
         owner: GitHub 组织名，默认使用配置的 GITHUB_OWNER
         repo: 仓库名，默认使用配置的 GITHUB_REPO
-    
+
     Returns:
         GitHubLocalCache 实例
     """
     actual_owner = owner or settings.GITHUB_OWNER or "vllm-project"
     actual_repo = repo or settings.GITHUB_REPO or "vllm-ascend"
     cache_key = f"{actual_owner}_{actual_repo}"
-    
+
     global _cache_instances
     if cache_key not in _cache_instances:
         _cache_instances[cache_key] = GitHubLocalCache(owner=actual_owner, repo=actual_repo)
@@ -1004,19 +1003,19 @@ def rebuild_repo() -> bool:
 def fix_repo() -> bool:
     """修复仓库（清理锁文件和 git 状态，无需重新克隆）"""
     cache = get_github_cache()
-    
+
     logger.info(f"Attempting to fix cache directory: {cache.cache_dir}")
-    
+
     if not cache._is_repo_cloned():
         logger.info("Repository not cloned, cloning instead")
         return cache.clone()
-    
+
     # 清理锁文件
     cache._cleanup_git_locks()
-    
+
     try:
         env = cache._get_git_env()
-        
+
         # 清理所有本地修改
         logger.info("Resetting local changes...")
         subprocess.run(
@@ -1026,7 +1025,7 @@ def fix_repo() -> bool:
             timeout=30,
             env=env,
         )
-        
+
         # 清理未跟踪文件
         logger.info("Cleaning untracked files...")
         subprocess.run(
@@ -1036,7 +1035,7 @@ def fix_repo() -> bool:
             timeout=30,
             env=env,
         )
-        
+
         # 清理所有远程分支引用
         logger.info("Pruning remote branches...")
         subprocess.run(
@@ -1046,7 +1045,7 @@ def fix_repo() -> bool:
             timeout=30,
             env=env,
         )
-        
+
         # fetch 最新状态
         logger.info("Fetching latest state...")
         subprocess.run(
@@ -1056,7 +1055,7 @@ def fix_repo() -> bool:
             timeout=120,
             env=env,
         )
-        
+
         # 确保在 main 分支
         logger.info("Checking out main branch...")
         subprocess.run(
@@ -1066,7 +1065,7 @@ def fix_repo() -> bool:
             timeout=30,
             env=env,
         )
-        
+
         logger.info("Repository fixed successfully")
         return True
     except Exception as e:

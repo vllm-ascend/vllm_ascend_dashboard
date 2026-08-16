@@ -3,7 +3,7 @@ import csv
 import io
 import logging
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
@@ -84,10 +84,11 @@ async def _sync_heatmap_from_github(
     Fetches PR file lists from the GitHub API (not from stored PR.data) and
     upserts into the ``code_metrics_file_heatmap`` table.
     """
-    from infrastructure.persistence.models import PullRequest
     from collections import Counter
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    from infrastructure.persistence.models import PullRequest
+
+    cutoff = datetime.now(UTC) - timedelta(days=days)
     stmt = (
         select(PullRequest.pr_number, PullRequest.title)
         .where(
@@ -131,7 +132,7 @@ async def _sync_heatmap_from_github(
         if record:
             record.change_count = count
             record.bug_fix_count = file_bug_fixes.get(path, 0)
-            record.last_changed = datetime.now(timezone.utc)
+            record.last_changed = datetime.now(UTC)
         else:
             db.add(
                 CodeMetricsFileHeatmap(
@@ -139,7 +140,7 @@ async def _sync_heatmap_from_github(
                     file_path=path,
                     change_count=count,
                     bug_fix_count=file_bug_fixes.get(path, 0),
-                    last_changed=datetime.now(timezone.utc),
+                    last_changed=datetime.now(UTC),
                 )
             )
         updated += 1
@@ -733,7 +734,7 @@ async def get_derived_metrics(
     """从 PR 数据聚合衍生指标：PR 大小分布、代码变更量、修改类型分布"""
     from infrastructure.persistence.models import PullRequest
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
     stmt = select(PullRequest).where(
         PullRequest.owner == "vllm-project",
         PullRequest.repo == "vllm-ascend",
@@ -908,8 +909,9 @@ async def get_ci_correlation(
     days: int = Query(30, ge=1, le=365),
 ):
     """分析代码度量与 CI 结果的关联性"""
-    from infrastructure.persistence.models import CIResult
     from sqlalchemy import func as sql_func
+
+    from infrastructure.persistence.models import CIResult
 
     cutoff = date.today() - timedelta(days=days)
 

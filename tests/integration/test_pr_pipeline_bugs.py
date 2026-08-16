@@ -3,10 +3,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from tests.conftest import make_ci_result, make_pr
 
 from collector.pr_pipeline import PRPipelineCollector
 from pr_pipeline.pr_pipeline_service import PRPipelineService
-from tests.conftest import make_ci_result, make_pr
 
 OWNER = "vllm-ascend"
 REPO = "vllm-ascend"

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -17,7 +17,7 @@ async def sync_heatmap_from_github(
     days: int = 30,
 ) -> dict:
     """Aggregate PR file changes and persist the heatmap from the execution role."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
     result = await db.execute(
         select(PullRequest.pr_number, PullRequest.title)
         .where(
@@ -54,7 +54,7 @@ async def sync_heatmap_from_github(
         if record:
             record.change_count = count
             record.bug_fix_count = file_bug_fixes.get(path, 0)
-            record.last_changed = datetime.now(timezone.utc)
+            record.last_changed = datetime.now(UTC)
         else:
             db.add(
                 CodeMetricsFileHeatmap(
@@ -62,7 +62,7 @@ async def sync_heatmap_from_github(
                     file_path=path,
                     change_count=count,
                     bug_fix_count=file_bug_fixes.get(path, 0),
-                    last_changed=datetime.now(timezone.utc),
+                    last_changed=datetime.now(UTC),
                 )
             )
         updated += 1

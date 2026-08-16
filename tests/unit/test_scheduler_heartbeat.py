@@ -10,7 +10,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # --- fake async session -----------------------------------------------------
 
 class FakeHeartbeatRow:
@@ -148,8 +147,8 @@ async def test_status_no_heartbeat_is_not_running(monkeypatch):
 @pytest.mark.asyncio
 async def test_write_heartbeat_serializes_running_and_jobs(monkeypatch):
     """write_heartbeat 把 scheduler.running + 各 job next_run_time 写入心跳行。"""
-    from infrastructure.persistence.models import SchedulerHeartbeat
     import scheduler.service as sched_mod
+    from infrastructure.persistence.models import SchedulerHeartbeat
     from scheduler.service import DataSyncScheduler
 
     session = FakeSession(heartbeat=None)  # 首次写入 → db.add

@@ -6,7 +6,6 @@ import json
 import logging
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
 
 from infrastructure.core.config import settings
 
@@ -16,7 +15,7 @@ logger = logging.getLogger(__name__)
 class DailyDataFileStore:
     """每日数据文件存储"""
 
-    def __init__(self, base_dir: Optional[Path] = None):
+    def __init__(self, base_dir: Path | None = None):
         """
         初始化文件存储
 
@@ -62,7 +61,7 @@ class DailyDataFileStore:
         prs: list[dict],
         issues: list[dict],
         commits: list[dict],
-        fetched_at: Optional[datetime] = None
+        fetched_at: datetime | None = None
     ) -> Path:
         """
         保存每日数据到 JSON 文件
@@ -109,7 +108,7 @@ class DailyDataFileStore:
             logger.error(f"Failed to save daily data: {e}")
             raise
 
-    async def load_daily_data(self, project: str, data_date: date) -> Optional[dict]:
+    async def load_daily_data(self, project: str, data_date: date) -> dict | None:
         """
         从 JSON 文件加载每日数据
 
@@ -126,7 +125,7 @@ class DailyDataFileStore:
             return None
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 data = json.load(f)
             return data
         except Exception as e:
@@ -243,7 +242,7 @@ class DailyDataFileStore:
             logger.error(f"Failed to save summary metadata: {e}")
             raise
 
-    async def load_summary(self, project: str, data_date: date) -> Optional[dict]:
+    async def load_summary(self, project: str, data_date: date) -> dict | None:
         """
         加载 AI 总结
 
@@ -262,13 +261,13 @@ class DailyDataFileStore:
 
         try:
             # 读取 Markdown
-            with open(md_path, "r", encoding="utf-8") as f:
+            with open(md_path, encoding="utf-8") as f:
                 markdown = f.read()
 
             # 读取元数据
             metadata = {}
             if meta_path.exists():
-                with open(meta_path, "r", encoding="utf-8") as f:
+                with open(meta_path, encoding="utf-8") as f:
                     metadata = json.load(f)
 
             return {

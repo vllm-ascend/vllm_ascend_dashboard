@@ -15,7 +15,6 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +109,7 @@ class CollectorWorker:
                     asyncio.gather(*self._futures.values(), return_exceptions=True),
                     timeout=self._drain_timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Drain timeout (%ds), cancelling remaining tasks", self._drain_timeout)
                 futures = list(self._futures.values())
                 for f in futures:

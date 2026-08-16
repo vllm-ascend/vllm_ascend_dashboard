@@ -4,8 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from infrastructure.core.config import settings
 from contracts.schemas.commit_analysis import CommitAnalysisStatus
+from infrastructure.core.config import settings
 
 PROJECT_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 SHA_PATTERN = re.compile(r"^[a-fA-F0-9]{7,64}$")
@@ -70,7 +70,7 @@ class CommitAnalysisFileStore:
         if not path.exists():
             return self.empty_analysis(project, sha)
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return {**self.empty_analysis(project, sha), **data, "project": project, "sha": sha}
 

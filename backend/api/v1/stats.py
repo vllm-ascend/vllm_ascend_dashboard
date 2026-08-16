@@ -3,12 +3,11 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select, func, distinct, text, inspect
+from sqlalchemy import distinct, func, select
 
 from api.deps import CurrentAdminUser, DbSession
-from infrastructure.db.base import engine
-from infrastructure.persistence.models import User, UserLoginLog, FeatureUsageLog, Base
-from contracts.schemas import LoginStatsResponse, FeatureUsageStatsResponse, FeatureUsageTrendPoint
+from contracts.schemas import FeatureUsageStatsResponse, FeatureUsageTrendPoint, LoginStatsResponse
+from infrastructure.persistence.models import FeatureUsageLog, User
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

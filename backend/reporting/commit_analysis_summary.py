@@ -7,9 +7,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from infrastructure.clients.claude_code_cli import run_with_fallback
 from infrastructure.persistence.models import ProjectDashboardConfig
 from infrastructure.persistence.models.daily_summary import LLMProviderConfig
-from infrastructure.clients.claude_code_cli import run_with_fallback
 from infrastructure.storage.commit_analysis_file_store import CommitAnalysisFileStore
 from infrastructure.storage.daily_data_file_store import DailyDataFileStore
 
@@ -131,7 +131,7 @@ class CommitAnalysisSummaryService:
         if provider:
             stmt = stmt.where(LLMProviderConfig.provider == provider)
         else:
-            stmt = stmt.where(LLMProviderConfig.is_active == True)
+            stmt = stmt.where(LLMProviderConfig.is_active)
 
         result = await self.db.execute(stmt.limit(1))
         config = result.scalar_one_or_none()

@@ -162,7 +162,7 @@ def build_failure_analysis_knowledge_graph(analysis: JobFailureAnalysis) -> dict
             )
             add_edge(hyp_node, ev_node, "CONTRADICTED_BY", "反证")
 
-        for ref_idx, code_ref in enumerate(_first_list(hyp, ["code_refs", "code_references", "files", "changed_files"])[:10], start=1):
+        for _ref_idx, code_ref in enumerate(_first_list(hyp, ["code_refs", "code_references", "files", "changed_files"])[:10], start=1):
             ref_text = _stringify(code_ref)
             ref_node = add_node(
                 f"code:{_safe_key(ref_text)}",
@@ -172,7 +172,7 @@ def build_failure_analysis_knowledge_graph(analysis: JobFailureAnalysis) -> dict
             )
             add_edge(hyp_node, ref_node, "TOUCHES_CODE", "关联代码")
 
-        for test_idx, test in enumerate(_first_list(hyp, ["tests_examined", "test_refs", "tests"])[:8], start=1):
+        for _test_idx, test in enumerate(_first_list(hyp, ["tests_examined", "test_refs", "tests"])[:8], start=1):
             test_text = _stringify(test)
             test_node = add_node(
                 f"test:{_safe_key(test_text)}",

@@ -6,20 +6,20 @@
     这些模型已弃用，将在未来版本中移除。
     新的每日数据存储在 data/daily-data/{project}/ 目录下。
 """
-from datetime import datetime, UTC
-from sqlalchemy import Column, Integer, String, Text, Date, Boolean, TIMESTAMP, UniqueConstraint
+from datetime import UTC, datetime
+
+from sqlalchemy import TIMESTAMP, Boolean, Column, Date, Integer, String, Text
 from sqlalchemy.types import JSON
 
 # 从 __init__.py 导入 Base，确保所有模型使用同一个 Base
 from . import Base
-
 
 # ============ 已弃用的模型（数据已迁移到文件存储） ============
 
 class DailyPR(Base):
     """
     每日 PR 数据表（已弃用）
-    
+
     此表已迁移到文件存储：data/daily-data/{project}/{date}.json
     该模型保留仅用于向后兼容，将在未来版本中移除。
     """
@@ -45,7 +45,7 @@ class DailyPR(Base):
 class DailyIssue(Base):
     """
     每日 Issue 数据表（已弃用）
-    
+
     此表已迁移到文件存储：data/daily-data/{project}/{date}.json
     该模型保留仅用于向后兼容，将在未来版本中移除。
     """
@@ -71,7 +71,7 @@ class DailyIssue(Base):
 class DailyCommit(Base):
     """
     每日 Commit 数据表（已弃用）
-    
+
     此表已迁移到文件存储：data/daily-data/{project}/{date}.json
     该模型保留仅用于向后兼容，将在未来版本中移除。
     """
@@ -101,7 +101,7 @@ class DailyCommit(Base):
 class DailySummary(Base):
     """
     每日 AI 总结表（已弃用）
-    
+
     此表已迁移到文件存储：data/daily-data/{project}/summaries/{date}.md
     该模型保留仅用于向后兼容，将在未来版本中移除。
     """

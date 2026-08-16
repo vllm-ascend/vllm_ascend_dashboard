@@ -5,7 +5,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from database.migrations.mysql_schema import INDEX_MIGRATIONS, TABLE_COLUMN_MIGRATIONS
+from database.migrations.mysql_schema import (
+    CREATE_TABLE_MIGRATIONS,
+    INDEX_MIGRATIONS,
+    INDEX_REPLACEMENTS,
+    TABLE_COLUMN_MIGRATIONS,
+)
 
 
 def test_explicit_migration_contains_all_compatibility_columns():

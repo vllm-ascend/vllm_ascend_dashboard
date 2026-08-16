@@ -1,11 +1,10 @@
+import asyncio
 import json
 import logging
-import asyncio
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import CurrentAdminUser, CurrentUser, DbSession
 from contracts.schemas.issue_diagnosis import IssueDiagnosisRequest
@@ -106,13 +105,13 @@ async def list_diagnosis_history(
     if diagnosis_type:
         query = query.where(IssueDiagnosisHistory.diagnosis_type == diagnosis_type)
     if liked_only:
-        query = query.where(IssueDiagnosisHistory.is_liked == True)
+        query = query.where(IssueDiagnosisHistory.is_liked)
 
     count_query = select(func.count(IssueDiagnosisHistory.id))
     if diagnosis_type:
         count_query = count_query.where(IssueDiagnosisHistory.diagnosis_type == diagnosis_type)
     if liked_only:
-        count_query = count_query.where(IssueDiagnosisHistory.is_liked == True)
+        count_query = count_query.where(IssueDiagnosisHistory.is_liked)
     total = (await db.execute(count_query)).scalar() or 0
     query = query.order_by(IssueDiagnosisHistory.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
     rows = (await db.execute(query)).all()
@@ -147,11 +146,12 @@ async def diagnosis_stats(
     db: DbSession,
 ):
     """获取诊断统计数据"""
-    from infrastructure.persistence.models import IssueDiagnosisHistory
     from sqlalchemy import func as sql_func
+
+    from infrastructure.persistence.models import IssueDiagnosisHistory
     total = (await db.execute(select(sql_func.count(IssueDiagnosisHistory.id)))).scalar() or 0
     success = (await db.execute(select(sql_func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.status == "success"))).scalar() or 0
-    liked = (await db.execute(select(sql_func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.is_liked == True))).scalar() or 0
+    liked = (await db.execute(select(sql_func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.is_liked))).scalar() or 0
     pr_count = (await db.execute(select(sql_func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.diagnosis_type == "pr_pipeline"))).scalar() or 0
     job_count = (await db.execute(select(sql_func.count(IssueDiagnosisHistory.id)).where(IssueDiagnosisHistory.diagnosis_type == "ci_job"))).scalar() or 0
 

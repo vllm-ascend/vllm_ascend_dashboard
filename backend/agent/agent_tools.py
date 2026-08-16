@@ -10,8 +10,8 @@ Agent 安全工具集
   - 没有 shell / exec / write / delete
   - 所有返回值有长度上限，防止 token 爆炸
 """
-import contextvars
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -24,8 +24,8 @@ from urllib.parse import urlparse
 import httpx
 from smolagents import tool
 
-from infrastructure.core.config import settings
 from agent.memory_manager import MemoryManager
+from infrastructure.core.config import settings
 
 logger = logging.getLogger(__name__)
 

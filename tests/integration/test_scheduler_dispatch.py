@@ -6,8 +6,8 @@ import json
 import pytest
 from sqlalchemy import text
 
-from scheduler.service import DataSyncScheduler
 from infrastructure.db.base import SessionLocal, engine
+from scheduler.service import DataSyncScheduler
 
 
 @pytest.mark.asyncio

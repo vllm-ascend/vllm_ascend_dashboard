@@ -4,19 +4,15 @@
 """
 import json
 import logging
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
 from api.deps import CurrentAdminUser, DbSession
-from infrastructure.core.config import settings
-from infrastructure.persistence.models import ModelConfig, ModelReport
 from contracts.schemas import (
     Message,
     ModelComparisonResponse,
@@ -28,6 +24,8 @@ from contracts.schemas import (
     ModelTrendData,
 )
 from infrastructure.clients.github_client import GitHubClient
+from infrastructure.core.config import settings
+from infrastructure.persistence.models import ModelConfig, ModelReport
 from model_sync.model_sync_service import ModelSyncService
 from model_sync.model_trend_service import ModelTrendService
 from tooling.generators.startup_command_generator import StartupCommandGenerator
@@ -102,7 +100,7 @@ async def get_model_daily_report(
                 model_stmt = select(ModelConfig).where(ModelConfig.id == model_id)
                 model_result = await db.execute(model_stmt)
                 model = model_result.scalar_one_or_none()
-                
+
                 model_stats[model_id] = {
                     "model_id": model_id,
                     "model_name": model.model_name if model else "Unknown",
@@ -112,14 +110,14 @@ async def get_model_daily_report(
                     "failure_reports": 0,
                     "latest_report": None,
                 }
-            
+
             stats = model_stats[model_id]
             stats["total_reports"] += 1
             if report.pass_fail == 'pass' or report.pass_fail is True:
                 stats["success_reports"] += 1
             elif report.pass_fail == 'fail' or report.pass_fail is False:
                 stats["failure_reports"] += 1
-            
+
             # 更新最新报告
             if stats["latest_report"] is None:
                 needs_update = True
@@ -131,7 +129,7 @@ async def get_model_daily_report(
                     needs_update = False
             else:
                 needs_update = False
-            
+
             if needs_update:
                 # 解析指标
                 metrics = {}
@@ -140,7 +138,7 @@ async def get_model_daily_report(
                         metrics = json.loads(report.metrics_json) if isinstance(report.metrics_json, str) else report.metrics_json
                     except (json.JSONDecodeError, TypeError):
                         pass
-                
+
                 if not metrics and report.report_json:
                     try:
                         report_data = json.loads(report.report_json) if isinstance(report.report_json, str) else report.report_json
@@ -148,12 +146,12 @@ async def get_model_daily_report(
                             metrics = report_data.get('metrics', {})
                     except (json.JSONDecodeError, TypeError):
                         pass
-                
+
                 # 构建 GitHub URL
                 github_url = None
                 if report.workflow_run_id:
                     github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{report.workflow_run_id}"
-                
+
                 stats["latest_report"] = {
                     "report_id": report.id,
                     "status": "success" if (report.pass_fail == 'pass' or report.pass_fail is True) else "failure" if (report.pass_fail == 'fail' or report.pass_fail is False) else None,
@@ -166,22 +164,22 @@ async def get_model_daily_report(
 
         # 生成 Markdown 报告
         markdown_lines = [
-            f"# 模型每日报告",
-            f"",
+            "# 模型每日报告",
+            "",
             f"## {date}",
-            f"",
-            f"### 汇总",
-            f"",
+            "",
+            "### 汇总",
+            "",
             f"- 总报告数：{total_reports}",
             f"- 成功：{success_reports}",
             f"- 失败：{failure_reports}",
             f"- 成功率：{success_rate}%",
-            f"",
-            f"### 模型详情",
-            f"",
+            "",
+            "### 模型详情",
+            "",
         ]
-        
-        for model_id, stats in model_stats.items():
+
+        for _model_id, stats in model_stats.items():
             latest = stats["latest_report"]
             status_emoji = "✅" if latest and latest["status"] == "success" else "❌" if latest and latest["status"] == "failure" else "⏳"
             markdown_lines.append(f"#### {status_emoji} {stats['model_name']}")
@@ -194,7 +192,7 @@ async def get_model_daily_report(
                     markdown_lines.append(f"- 吞吐量：{latest['throughput']:.2f} tok/s")
                 if latest.get('first_token_latency'):
                     markdown_lines.append(f"- 首 Token 延迟：{latest['first_token_latency']:.2f} ms")
-            markdown_lines.append(f"")
+            markdown_lines.append("")
 
         markdown_report = "\n".join(markdown_lines)
 
@@ -238,12 +236,12 @@ class ModelLatestResult(BaseModel):
 async def get_models_latest_results(db: DbSession):
     """获取所有模型的最新报告结果"""
     results = []
-    
+
     # 获取所有模型
     stmt = select(ModelConfig).order_by(ModelConfig.model_name)
     result = await db.execute(stmt)
     models = result.scalars().all()
-    
+
     for model in models:
         # 获取每个模型的最新报告
         report_stmt = (
@@ -254,13 +252,13 @@ async def get_models_latest_results(db: DbSession):
         )
         report_result = await db.execute(report_stmt)
         report = report_result.scalar_one_or_none()
-        
+
         if report:
             # 解析关键指标
             accuracy = None
             throughput = None
             first_token_latency = None
-            
+
             # 首先尝试从 metrics_json 中获取
             metrics = None
             if report.metrics_json:
@@ -268,7 +266,7 @@ async def get_models_latest_results(db: DbSession):
                     metrics = json.loads(report.metrics_json) if isinstance(report.metrics_json, str) else report.metrics_json
                 except (json.JSONDecodeError, TypeError):
                     pass
-            
+
             # 如果 metrics_json 为空，尝试从 report_json 中获取
             if not metrics and report.report_json:
                 try:
@@ -277,7 +275,7 @@ async def get_models_latest_results(db: DbSession):
                         metrics = report_data.get('metrics', {})
                 except (json.JSONDecodeError, TypeError):
                     pass
-            
+
             # 从 metrics 中提取指标
             if metrics and isinstance(metrics, dict):
                 for key in ['accuracy', 'avg_accuracy', 'overall_accuracy']:
@@ -287,7 +285,7 @@ async def get_models_latest_results(db: DbSession):
                             break
                         except (ValueError, TypeError):
                             continue
-                
+
                 for key in ['throughput', 'avg_throughput', 'overall_throughput']:
                     if key in metrics:
                         try:
@@ -295,7 +293,7 @@ async def get_models_latest_results(db: DbSession):
                             break
                         except (ValueError, TypeError):
                             continue
-                
+
                 for key in ['first_token_latency', 'avg_first_token_latency', 'ttft']:
                     if key in metrics:
                         try:
@@ -303,19 +301,19 @@ async def get_models_latest_results(db: DbSession):
                             break
                         except (ValueError, TypeError):
                             continue
-            
+
             # 构建 GitHub URL
             github_url = None
             if report.workflow_run_id:
                 github_url = f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{report.workflow_run_id}"
-            
+
             # 确定状态（pass_fail 可能是字符串 'pass'/'fail' 或布尔值）
             status = None
             if report.pass_fail is True or report.pass_fail == 'pass':
                 status = 'success'
             elif report.pass_fail is False or report.pass_fail == 'fail':
                 status = 'failure'
-            
+
             results.append(ModelLatestResult(
                 model_id=model.id,
                 model_name=model.model_name,
@@ -335,7 +333,7 @@ async def get_models_latest_results(db: DbSession):
                 model_name=model.model_name,
                 series=model.series,
             ))
-    
+
     return results
 
 
@@ -395,7 +393,7 @@ async def list_models(
 # ============ 支持矩阵（必须在 /{model_id} 之前定义） ============
 
 @router.get("/support-matrix")
-async def get_support_matrix_endpoint(
+async def get_support_matrix_endpoint_primary(
     db: DbSession,
     model_type: str | None = Query(None),
     role: str | None = Query(None),
@@ -417,7 +415,7 @@ async def get_support_matrix_endpoint(
 
 
 @router.get("/feature-compatibility")
-async def get_feature_compatibility_endpoint(db: DbSession):
+async def get_feature_compatibility_endpoint_primary(db: DbSession):
     """获取 25×25 特性互操作矩阵"""
     from support_matrix.support_matrix_sync import get_feature_compatibility as _get_compat
 
@@ -425,7 +423,7 @@ async def get_feature_compatibility_endpoint(db: DbSession):
 
 
 @router.get("/global-features")
-async def get_global_features_endpoint(db: DbSession):
+async def get_global_features_endpoint_primary(db: DbSession):
     """获取全局功能支持状态（来自 supported_features.md）"""
     from support_matrix.support_matrix_sync import get_global_features as _get_gf
 
@@ -433,7 +431,7 @@ async def get_global_features_endpoint(db: DbSession):
 
 
 @router.get("/sync-status")
-async def get_sync_status_endpoint(db: DbSession):
+async def get_sync_status_endpoint_primary(db: DbSession):
     """获取最近同步状态"""
     from support_matrix.support_matrix_sync import get_sync_status as _get_ss
 
@@ -441,7 +439,7 @@ async def get_sync_status_endpoint(db: DbSession):
 
 
 @router.post("/sync-upstream")
-async def sync_upstream_endpoint(
+async def sync_upstream_endpoint_primary(
     db: DbSession,
     current_user: CurrentAdminUser,
     dry_run: bool = Query(False),
@@ -712,7 +710,7 @@ async def compare_reports(
     # 检查是否有 tasks 数据（从 report_json 中获取，因为 tasks 可能存储在 report_json 中）
     tasks1 = report1.tasks if report1.tasks else (report1.report_json.get('tasks', []) if report1.report_json else [])
     tasks2 = report2.tasks if report2.tasks else (report2.report_json.get('tasks', []) if report2.report_json else [])
-    
+
     # 调试日志
     import logging
     logger = logging.getLogger(__name__)
@@ -720,7 +718,7 @@ async def compare_reports(
     logger.info(f"tasks2: {tasks2}")
     logger.info(f"tasks1 from report_json: {report1.report_json.get('tasks', []) if report1.report_json else 'N/A'}")
     logger.info(f"tasks2 from report_json: {report2.report_json.get('tasks', []) if report2.report_json else 'N/A'}")
-    
+
     if tasks1 and tasks2 and len(tasks1) > 0 and len(tasks2) > 0:
         tasks1_dict = {t['name']: t for t in tasks1}
         tasks2_dict = {t['name']: t for t in tasks2}
@@ -1116,7 +1114,7 @@ async def upload_report(
 
     # 使用 ModelSyncService 处理上传
     sync_service = ModelSyncService(db, GitHubClient(settings.GITHUB_TOKEN))
-    
+
     try:
         report = await sync_service.create_report_from_upload(
             model_config_id=model_id,
@@ -1174,8 +1172,7 @@ async def sync_reports(
 
 # ============ 支持矩阵 ============
 
-@router.get("/support-matrix")
-async def get_support_matrix_endpoint(
+async def get_support_matrix_endpoint_legacy(
     db: DbSession,
     model_type: str | None = Query(None),
     role: str | None = Query(None),
@@ -1196,32 +1193,28 @@ async def get_support_matrix_endpoint(
     )
 
 
-@router.get("/feature-compatibility")
-async def get_feature_compatibility_endpoint(db: DbSession):
+async def get_feature_compatibility_endpoint_legacy(db: DbSession):
     """获取 25×25 特性互操作矩阵"""
     from support_matrix.support_matrix_sync import get_feature_compatibility as _get_compat
 
     return await _get_compat(db)
 
 
-@router.get("/global-features")
-async def get_global_features_endpoint(db: DbSession):
+async def get_global_features_endpoint_legacy(db: DbSession):
     """获取全局功能支持状态（来自 supported_features.md）"""
     from support_matrix.support_matrix_sync import get_global_features as _get_gf
 
     return await _get_gf(db)
 
 
-@router.get("/sync-status")
-async def get_sync_status_endpoint(db: DbSession):
+async def get_sync_status_endpoint_legacy(db: DbSession):
     """获取最近同步状态"""
     from support_matrix.support_matrix_sync import get_sync_status as _get_ss
 
     return await _get_ss(db)
 
 
-@router.post("/sync-upstream")
-async def sync_upstream_endpoint(
+async def sync_upstream_endpoint_legacy(
     db: DbSession,
     current_user: CurrentAdminUser,
     dry_run: bool = Query(False),

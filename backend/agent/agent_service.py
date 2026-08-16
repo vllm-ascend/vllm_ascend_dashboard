@@ -16,11 +16,10 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 from urllib.parse import urlparse
 
-from infrastructure.core.config import settings
 from agent.agent_runtime import BoundedToolCallingAgent, CompatibleLiteLLMModel
 from agent.agent_tools import (
     FAILURE_ANALYSIS_TOOLS,
@@ -30,6 +29,7 @@ from agent.agent_tools import (
 )
 from agent.memory_manager import MemoryManager, MemoryRecord
 from agent.skill_registry import SkillRegistry, get_skill_registry
+from infrastructure.core.config import settings
 
 logger = logging.getLogger(__name__)
 

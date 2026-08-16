@@ -8,16 +8,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
 
 from sqlalchemy import text
 
+from collector.ci import CICollector
+from collector.pr_pipeline import PRPipelineCollector
+from infrastructure.clients.github_client import GitHubClient
 from infrastructure.core.config import settings
 from infrastructure.db.base import SessionLocal
-from collector.ci import CICollector
+
 from .worker import CollectorWorker, TaskContext
-from infrastructure.clients.github_client import GitHubClient
-from collector.pr_pipeline import PRPipelineCollector
 
 logger = logging.getLogger(__name__)
 
@@ -299,8 +299,8 @@ class CollectorRunner:
 
     async def _run_test_board_sync(self, ctx: TaskContext, task_params: dict):
         """Parse CI test results and derive issues in the Collector role."""
-        from test_board.test_board_service import TestBoardService
         from test_board.issues_found_derivator import IssuesFoundDerivator
+        from test_board.test_board_service import TestBoardService
 
         github = GitHubClient(settings.GITHUB_TOKEN)
         try:

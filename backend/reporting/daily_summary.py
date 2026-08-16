@@ -4,19 +4,23 @@
 import asyncio
 import logging
 import os
-from datetime import datetime, date, time, timezone
+from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
-from typing import Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructure.core.config import settings
-from infrastructure.persistence.models.daily_summary import DailySummary, DailyPR, DailyIssue, DailyCommit, LLMProviderConfig
-from infrastructure.persistence.models import ProjectDashboardConfig
-from infrastructure.clients.github_client import GitHubClient
 from infrastructure.clients.claude_code_cli import run_with_fallback
-from infrastructure.clients.github_cache import get_github_cache, get_github_cache_for_repo
+from infrastructure.clients.github_cache import get_github_cache_for_repo
+from infrastructure.clients.github_client import GitHubClient
+from infrastructure.core.config import settings
+from infrastructure.persistence.models import ProjectDashboardConfig
+from infrastructure.persistence.models.daily_summary import (
+    DailyCommit,
+    DailyIssue,
+    DailyPR,
+    LLMProviderConfig,
+)
 from infrastructure.storage.daily_data_file_store import DailyDataFileStore
 
 logger = logging.getLogger(__name__)
@@ -47,11 +51,11 @@ class SummaryResult:
         commit_count: int,
         llm_provider: str,
         llm_model: str,
-        prompt_tokens: Optional[int] = None,
-        completion_tokens: Optional[int] = None,
-        generation_time_seconds: Optional[int] = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        generation_time_seconds: int | None = None,
         status: str = 'success',
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ):
         self.project = project
         self.date = date
@@ -81,7 +85,7 @@ class DailySummaryService:
         self,
         project: str,
         fetch_date: date
-    ) -> Tuple[int, int]:
+    ) -> tuple[int, int]:
         """
         刷新指定日期的 PR 和 Issue 状态
 
@@ -216,7 +220,7 @@ class DailySummaryService:
                 dt_str = dt_str[:-1] + '+00:00'
             dt = datetime.fromisoformat(dt_str)
             # 转换为 UTC 时间存储（数据库存储 naive datetime，我们统一用 UTC）
-            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt.astimezone(UTC).replace(tzinfo=None)
         except (ValueError, TypeError):
             logger.warning(f"Failed to parse datetime: {dt_str}")
             return None
@@ -241,8 +245,8 @@ class DailySummaryService:
         end_time = datetime.combine(fetch_date, time.max, tzinfo=shanghai_tz)
 
         # 转换为 UTC 时间用于 GitHub API 查询
-        start_time_utc = start_time.astimezone(timezone.utc)
-        end_time_utc = end_time.astimezone(timezone.utc)
+        start_time_utc = start_time.astimezone(UTC)
+        end_time_utc = end_time.astimezone(UTC)
 
         # 2. 根据项目确定 owner 和 repo
         if project == "vllm":
@@ -508,7 +512,7 @@ class DailySummaryService:
                     # Use fetch_date with time 00:00:00 as fallback
                     shanghai_tz = ZoneInfo('Asia/Shanghai')
                     fallback_datetime = datetime.combine(fetch_date, time.min, tzinfo=shanghai_tz)
-                    fallback_datetime_utc = fallback_datetime.astimezone(timezone.utc)
+                    fallback_datetime_utc = fallback_datetime.astimezone(UTC)
                     commit["committed_at"] = fallback_datetime_utc.isoformat().replace('+00:00', 'Z')
 
                 stmt = select(DailyCommit).where(
@@ -564,7 +568,7 @@ class DailySummaryService:
         self,
         project: str,
         summary_date: date,
-        llm_provider: Optional[str] = None,
+        llm_provider: str | None = None,
         force_regenerate: bool = False
     ) -> SummaryResult:
         """
@@ -655,7 +659,7 @@ class DailySummaryService:
             await self._save_error_summary(project, summary_date, str(e))
             raise
 
-    async def _get_existing_summary(self, project: str, summary_date: date) -> Optional[SummaryResult]:
+    async def _get_existing_summary(self, project: str, summary_date: date) -> SummaryResult | None:
         """从文件存储获取已存在的总结"""
         data = await self.file_store.load_summary(project, summary_date)
 
@@ -717,7 +721,7 @@ class DailySummaryService:
 4. 综合以上信息，生成项目整体动态总结
 5. 使用 Markdown 格式，语言为中文"""
 
-    async def _get_llm_config(self, provider: Optional[str] = None) -> LLMProviderConfig:
+    async def _get_llm_config(self, provider: str | None = None) -> LLMProviderConfig:
         """获取 LLM 配置"""
         stmt = select(LLMProviderConfig)
 
@@ -725,7 +729,7 @@ class DailySummaryService:
             stmt = stmt.where(LLMProviderConfig.provider == provider)
         else:
             # 获取激活的 provider（is_active=True 的 provider）
-            stmt = stmt.where(LLMProviderConfig.is_active == True)
+            stmt = stmt.where(LLMProviderConfig.is_active)
 
         stmt = stmt.limit(1)
         result = await self.db.execute(stmt)
@@ -778,8 +782,8 @@ class DailySummaryService:
             "generation_time_seconds": kwargs.get('generation_time_seconds'),
             "status": kwargs.get('status', 'success'),
             "error_message": kwargs.get('error_message'),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "regenerated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
+            "regenerated_at": datetime.now(UTC).isoformat(),
         }
 
         # 保存到文件
@@ -813,7 +817,7 @@ class DailySummaryService:
             "has_data": False,
             "status": "failed",
             "error_message": error_message,
-            "regenerated_at": datetime.now(timezone.utc).isoformat(),
+            "regenerated_at": datetime.now(UTC).isoformat(),
         }
 
         await self.file_store.save_summary(

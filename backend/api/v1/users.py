@@ -8,9 +8,9 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from api.deps import CurrentAdminUser, CurrentSuperAdminUser, DbSession
+from contracts.schemas import Message, PasswordReset, UserCreate, UserResponse, UserUpdate
 from infrastructure.core.security import hash_password
 from infrastructure.persistence.models import User
-from contracts.schemas import Message, PasswordReset, UserCreate, UserResponse, UserUpdate
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ Provides GitHub API integration for issues, PRs, and workflows
 """
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -29,7 +29,7 @@ class GitHubAPIService:
         if self.token:
             self.headers["Authorization"] = f"Bearer {self.token}"
 
-    async def _request(self, method: str, endpoint: str, **kwargs) -> Optional[Dict[str, Any]]:
+    async def _request(self, method: str, endpoint: str, **kwargs) -> dict[str, Any] | None:
         """发送 GitHub API 请求"""
         url = f"{GITHUB_API_BASE}{endpoint}"
         try:
@@ -47,7 +47,7 @@ class GitHubAPIService:
             logger.error(f"GitHub API request failed: {str(e)}")
             return None
 
-    async def get_stale_issues_and_prs(self, days: int = 7) -> Dict[str, List[Dict[str, Any]]]:
+    async def get_stale_issues_and_prs(self, days: int = 7) -> dict[str, list[dict[str, Any]]]:
         """获取超期未 review 的 issues 和 PRs"""
         threshold_date = datetime.now(UTC) - timedelta(days=days)
 
@@ -76,13 +76,13 @@ class GitHubAPIService:
 
             for item in batch_items:
                 updated_at = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
-                
+
                 if updated_at >= threshold_date:
                     continue  # Not stale yet
-                
+
                 days_stale = (datetime.now(UTC) - updated_at).days
                 labels = [label["name"] for label in item.get("labels", [])]
-                
+
                 entry = {
                     "number": item["number"],
                     "title": item["title"],
@@ -95,7 +95,7 @@ class GitHubAPIService:
                     "assignees": [a["login"] for a in item.get("assignees", [])],
                     "comments": item.get("comments", 0),
                 }
-                
+
                 # Check if it's a PR
                 if "pull_request" in item:
                     # Get PR specific info
@@ -115,7 +115,7 @@ class GitHubAPIService:
 
         return {"issues": issues, "prs": prs}
 
-    async def get_pr(self, pr_number: int) -> Optional[Dict[str, Any]]:
+    async def get_pr(self, pr_number: int) -> dict[str, Any] | None:
         """获取 PR 信息"""
         endpoint = f"/repos/{self.owner}/{self.repo}/pulls/{pr_number}"
         return await self._request("GET", endpoint)
@@ -157,7 +157,7 @@ class GitHubAPIService:
             logger.error(f"✗ Error rerunning check suite {check_suite_id}: {str(e)}", exc_info=True)
             return False
 
-    async def get_pr_check_runs(self, pr_number: int) -> List[Dict[str, Any]]:
+    async def get_pr_check_runs(self, pr_number: int) -> list[dict[str, Any]]:
         """获取 PR 的 check runs"""
         endpoint = f"/repos/{self.owner}/{self.repo}/commits/refs/pull/{pr_number}/head/check-runs"
         result = await self._request("GET", endpoint)
@@ -169,9 +169,9 @@ class GitHubAPIService:
         self,
         pr_number: int,
         merge_method: str = "merge",
-        commit_title: Optional[str] = None,
-        commit_message: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        commit_title: str | None = None,
+        commit_message: str | None = None,
+    ) -> dict[str, Any] | None:
         """合并 PR"""
         endpoint = f"/repos/{self.owner}/{self.repo}/pulls/{pr_number}/merge"
         data = {"merge_method": merge_method}
@@ -186,8 +186,8 @@ class GitHubAPIService:
     async def get_workflow_runs_for_pr(
         self,
         pr_number: int,
-        status: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
         """获取 PR 的 workflow runs
 
         Args:
@@ -209,10 +209,10 @@ class GitHubAPIService:
             return []
 
         endpoint = f"/repos/{self.owner}/{self.repo}/actions/runs"
-        
+
         # Try multiple approaches to find workflow runs for this PR
         all_pr_runs = []
-        
+
         # Approach 1: Filter by branch
         try:
             params_branch = {
@@ -225,7 +225,7 @@ class GitHubAPIService:
             if result:
                 runs = result.get("workflow_runs", [])
                 logger.info(f"Got {len(runs)} workflow runs for branch {head_ref}")
-                
+
                 # Filter by PR number
                 pr_runs = [
                     run for run in runs
@@ -236,7 +236,7 @@ class GitHubAPIService:
                 all_pr_runs.extend(pr_runs)
         except Exception as e:
             logger.error(f"Approach 1 failed: {e}")
-        
+
         # Approach 2: Filter by head_sha if no runs found
         if not all_pr_runs and head_sha:
             try:
@@ -249,7 +249,7 @@ class GitHubAPIService:
                 if result:
                     runs = result.get("workflow_runs", [])
                     logger.info(f"Got {len(runs)} workflow runs")
-                    
+
                     # Filter by head_sha
                     pr_runs = [
                         run for run in runs
@@ -259,7 +259,7 @@ class GitHubAPIService:
                     all_pr_runs.extend(pr_runs)
             except Exception as e:
                 logger.error(f"Approach 2 failed: {e}")
-        
+
         # Approach 3: Get all workflow runs and filter by PR number
         if not all_pr_runs:
             try:
@@ -267,12 +267,12 @@ class GitHubAPIService:
                     "event": "pull_request",
                     "per_page": 100,
                 }
-                logger.info(f"Approach 3: Fetching all PR workflow runs to filter by PR number")
+                logger.info("Approach 3: Fetching all PR workflow runs to filter by PR number")
                 result = await self._request("GET", endpoint, params=params_all)
                 if result:
                     runs = result.get("workflow_runs", [])
                     logger.info(f"Got {len(runs)} workflow runs")
-                    
+
                     # Filter by PR number
                     pr_runs = [
                         run for run in runs
@@ -283,7 +283,7 @@ class GitHubAPIService:
                     all_pr_runs.extend(pr_runs)
             except Exception as e:
                 logger.error(f"Approach 3 failed: {e}")
-        
+
         # Remove duplicates by run id
         seen_ids = set()
         unique_runs = []
@@ -292,9 +292,9 @@ class GitHubAPIService:
             if run_id and run_id not in seen_ids:
                 seen_ids.add(run_id)
                 unique_runs.append(run)
-        
+
         logger.info(f"Total unique workflow runs for PR #{pr_number}: {len(unique_runs)}")
-        
+
         # Filter by conclusion or status if specified
         if status:
             # Try conclusion first (for completed runs)
@@ -306,7 +306,7 @@ class GitHubAPIService:
 
         return unique_runs
 
-    async def get_recent_workflow_runs(self, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_recent_workflow_runs(self, limit: int = 100) -> list[dict[str, Any]]:
         """获取最近的 workflow runs（不限制 PR）"""
         endpoint = f"/repos/{self.owner}/{self.repo}/actions/runs"
         params = {
@@ -319,13 +319,13 @@ class GitHubAPIService:
 
         return result.get("workflow_runs", [])
 
-    async def get_releases(self) -> List[Dict[str, Any]]:
+    async def get_releases(self) -> list[dict[str, Any]]:
         """获取所有 releases"""
         endpoint = f"/repos/{self.owner}/{self.repo}/releases"
         result = await self._request("GET", endpoint)
         return result if result else []
 
-    async def get_tags(self) -> List[Dict[str, Any]]:
+    async def get_tags(self) -> list[dict[str, Any]]:
         """获取所有 tags"""
         endpoint = f"/repos/{self.owner}/{self.repo}/tags"
         result = await self._request("GET", endpoint)
@@ -333,7 +333,7 @@ class GitHubAPIService:
 
 
 # Singleton instance
-_service_instance: Optional[GitHubAPIService] = None
+_service_instance: GitHubAPIService | None = None
 
 
 def get_github_api_service() -> GitHubAPIService:

@@ -4,8 +4,6 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from infrastructure.core.config import settings
-from infrastructure.persistence.models import KubernetesClusterConfig
 from contracts.schemas import (
     ClusterResourceSummary,
     ResourceDashboardResponse,
@@ -13,7 +11,14 @@ from contracts.schemas import (
     ResourcePodInfo,
     ResourceQuantity,
 )
-from infrastructure.clients.kubernetes_client import KubernetesClientFactory, list_ephemeral_runners, list_nodes, list_pods
+from infrastructure.clients.kubernetes_client import (
+    KubernetesClientFactory,
+    list_ephemeral_runners,
+    list_nodes,
+    list_pods,
+)
+from infrastructure.core.config import settings
+from infrastructure.persistence.models import KubernetesClusterConfig
 
 EXECUTING_PHASES = {"Pending", "Running", "Unknown"}
 EXECUTED_PHASES = {"Succeeded", "Failed"}

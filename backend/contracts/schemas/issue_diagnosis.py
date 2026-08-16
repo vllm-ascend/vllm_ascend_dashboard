@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field, model_validator, field_validator
-from typing import Literal, Optional
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class IssueDiagnosisMessage(BaseModel):
@@ -12,25 +13,25 @@ class IssueDiagnosisRequest(BaseModel):
         ...,
         description="数据源类型: pr_pipeline, ci_job, commit, manual",
     )
-    pr_number: Optional[int] = Field(
+    pr_number: int | None = Field(
         None,
         description="PR 编号 (data_source_type=pr_pipeline 时必填)",
         gt=0,
     )
-    job_id: Optional[int] = Field(
+    job_id: int | None = Field(
         None,
         description="CI Job ID (data_source_type=ci_job时推荐提供)",
     )
-    run_id: Optional[int] = Field(
+    run_id: int | None = Field(
         None,
         description="CI Run ID (用于commit数据源)",
     )
-    commit_sha: Optional[str] = Field(
+    commit_sha: str | None = Field(
         None,
         description="Commit SHA (7-40位十六进制)",
         max_length=40,
     )
-    user_prompt: Optional[str] = Field(
+    user_prompt: str | None = Field(
         None,
         description="用户补充提示词",
         max_length=60000,
@@ -43,7 +44,7 @@ class IssueDiagnosisRequest(BaseModel):
 
     @field_validator('commit_sha')
     @classmethod
-    def validate_commit_sha(cls, v: Optional[str]) -> Optional[str]:
+    def validate_commit_sha(cls, v: str | None) -> str | None:
         if v is not None:
             import re
             if not re.match(r'^[0-9a-f]{7,40}$', v):
@@ -63,12 +64,12 @@ class CIJobOption(BaseModel):
     workflow_name: str
     job_name: str
     conclusion: str
-    completed_at: Optional[str] = None
+    completed_at: str | None = None
 
 
 class CommitOption(BaseModel):
     sha: str
     message: str
-    committed_at: Optional[str] = None
-    run_id: Optional[int] = None
-    run_number: Optional[int] = None
+    committed_at: str | None = None
+    run_id: int | None = None
+    run_number: int | None = None

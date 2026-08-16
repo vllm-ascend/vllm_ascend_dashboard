@@ -8,14 +8,11 @@ Sources:
 """
 import logging
 import os
-import re
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from sqlalchemy import text
 
-from infrastructure.core.config import settings
 from contracts.schemas.logs import (
     LogEntryMetadata,
     LogEntryResponse,
@@ -24,6 +21,7 @@ from contracts.schemas.logs import (
     LogSourceInfo,
     LogSourcesResponse,
 )
+from infrastructure.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +32,10 @@ _FAILURE_ANALYSIS_DIR = Path(settings.DATA_DIR) / "failure-analysis"
 def _to_utc_datetime(value) -> datetime:
     """Convert a DB timestamp value (str or datetime) to tz-aware UTC."""
     if value is None:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
         return value
     if isinstance(value, str):
         try:
@@ -54,11 +52,11 @@ def _to_utc_datetime(value) -> datetime:
                 except ValueError:
                     continue
             else:
-                return datetime.now(timezone.utc)
+                return datetime.now(UTC)
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=UTC)
         return dt
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +64,7 @@ def _to_utc_datetime(value) -> datetime:
 # ---------------------------------------------------------------------------
 
 
-def _parse_cli_log_file(filepath: Path) -> Optional[LogEntryResponse]:
+def _parse_cli_log_file(filepath: Path) -> LogEntryResponse | None:
     """Parse a Claude Code CLI log file (.log or _conversation.json) into a LogEntryResponse."""
     is_conversation = filepath.name.endswith("_conversation.json")
 
@@ -112,7 +110,7 @@ def _parse_cli_log_file(filepath: Path) -> Optional[LogEntryResponse]:
             exit_code = 0
             summary = f"Conversation: {len(turns)} turns"
             stat = filepath.stat()
-            timestamp = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            timestamp = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
             date_str = filepath.parent.name
             file_id = filepath.stem.replace("_conversation", "")
             return LogEntryResponse(
@@ -198,7 +196,7 @@ def _parse_cli_log_file(filepath: Path) -> Optional[LogEntryResponse]:
             pass
 
     stat = filepath.stat()
-    timestamp = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+    timestamp = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
 
     date_str = filepath.parent.name  # YYYY-MM-DD
     file_id = filepath.stem
@@ -223,7 +221,7 @@ def _parse_cli_log_file(filepath: Path) -> Optional[LogEntryResponse]:
 
 def _parse_failure_analysis_file(
     filepath: Path,
-) -> Optional[LogEntryResponse]:
+) -> LogEntryResponse | None:
     """Parse a failure analysis report into a LogEntryResponse."""
     try:
         content = filepath.read_text(encoding="utf-8")
@@ -243,7 +241,7 @@ def _parse_failure_analysis_file(
         job_id_str = ""
 
     stat = filepath.stat()
-    timestamp = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+    timestamp = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
 
     summary = content[:200].replace("\n", " ")
     log_id = f"failure_analysis:{workflow_name}:{job_name}:{job_id_str}"
@@ -278,7 +276,7 @@ class LogService:
 
         # claude_cli
         cli_count = 0
-        cli_last: Optional[datetime] = None
+        cli_last: datetime | None = None
         if _CLI_LOG_DIR.exists():
             for date_dir in _CLI_LOG_DIR.iterdir():
                 if date_dir.is_dir():
@@ -287,7 +285,7 @@ class LogService:
                             cli_count += 1
                             mtime = datetime.fromtimestamp(
                                 log_file.stat().st_mtime,
-                                tz=timezone.utc,
+                                tz=UTC,
                             )
                             if cli_last is None or mtime > cli_last:
                                 cli_last = mtime
@@ -302,7 +300,7 @@ class LogService:
 
         # failure_analysis
         fa_count = 0
-        fa_last: Optional[datetime] = None
+        fa_last: datetime | None = None
         if _FAILURE_ANALYSIS_DIR.exists():
             for root, _dirs, files in os.walk(_FAILURE_ANALYSIS_DIR):
                 for f in files:
@@ -310,7 +308,7 @@ class LogService:
                         fa_count += 1
                         fp = Path(root) / f
                         mtime = datetime.fromtimestamp(
-                            fp.stat().st_mtime, tz=timezone.utc
+                            fp.stat().st_mtime, tz=UTC
                         )
                         if fa_last is None or mtime > fa_last:
                             fa_last = mtime
@@ -430,7 +428,7 @@ class LogService:
 
     async def get_entry(
         self, log_id: str, db
-    ) -> Optional[LogEntryResponse]:
+    ) -> LogEntryResponse | None:
         """Get a single log entry by ID."""
         parts = log_id.split(":", 1)
         if len(parts) < 2:

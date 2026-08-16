@@ -11,13 +11,13 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructure.persistence.models import CIJob, CIResult, NightlyTestCase, WorkflowConfig
 from infrastructure.clients.github_client import (
     GitHubAPIError,
     GitHubAuthenticationError,
     GitHubClient,
     GitHubRateLimitError,
 )
+from infrastructure.persistence.models import CIJob, CIResult, NightlyTestCase, WorkflowConfig
 from infrastructure.tasks.sync_progress import get_sync_progress, reset_sync_progress
 
 logger = logging.getLogger(__name__)
@@ -141,10 +141,10 @@ class CICollector:
         # workflow 不进入同步，避免无效 run/job 膨胀数据量。
         if workflow_files is None:
             test_workflow_names = select(NightlyTestCase.workflow_name).where(
-                NightlyTestCase.enabled == True,
+                NightlyTestCase.enabled,
             ).distinct()
             stmt = select(WorkflowConfig).where(
-                WorkflowConfig.enabled == True,
+                WorkflowConfig.enabled,
                 WorkflowConfig.workflow_name.in_(test_workflow_names),
             )
             result = await self.db.execute(stmt)
@@ -164,10 +164,10 @@ class CICollector:
             # 即使调用方显式传入 workflow，也要应用相同的测试用例规则。
             # 这样手动同步、定时同步和历史调用路径不会产生不同的数据集。
             test_workflow_files = select(WorkflowConfig.workflow_file).where(
-                WorkflowConfig.enabled == True,
+                WorkflowConfig.enabled,
                 WorkflowConfig.workflow_name.in_(
                     select(NightlyTestCase.workflow_name).where(
-                        NightlyTestCase.enabled == True,
+                        NightlyTestCase.enabled,
                     ).distinct()
                 ),
             )
@@ -437,11 +437,11 @@ class CICollector:
     ) -> bool:
         """
         保存或更新 CI 结果
-        
+
         Args:
             run: GitHub API 返回的 run 数据
             workflow_file: workflow 文件名
-            
+
         Returns:
             是否新增或更新了记录
         """
@@ -472,19 +472,20 @@ class CICollector:
         try:
             # 从 WorkflowConfig 获取正确的 workflow_name
             from sqlalchemy import select
+
             from infrastructure.persistence.models import WorkflowConfig
-            
+
             stmt = select(WorkflowConfig.workflow_name).where(
                 WorkflowConfig.workflow_file == workflow_file
             )
             result = await self.db.execute(stmt)
             config_workflow_name = result.scalar_one_or_none()
-            
+
             # 如果找不到配置，使用 GitHub API 返回的名称
             if config_workflow_name is None:
                 logger.warning(f"WorkflowConfig not found for {workflow_file}, using GitHub name")
                 config_workflow_name = run.get("name", workflow_file)
-            
+
             ci_result = CIResult(
                 workflow_name=config_workflow_name,
                 run_id=run["id"],

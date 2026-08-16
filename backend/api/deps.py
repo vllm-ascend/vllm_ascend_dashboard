@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.core.security import decode_token
 from infrastructure.db.base import get_db
-from infrastructure.persistence.models import User, TokenBlacklist
+from infrastructure.persistence.models import TokenBlacklist, User
 
 logger = logging.getLogger(__name__)
 

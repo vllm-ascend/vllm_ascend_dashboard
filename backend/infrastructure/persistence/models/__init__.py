@@ -542,7 +542,7 @@ class IssueDiagnosisHistory(Base):
     status = Column(String(20), default="success")
     is_liked = Column(Boolean, default=False)
     like_count = Column(Integer, default=0)
-    created_at = Column(TIMESTAMP, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
 
     user = relationship("User", backref="diagnosis_histories")
 
@@ -557,10 +557,9 @@ class TokenBlacklist(Base):
 
 
 # 导入每日总结相关模型
-from .daily_summary import DailyPR, DailyIssue, DailyCommit, DailySummary, LLMProviderConfig
-
-from .test_board import TestCase, TestRun, TestSuiteSnapshot, FailureAnnotation
-from .memory import AnalysisMemory, AnalysisEmbedding
+from .daily_summary import DailyCommit, DailyIssue, DailyPR, DailySummary, LLMProviderConfig
+from .memory import AnalysisEmbedding, AnalysisMemory
+from .test_board import FailureAnnotation, TestCase, TestRun, TestSuiteSnapshot
 
 
 class PullRequest(Base):

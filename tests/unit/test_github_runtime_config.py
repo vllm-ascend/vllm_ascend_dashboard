@@ -1,8 +1,7 @@
 """Tests for shared GitHub configuration propagation."""
 from __future__ import annotations
 
-from infrastructure.core import github_config
-from infrastructure.core import app_runtime_config
+from infrastructure.core import app_runtime_config, github_config
 from infrastructure.core.config import settings
 from infrastructure.core.security import encrypt_api_key
 

@@ -29,8 +29,9 @@ async def main():
     capabilities = [c.strip() for c in capabilities_str.split(",") if c.strip()]
 
     from infrastructure.db.base import SessionLocal
-    from .worker import CollectorWorker
+
     from .executor import CollectorRunner
+    from .worker import CollectorWorker
 
     worker = CollectorWorker(
         node_id=node_id,

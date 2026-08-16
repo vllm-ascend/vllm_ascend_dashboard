@@ -1,16 +1,14 @@
 """
 每日总结相关的 Pydantic Schemas
 """
-from datetime import date
-from typing import Optional
 from pydantic import BaseModel, Field
 
 
 class GenerateSummaryRequest(BaseModel):
     """生成总结请求"""
     project: str = Field(..., description="项目标识 (ascend/vllm)")
-    date: Optional[str] = Field(None, description="日期 (ISO format: YYYY-MM-DD), 默认为昨天")
-    llm_provider: Optional[str] = Field(None, description="LLM 提供商 (openai/anthropic/qwen)")
+    date: str | None = Field(None, description="日期 (ISO format: YYYY-MM-DD), 默认为昨天")
+    llm_provider: str | None = Field(None, description="LLM 提供商 (openai/anthropic/qwen)")
     force_regenerate: bool = Field(False, description="是否强制重新生成")
 
 
@@ -30,8 +28,8 @@ class DailySummaryResponse(BaseModel):
     pr_count: int
     issue_count: int
     commit_count: int
-    generated_at: Optional[str]
-    status: Optional[str] = None
+    generated_at: str | None
+    status: str | None = None
 
 
 class DailySummaryListItem(BaseModel):
@@ -81,7 +79,7 @@ class DailySummaryConfigResponse(BaseModel):
     cron_hour: int
     cron_minute: int
     timezone: str
-    default_llm_provider: Optional[str]
+    default_llm_provider: str | None
     projects: list[dict]
 
 

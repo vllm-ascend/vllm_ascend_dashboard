@@ -6,8 +6,8 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from api.deps import DbSession
-from infrastructure.persistence.models import WorkflowConfig
 from contracts.schemas import WorkflowConfigCreate, WorkflowConfigResponse, WorkflowConfigUpdate
+from infrastructure.persistence.models import WorkflowConfig
 
 router = APIRouter()
 
@@ -55,7 +55,7 @@ async def create_workflow(
     # 去除首尾空格
     workflow_name = workflow_data.workflow_name.strip()
     workflow_file = workflow_data.workflow_file.strip()
-    
+
     # 检查 workflow_name 是否已存在
     stmt = select(WorkflowConfig).where(WorkflowConfig.workflow_name == workflow_name)
     result = await db.execute(stmt)

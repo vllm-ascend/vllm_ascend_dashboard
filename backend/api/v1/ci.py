@@ -4,27 +4,13 @@ Phase 2: 实现数据采集和展示
 """
 import json
 import logging
-import os
 from datetime import UTC, datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import Date, case, cast, func, or_, select
-from sqlalchemy.exc import SQLAlchemyError
 
 from api.deps import CurrentAdminUser, CurrentSuperAdminUser, CurrentUser, DbSession
-from infrastructure.core.config import settings
-from infrastructure.persistence.models import (
-    CIJob,
-    CIResult,
-    DailyFailureRecord,
-    JobFailureAnalysis,
-    JobOwner,
-    NightlyTestCase,
-    User,
-    WorkflowConfig,
-)
 from contracts.schemas import (
     CIDailyReport,
     CIJobDetailResponse,
@@ -37,13 +23,23 @@ from contracts.schemas import (
     DailyFailureListResponse,
     DailyFailureStats,
     DailyFailureUpdateRequest,
-    FailureAnalysisListResponse,
     FailureAnalysisKnowledgeGraphResponse,
+    FailureAnalysisListResponse,
     FailureAnalysisResponse,
     NightlyTestCaseCreate,
     NightlyTestCaseResponse,
     NightlyTestCaseUpdate,
     WorkflowLatestResult,
+)
+from infrastructure.core.config import settings
+from infrastructure.persistence.models import (
+    CIJob,
+    CIResult,
+    DailyFailureRecord,
+    JobFailureAnalysis,
+    JobOwner,
+    NightlyTestCase,
+    WorkflowConfig,
 )
 from tooling.ci_filters import build_workflow_time_filter
 
@@ -77,7 +73,7 @@ async def list_runs(
         WorkflowConfig.workflow_name,
         WorkflowConfig.stats_start_hour,
         WorkflowConfig.stats_end_hour,
-    ).where(WorkflowConfig.enabled == True)
+    ).where(WorkflowConfig.enabled)
     enabled_result = await db.execute(enabled_stmt)
     wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
     enabled_workflows = [wc[0] for wc in wf_configs]
@@ -112,7 +108,7 @@ async def get_workflows_latest_results(
 ):
     """获取每个 workflow 最近一次的 job 结果（只返回启用的 workflow）"""
     # 获取启用的 workflow 名称列表
-    enabled_stmt = select(WorkflowConfig.workflow_name, WorkflowConfig.hardware).where(WorkflowConfig.enabled == True)
+    enabled_stmt = select(WorkflowConfig.workflow_name, WorkflowConfig.hardware).where(WorkflowConfig.enabled)
     if workflow_name:
         enabled_stmt = enabled_stmt.where(WorkflowConfig.workflow_name == workflow_name)
     if hardware:
@@ -169,7 +165,7 @@ async def get_ci_stats(
         WorkflowConfig.workflow_name,
         WorkflowConfig.stats_start_hour,
         WorkflowConfig.stats_end_hour,
-    ).where(WorkflowConfig.enabled == True)
+    ).where(WorkflowConfig.enabled)
     enabled_result = await db.execute(enabled_stmt)
     wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
 
@@ -338,7 +334,7 @@ async def get_ci_trends(
         WorkflowConfig.workflow_name,
         WorkflowConfig.stats_start_hour,
         WorkflowConfig.stats_end_hour,
-    ).where(WorkflowConfig.enabled == True)
+    ).where(WorkflowConfig.enabled)
     enabled_result = await db.execute(enabled_stmt)
     wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
     enabled_workflows = [wc[0] for wc in wf_configs]
@@ -484,6 +480,7 @@ async def get_sync_status():
 async def get_sync_progress_info():
     """Return the latest durable CI sync task status."""
     from sqlalchemy import text
+
     from infrastructure.db.base import SessionLocal
 
     async with SessionLocal() as db:
@@ -533,12 +530,12 @@ async def get_sync_progress_info():
 async def debug_workflows():
     """
     调试接口：获取 GitHub 上实际的 workflow 列表
-    
+
     用于排查 workflow 文件名不匹配问题
     """
     try:
-        from infrastructure.core.config import settings
         from infrastructure.clients.github_client import GitHubClient
+        from infrastructure.core.config import settings
 
         if not settings.GITHUB_TOKEN:
             raise HTTPException(
@@ -559,16 +556,17 @@ async def debug_workflows():
             workflows = result.get("workflows", [])
 
             # 检查配置的 workflow 是否存在
+            from sqlalchemy import select
+
             from infrastructure.db.base import SessionLocal
             from infrastructure.persistence.models import WorkflowConfig
-            from sqlalchemy import select
 
             async with SessionLocal() as db:
                 configured_workflows = list(
                     (
                         await db.execute(
                             select(WorkflowConfig.workflow_file).where(
-                                WorkflowConfig.enabled == True
+                                WorkflowConfig.enabled
                             )
                         )
                     ).scalars()
@@ -812,7 +810,7 @@ async def get_daily_report(
             WorkflowConfig.workflow_name,
             WorkflowConfig.stats_start_hour,
             WorkflowConfig.stats_end_hour,
-        ).where(WorkflowConfig.enabled == True)
+        ).where(WorkflowConfig.enabled)
         enabled_result = await db.execute(enabled_stmt)
         wf_configs = [(row[0], row[1], row[2]) for row in enabled_result.all()]
         enabled_workflows = [wc[0] for wc in wf_configs]
@@ -909,7 +907,7 @@ async def get_daily_report(
             failed_jobs = jobs_result.scalars().all()
 
             # 获取 job 责任人
-            job_names = list(set(f"{job.workflow_name}|||{job.job_name}" for job in failed_jobs))
+            job_names = list({f"{job.workflow_name}|||{job.job_name}" for job in failed_jobs})
             owners_stmt = select(JobOwner).where(
                 JobOwner.workflow_name.in_([name.split("|||")[0] for name in job_names]),
                 JobOwner.job_name.in_([name.split("|||")[1] for name in job_names])
@@ -1104,8 +1102,8 @@ async def analyze_failed_job(
     force: bool = Query(default=False, description="强制重新分析"),
 ):
     """触发失败分析（异步后台执行，立即返回，前端轮询 GET 接口获取结果）"""
-    from infrastructure.persistence.models import CIJob, JobFailureAnalysis
     from failure_analysis.failure_analysis import FailureAnalysisService
+    from infrastructure.persistence.models import CIJob, JobFailureAnalysis
 
     # 1. 验证 job 存在
     stmt = select(CIJob).where(CIJob.job_id == job_id)
@@ -1162,9 +1160,10 @@ async def analyze_failed_job(
 
     # 4. Enqueue durable analysis work for a Collector worker.
     from uuid import uuid4
+
     from infrastructure.tasks.task_manager import TaskManager
 
-    task_id = await TaskManager.create_task(
+    await TaskManager.create_task(
         db,
         "failure_analysis",
         {"job_id": job_id, "force": force, "triggered_by": "manual"},
@@ -1275,7 +1274,9 @@ async def get_failure_analysis_knowledge_graph(
     if not analysis:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分析记录不存在")
 
-    from failure_analysis.failure_analysis_knowledge_graph import build_failure_analysis_knowledge_graph
+    from failure_analysis.failure_analysis_knowledge_graph import (
+        build_failure_analysis_knowledge_graph,
+    )
 
     return build_failure_analysis_knowledge_graph(analysis)
 
@@ -1328,7 +1329,7 @@ async def list_claude_logs(
     if not _CLI_LOG_DIR.exists():
         return {"logs": [], "message": "No logs yet"}
 
-    cutoff = datetime.now(timezone.utc).date()
+    cutoff = datetime.now(UTC).date()
     for date_dir in sorted(_CLI_LOG_DIR.iterdir(), reverse=True):
         if not date_dir.is_dir():
             continue
@@ -1343,7 +1344,7 @@ async def list_claude_logs(
                     "filename": log_file.name,
                     "path": str(log_file.relative_to(_CLI_LOG_DIR)),
                     "size": stat.st_size,
-                    "created_at": datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
+                    "created_at": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
                 })
 
     return {"total": len(logs), "logs": logs}
@@ -1480,10 +1481,7 @@ async def download_public_analysis_pdf(
     db: DbSession,
 ):
     """下载分析报告 PDF（无需登录）"""
-    from io import BytesIO
 
-    import markdown
-    from fastapi.responses import StreamingResponse
 
     from infrastructure.persistence.models import JobFailureAnalysis
 

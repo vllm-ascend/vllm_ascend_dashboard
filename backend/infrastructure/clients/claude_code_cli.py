@@ -18,9 +18,10 @@ import shlex
 import shutil
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
+
+from tooling.parsers.format_proxy import FormatProxy
 
 # Claude Code CLI 日志持久化目录
 _CLI_LOG_DIR = Path(__file__).parent.parent.parent / "data" / "claude_logs"
@@ -63,7 +64,7 @@ def _save_cli_log(
 ) -> str:
     """持久化保存 Claude Code CLI 调用日志"""
     try:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         date_dir = _CLI_LOG_DIR / now.strftime("%Y-%m-%d")
         date_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{now.strftime('%H%M%S')}_{provider}_{model}.log"
@@ -171,13 +172,13 @@ class ClaudeCodeCLI:
 
         turns = max_turns or self._max_turns
         # 生成 debug 日志路径（轮次级交互记录）
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         debug_dir = _CLI_LOG_DIR / now.strftime("%Y-%m-%d")
         debug_dir.mkdir(parents=True, exist_ok=True)
         debug_file = debug_dir / f"{now.strftime('%H%M%S')}_{provider}_{model}_debug.log"
         args = self._build_args(prompt, system_prompt, turns, output_format, str(debug_file))
 
-        proxy: "FormatProxy | None" = None
+        proxy: FormatProxy | None = None
         litellm_url = os.environ.get("LITELLM_PROXY_URL", "")
         proxy_only = os.environ.get("AGENT_PROXY_ONLY", "").lower() in ("1", "true", "yes")
         litellm_master_key = os.environ.get("LITELLM_MASTER_KEY", "")
@@ -195,8 +196,6 @@ class ClaudeCodeCLI:
         # ── 路由决策 ──
         if litellm_url:
             # FormatProxy (Anthropic→OpenAI) → LiteLLM → upstream
-            from tooling.parsers.format_proxy import FormatProxy
-
             proxy = FormatProxy(
                 upstream_base_url=litellm_url,
                 upstream_api_key=litellm_master_key,
@@ -222,8 +221,6 @@ class ClaudeCodeCLI:
             )
         else:
             # 开发环境：FormatProxy 本地代理（Anthropic ↔ OpenAI 翻译）
-            from tooling.parsers.format_proxy import FormatProxy
-
             proxy = FormatProxy(
                 upstream_base_url=api_base or "https://api.openai.com/v1",
                 upstream_api_key=api_key,
@@ -284,7 +281,7 @@ class ClaudeCodeCLI:
                     proc.communicate(input=prompt_bytes),
                     timeout=self._timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 await proc.wait()
                 raise ClaudeCLITimeout(
@@ -604,5 +601,5 @@ async def run_with_fallback(
             system_prompt=system_prompt,
             output_format=output_format,
         )
-    except (ClaudeCLINotAvailable, ClaudeCLITimeout) as e:
+    except (ClaudeCLINotAvailable, ClaudeCLITimeout):
         raise  # 直接抛出，由上层标记分析失败，不降级到 direct API

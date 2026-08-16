@@ -5,7 +5,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
 DEFAULT_RESOURCE_DASHBOARD_NAMESPACE = "vllm-project"
 
 

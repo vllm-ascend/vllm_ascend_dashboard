@@ -2,25 +2,17 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime
-from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import (
-    CurrentAdminUser,
     CurrentSuperAdminUser,
-    CurrentUser,
     DbSession,
     get_current_user,
 )
-from infrastructure.core.config import settings
-from infrastructure.db.base import SessionLocal
-from infrastructure.persistence.models import User
-from infrastructure.persistence.models.test_board import TestCase
 from contracts.schemas.test_board import (
     FailureAnnotationRequest,
     TestBoardSyncRequest,
@@ -30,6 +22,10 @@ from contracts.schemas.test_board import (
     TestOverviewResponse,
 )
 from infrastructure.clients.github_client import GitHubClient
+from infrastructure.core.config import settings
+from infrastructure.db.base import SessionLocal
+from infrastructure.persistence.models import User
+from infrastructure.persistence.models.test_board import TestCase
 from test_board.test_board_service import TestBoardService
 from tooling.analytics.test_case_matrix_service import get_case_feature_matrix
 
@@ -498,7 +494,7 @@ async def trigger_derive_issues(
     else:
         from infrastructure.tasks.task_manager import TaskManager
 
-        task_id = await TaskManager.create_task(
+        await TaskManager.create_task(
             db,
             "issues_derivation",
             {},

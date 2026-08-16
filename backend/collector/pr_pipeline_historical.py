@@ -2,12 +2,12 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func as sa_func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func as sa_func
+from sqlalchemy import select
 
-from infrastructure.persistence.models import PullRequest
-from infrastructure.clients.github_client import GitHubRateLimitError
 from collector.pr_pipeline import PRPipelineCollector
+from infrastructure.clients.github_client import GitHubRateLimitError
+from infrastructure.persistence.models import PullRequest
 
 logger = logging.getLogger(__name__)
 
@@ -82,9 +82,11 @@ class PRPipelineHistoricalCollector(PRPipelineCollector):
         self,
         owner: str,
         repo: str,
-        phases: list[str] = ["A", "B"],
+        phases: list[str] = None,
         months_back: int = 3,
     ) -> dict[str, int]:
+        if phases is None:
+            phases = ["A", "B"]
         results = {}
 
         if "A" in phases:
