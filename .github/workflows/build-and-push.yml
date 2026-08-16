@@ -18,6 +18,11 @@ on:
       version:
         description: '镜像版本号 (留空则自动生成 YYYYMMDD-N)'
         required: false
+      skip_quality:
+        description: '仅用于临时镜像构建验证：跳过质量检查（不会用于普通 push）'
+        type: boolean
+        required: false
+        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -26,6 +31,7 @@ env:
 
 jobs:
   quality:
+    if: github.event_name != 'workflow_dispatch' || inputs.skip_quality != true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -109,7 +115,11 @@ jobs:
           pnpm audit --prod --audit-level=high
 
   build-and-push:
-    if: github.event_name != 'pull_request'
+    if: >-
+      always() &&
+      github.event_name != 'pull_request' &&
+      (needs.quality.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.skip_quality == true))
     needs: quality
     runs-on: ubuntu-latest
     permissions:

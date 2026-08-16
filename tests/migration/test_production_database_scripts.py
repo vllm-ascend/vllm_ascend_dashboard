@@ -78,3 +78,6 @@ def test_ci_publishes_versioned_images_with_supply_chain_metadata():
     assert "uv run --no-sync pytest -q" in workflow
     assert "uv run --no-sync pip-audit --strict" in workflow
     assert "pnpm audit --prod --audit-level=high" in workflow
+    assert "skip_quality:" in workflow
+    assert "inputs.skip_quality == true" in workflow
+    assert "always()" in workflow
