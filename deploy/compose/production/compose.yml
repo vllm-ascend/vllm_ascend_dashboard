@@ -10,7 +10,7 @@
 # Keep the transition compatible with the existing production containers. The
 # project name and volume names are explicit so a checkout path change cannot
 # silently create a second, empty MySQL volume.
-name: ${DASHBOARD_COMPOSE_PROJECT:-vllm-dashboard}
+name: ${DASHBOARD_COMPOSE_PROJECT:-vllm_ascend_dashboard}
 
 services:
   # ── LiteLLM API Gateway（Anthropic ↔ OpenAI 格式翻译）──
@@ -266,7 +266,7 @@ volumes:
 # Network Configuration
 networks:
   dashboard-network:
-    name: ${DASHBOARD_NETWORK_NAME:-vllm-dashboard_dashboard-network}
+    name: ${DASHBOARD_NETWORK_NAME:-vllm_ascend_dashboard_dashboard-network}
     driver: bridge
     # Optional: specify subnet
     # ipam:
