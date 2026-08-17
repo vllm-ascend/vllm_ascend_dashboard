@@ -264,6 +264,8 @@ async def test_drilldown_no_data(client, test_db):
     """维度聚合下钻：无快照数据时返回 has_data=False。"""
     # 删除所有快照
     from sqlalchemy import delete
+    # 明细表通过外键引用快照，必须先删除子记录。
+    await test_db.execute(delete(CodeComplexityDetail))
     await test_db.execute(delete(CodeMetricsSnapshot))
     await test_db.commit()
     r = await client.get("/api/v1/code-metrics/drilldown", params={"language": "Python"})
