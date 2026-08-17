@@ -1,7 +1,9 @@
+import os
 import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from coverage import CoverageData
 
 from test_board import coverage_sync
@@ -99,3 +101,24 @@ def test_line_coverage_filters_to_ut_and_calculates_source_denominator(
     assert result["totals"]["missing_lines"] > 0
     assert result["files"][0]["path"] == "vllm_ascend/sample.py"
     assert result["details"]["vllm_ascend/sample.py"]["executed_lines"] == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_download_failure_removes_partial_temp_tar(tmp_path: Path, monkeypatch) -> None:
+    temp_path = tmp_path / "coverage-download.tar"
+    fd = os.open(temp_path, os.O_CREAT | os.O_RDWR)
+    monkeypatch.setattr(
+        coverage_sync.tempfile,
+        "mkstemp",
+        lambda **_: (fd, str(temp_path)),
+    )
+
+    async def fail_signature(_client):
+        raise RuntimeError("signature request failed")
+
+    monkeypatch.setattr(coverage_sync, "_head_signature", fail_signature)
+
+    with pytest.raises(RuntimeError, match="signature request failed"):
+        await coverage_sync._download_with_signature()
+
+    assert not temp_path.exists()

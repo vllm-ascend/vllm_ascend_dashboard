@@ -537,10 +537,17 @@ async def _download_with_signature() -> tuple[Path, str]:
     fd, filename = tempfile.mkstemp(prefix="coverage_", suffix=".tar")
     os.close(fd)
     temp = Path(filename)
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        signature = await _head_signature(client)
-        await _download_tar(client, temp)
-    return temp, signature
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            signature = await _head_signature(client)
+            await _download_tar(client, temp)
+        return temp, signature
+    except BaseException:
+        # The caller can only clean up a path it receives.  If HEAD or the
+        # download fails before returning, remove the empty/partial artifact
+        # here, including on task cancellation.
+        temp.unlink(missing_ok=True)
+        raise
 
 
 async def sync_e2e(db: AsyncSession) -> dict[str, Any]:
