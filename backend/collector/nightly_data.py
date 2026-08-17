@@ -22,6 +22,11 @@ from infrastructure.persistence.models import (
     DailyFailureRecord,
     NightlyTestCase,
 )
+from tooling.model_fo_mapping import (
+    lookup_model_fo,
+    load_model_fo_mappings,
+    seed_missing_model_fo_mappings,
+)
 from tooling.parsers.nightly_config_parser import NightlyConfigParser, load_model_fo_map
 
 logger = logging.getLogger(__name__)
@@ -70,7 +75,8 @@ class NightlyDataCollector:
         """Snapshot active branches from ``nightly_config.yaml``."""
 
         parser = self._get_parser()
-        fo_map = load_model_fo_map()
+        seed_count = await seed_missing_model_fo_mappings(self.db, load_model_fo_map())
+        fo_map = await load_model_fo_mappings(self.db)
         today = date.today()
         branches = parser.get_active_branches()
         target_branches = ["main", *(b for b in branches if b.startswith("releases/"))]
@@ -91,16 +97,7 @@ class NightlyDataCollector:
                     )
                 )
                 existing = result.scalar_one_or_none()
-                model_fo = (
-                    fo_map.get(case.model_path)
-                    or fo_map.get(case.model_path.split("/")[-1])
-                    or fo_map.get(
-                        case.model_path.rsplit(".", 1)[0]
-                        if "." in case.model_path
-                        else case.model_path
-                    )
-                    or ""
-                )
+                model_fo = lookup_model_fo(fo_map, case.model_path)
                 if existing is None:
                     self.db.add(
                         NightlyTestCase(
@@ -118,11 +115,9 @@ class NightlyDataCollector:
                     existing.display_name = case.name
                     existing.test_model = case.model_path
                     existing.deployment_type = case.deployment
-                    if model_fo:
-                        existing.model_fo = model_fo
                 total += 1
 
-        if total:
+        if total or seed_count:
             await self.db.commit()
         logger.info(
             "Nightly config snapshot completed: %d entries across %d branches",

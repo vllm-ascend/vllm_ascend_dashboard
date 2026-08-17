@@ -42,6 +42,12 @@ from infrastructure.persistence.models import (
     WorkflowConfig,
 )
 from tooling.ci_filters import build_workflow_time_filter
+from tooling.model_fo_mapping import (
+    lookup_model_fo,
+    load_model_fo_mappings,
+    seed_missing_model_fo_mappings,
+    set_model_fo_mapping,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1770,6 +1776,8 @@ async def create_nightly_test_case(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该用例已存在")
     tc = NightlyTestCase(**data.model_dump())
     db.add(tc)
+    if data.model_fo:
+        await set_model_fo_mapping(db, data.test_model, data.model_fo)
     await db.commit()
     await db.refresh(tc)
     return tc
@@ -1788,8 +1796,15 @@ async def update_nightly_test_case(
     tc = result.scalar_one_or_none()
     if not tc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用例不存在")
-    for field, value in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    for field, value in changes.items():
         setattr(tc, field, value)
+    if "model_fo" in changes or "test_model" in changes:
+        await set_model_fo_mapping(
+            db,
+            changes.get("test_model", tc.test_model),
+            changes.get("model_fo", tc.model_fo),
+        )
     await db.commit()
     await db.refresh(tc)
     return tc
@@ -1820,7 +1835,8 @@ async def sync_test_cases_from_yaml(
     """从本地 vllm-ascend 仓库的 nightly YAML 配置同步用例到静态表"""
     from tooling.parsers.nightly_config_parser import NightlyConfigParser, load_model_fo_map
 
-    fo_map = load_model_fo_map()
+    seed_count = await seed_missing_model_fo_mappings(db, load_model_fo_map())
+    fo_map = await load_model_fo_mappings(db)
     parser = NightlyConfigParser()
     info = parser.get_repo_info()
 
@@ -1864,7 +1880,6 @@ async def sync_test_cases_from_yaml(
             if existing:
                 existing.test_model = c.model_path
                 existing.deployment_type = c.deployment
-                existing.model_fo = fo_map.get(c.model_path) or fo_map.get(c.model_path.split("/")[-1]) or fo_map.get(c.model_path.rsplit(".", 1)[0] if "." in c.model_path else c.model_path, "")
                 total_updated += 1
             else:
                 db.add(NightlyTestCase(
@@ -1874,12 +1889,12 @@ async def sync_test_cases_from_yaml(
                     job_name=c.name,
                     display_name=c.name,
                     test_model=c.model_path,
-                    model_fo=fo_map.get(c.model_path) or fo_map.get(c.model_path.split("/")[-1]) or fo_map.get(c.model_path.rsplit(".", 1)[0] if "." in c.model_path else c.model_path, ""),
+                    model_fo=lookup_model_fo(fo_map, c.model_path),
                     deployment_type=c.deployment,
                 ))
                 total_created += 1
 
-    if total_created > 0 or total_updated > 0:
+    if total_created > 0 or total_updated > 0 or seed_count:
         await db.commit()
 
     return {

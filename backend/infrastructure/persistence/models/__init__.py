@@ -24,7 +24,7 @@ from sqlalchemy.types import JSON
 __all__ = [
     "Base", "User", "ModelConfig", "ModelReport", "CIResult", "CIJob",
     "DailyFailureRecord",
-    "WorkflowConfig", "PerformanceData", "JobOwner", "NightlyTestCase",
+    "WorkflowConfig", "PerformanceData", "JobOwner", "NightlyTestCase", "ModelFoMapping",
     "ModelSyncConfig", "ProjectDashboardConfig", "KubernetesClusterConfig",
     "DailyPR", "DailyIssue", "DailyCommit", "DailySummary", "LLMProviderConfig",
     "DailyReportHistory", "ResourceNpuMetrics", "JobFailureAnalysis",
@@ -295,6 +295,17 @@ class NightlyTestCase(Base):
         UniqueConstraint('report_date', 'source_branch', 'workflow_name', 'job_name',
                          name='uq_nightly_test_case_date_branch_wf_job'),
     )
+
+
+class ModelFoMapping(Base):
+    """Current model-to-FO mapping used by future Nightly snapshots."""
+    __tablename__ = "model_fo_mappings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_key = Column(String(255), nullable=False, unique=True, index=True)
+    model_fo = Column(String(100), nullable=False)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
 class ModelSyncConfig(Base):

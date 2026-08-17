@@ -71,6 +71,7 @@ type DailyFailurePreferences = {
 }
 
 const DAILY_FAILURE_PREFERENCES_KEY = 'ci-daily-failure-preferences'
+const KNOWN_DAILY_FAILURE_WORKFLOWS = ['Nightly-A2', 'Nightly-A3', 'Nightly-310P']
 
 function readDailyFailurePreferences(): DailyFailurePreferences {
   if (typeof window === 'undefined') return {}
@@ -404,11 +405,11 @@ function DailyFailureTracking() {
   const breakdownField = { workflow: 'workflow_name', owner: 'owner' }[breakdownDimension] as keyof DailyFailureJob
 
   const workflowOptions = useMemo(() => {
-    if (!data) return []
-    const workflows = new Set<string>()
-    data.forEach(day => day.jobs.forEach(job => workflows.add(job.workflow_name)))
+    const workflows = new Set(KNOWN_DAILY_FAILURE_WORKFLOWS)
+    data?.forEach(day => day.jobs.forEach(job => workflows.add(job.workflow_name)))
+    if (workflowFilter) workflows.add(workflowFilter)
     return Array.from(workflows)
-  }, [data])
+  }, [data, workflowFilter])
 
   return (
     <div>
@@ -428,6 +429,7 @@ function DailyFailureTracking() {
             style={{ width: 260 }}
           />
           <Search
+            value={notesSearch}
             placeholder="搜索备注..."
             allowClear
             onSearch={(value) => setNotesSearch(value || undefined)}
@@ -609,7 +611,12 @@ function DailyFailureTracking() {
         <Table
           rowKey={(record) => `${(record as DailyFailureJob & { _date: string })._date}-${record.id}`}
           dataSource={detailJobs}
-          pagination={{ pageSize: 10 }}
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50],
+            showTotal: (total) => `共 ${total} 条记录`,
+          }}
           columns={[
             { title: '日期', dataIndex: '_date', width: 110 },
             { title: 'Workflow', dataIndex: 'workflow_name' },

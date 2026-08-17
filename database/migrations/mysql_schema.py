@@ -22,7 +22,7 @@ from infrastructure.db.base import SessionLocal, engine
 logger = logging.getLogger("mysql_schema_migration")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-MIGRATION_VERSION = "20260817_01_daily_failure_processing_times"
+MIGRATION_VERSION = "20260817_02_model_fo_mappings"
 TABLE_COLUMN_MIGRATIONS = {
     "user_login_logs": {
         "ip_address_hashed": "VARCHAR(64) NULL",
@@ -82,6 +82,19 @@ INDEX_REPLACEMENTS = [
 
 # 整表新建（CREATE TABLE IF NOT EXISTS）：仅在建表迁移缺失时补齐。
 CREATE_TABLE_MIGRATIONS = [
+    # 当前模型 FO 映射。仅用于生成未来 Nightly 快照，不回写历史物化记录。
+    """
+    CREATE TABLE IF NOT EXISTS `model_fo_mappings` (
+      `id` INT NOT NULL AUTO_INCREMENT,
+      `model_key` VARCHAR(255) NOT NULL,
+      `model_fo` VARCHAR(100) NOT NULL,
+      `created_at` TIMESTAMP NULL DEFAULT NULL,
+      `updated_at` TIMESTAMP NULL DEFAULT NULL,
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `uq_model_fo_mapping_key` (`model_key`),
+      KEY `ix_model_fo_mappings_model_key` (`model_key`)
+    ) ENGINE=InnoDB
+    """,
     # 调度器心跳表 — 独立 scheduler 进程每 20s 写入，API 读取以判断调度器存活。
     """
     CREATE TABLE IF NOT EXISTS `scheduler_heartbeat` (

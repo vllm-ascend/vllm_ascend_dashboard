@@ -78,6 +78,9 @@ COPY backend/model_sync/ ./model_sync/
 COPY backend/support_matrix/ ./support_matrix/
 COPY backend/pr_pipeline/ ./pr_pipeline/
 COPY backend/resources/ ./resources/
+# The JSON file is an initial seed only. Runtime updates are persisted in the
+# model_fo_mappings table, so keep the seed outside the mounted /app/data volume.
+COPY data/model_fo_map.json ./resources/model_fo_map.json
 COPY backend/templates/ ./templates/
 
 # Copy skills/agents

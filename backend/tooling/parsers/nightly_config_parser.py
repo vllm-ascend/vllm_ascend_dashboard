@@ -71,8 +71,8 @@ def load_model_fo_map() -> dict[str, str]:
     base = Path(__file__).resolve().parent
     candidates = [
         Path(os.environ.get("DATA_DIR", "")) / "model_fo_map.json",
-        base.parent.parent.parent / "data" / "model_fo_map.json",  # 容器：/app/data/
-        base.parent.parent.parent.parent / "data" / "model_fo_map.json",  # 本地：项目根/data/
+        base.parent.parent / "resources" / "model_fo_map.json",  # 容器：/app/resources/
+        base.parent.parent.parent / "data" / "model_fo_map.json",  # 本地：项目根/data/
     ]
     fo_file = next((p for p in candidates if p.exists()), None)
     if not fo_file:
