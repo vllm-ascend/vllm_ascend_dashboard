@@ -93,7 +93,9 @@ jobs:
 
       - name: Backend dependency audit
         working-directory: backend
-        run: uv run --no-sync pip-audit --strict
+        # ecdsa has no upstream fixed release for PYSEC-2026-1325 yet;
+        # keep the strict audit for all actionable vulnerabilities.
+        run: uv run --no-sync pip-audit --strict --ignore PYSEC-2026-1325
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
