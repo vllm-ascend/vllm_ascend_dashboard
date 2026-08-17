@@ -120,6 +120,7 @@ class ResourceMetricsQueryService:
                 ResourceNodeMetrics.collected_at <= end_time,
             ).order_by(ResourceNodeMetrics.collected_at.asc())
 
+            normalized_node_names: list[str] = []
             if node_names:
                 normalized_node_names = [name.strip() for name in node_names if name and name.strip()]
                 if normalized_node_names:
@@ -134,6 +135,25 @@ class ResourceMetricsQueryService:
 
             metrics_result = await self.db.execute(stmt)
             raw_metrics = list(metrics_result.scalars().all())
+
+            # Some MySQL/aiomysql combinations can return no rows for a
+            # single-value node predicate even when the same rows are
+            # returned without that predicate. Retry the bounded cluster/time
+            # query and apply the normalized name filter in Python so a driver
+            # quirk cannot make an otherwise valid dashboard empty.
+            if normalized_node_names and not raw_metrics:
+                fallback_stmt = select(ResourceNodeMetrics).where(
+                    ResourceNodeMetrics.cluster_id == cluster.id,
+                    ResourceNodeMetrics.collected_at >= start_time,
+                    ResourceNodeMetrics.collected_at <= end_time,
+                ).order_by(ResourceNodeMetrics.collected_at.asc())
+                fallback_result = await self.db.execute(fallback_stmt)
+                allowed_names = set(normalized_node_names)
+                raw_metrics = [
+                    metric
+                    for metric in fallback_result.scalars().all()
+                    if metric.node_name and metric.node_name.strip() in allowed_names
+                ]
 
             # 按 node_name 分组
             node_groups: dict[str, list[ResourceNodeMetrics]] = {}
