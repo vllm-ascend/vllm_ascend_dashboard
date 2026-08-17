@@ -1,17 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as testBoardApi from '../services/testBoard'
 
-export const useTestOverview = (days: number = 7) => {
+export const useTestOverview = (days: number = 7, enabled = true) => {
   return useQuery({
     queryKey: ['test-board-overview', days],
     queryFn: () => testBoardApi.getOverview(days),
+    enabled,
   })
 }
 
-export const useTestSuites = () => {
+export const useTestSuites = (enabled = true) => {
   return useQuery({
     queryKey: ['test-board-suites'],
     queryFn: testBoardApi.getSuites,
+    enabled,
   })
 }
 
@@ -29,10 +31,11 @@ export const useTestCases = (params?: {
   include_stale?: boolean
   page?: number
   per_page?: number
-}) => {
+}, enabled = true) => {
   return useQuery({
     queryKey: ['test-board-cases', params],
     queryFn: () => testBoardApi.getCases(params),
+    enabled,
   })
 }
 
@@ -44,10 +47,11 @@ export const useCaseDetail = (caseId: number | null) => {
   })
 }
 
-export const useFilterOptions = () => {
+export const useFilterOptions = (enabled = true) => {
   return useQuery({
     queryKey: ['test-board-filter-options'],
     queryFn: () => testBoardApi.getFilterOptions(),
+    enabled,
   })
 }
 
@@ -76,10 +80,11 @@ export const useFlakyCases = (params?: {
   sort?: string
   page?: number
   per_page?: number
-}) => {
+}, enabled = true) => {
   return useQuery({
     queryKey: ['test-board-flaky', params],
     queryFn: () => testBoardApi.getFlakyCases(params),
+    enabled,
   })
 }
 
@@ -87,10 +92,11 @@ export const useFailureBreakdown = (params?: {
   days?: number
   category?: string
   suite_name?: string
-}) => {
+}, enabled = true) => {
   return useQuery({
     queryKey: ['test-board-failures', params],
     queryFn: () => testBoardApi.getFailureBreakdown(params),
+    enabled,
   })
 }
 
@@ -104,17 +110,19 @@ export const useDurationAnalysis = (params?: {
   })
 }
 
-export const useOwnerMatrix = () => {
+export const useOwnerMatrix = (enabled = true) => {
   return useQuery({
     queryKey: ['test-board-owners'],
     queryFn: testBoardApi.getOwnerMatrix,
+    enabled,
   })
 }
 
-export const useModuleHealth = () => {
+export const useModuleHealth = (enabled = true) => {
   return useQuery({
     queryKey: ['test-board-modules'],
     queryFn: testBoardApi.getModuleHealth,
+    enabled,
   })
 }
 
@@ -129,6 +137,51 @@ export const useTestTrends = (days: number = 30) => {
   return useQuery({
     queryKey: ['test-board-trends', days],
     queryFn: () => testBoardApi.getTrends(days),
+  })
+}
+
+export const useCoverageBreadth = (params?: {
+  page?: number
+  per_page?: number
+  module?: string
+  sort?: string
+  order?: string
+}) => {
+  return useQuery({
+    queryKey: ['test-board-coverage-breadth', params],
+    queryFn: () => testBoardApi.getCoverageBreadth(params),
+    refetchInterval: 600000,
+  })
+}
+
+export const useCoverageLines = (params?: {
+  page?: number
+  per_page?: number
+  sort?: string
+  order?: string
+}) => {
+  return useQuery({
+    queryKey: ['test-board-coverage-lines', params],
+    queryFn: () => testBoardApi.getCoverageLines(params),
+    refetchInterval: 600000,
+  })
+}
+
+export const useCoverageSyncStatus = () => {
+  return useQuery({
+    queryKey: ['test-board-coverage-status'],
+    queryFn: testBoardApi.getCoverageSyncStatus,
+    refetchInterval: 600000,
+  })
+}
+
+export const useTriggerCoverageSync = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (source: string) => testBoardApi.triggerCoverageSync(source),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['test-board-coverage'] })
+    },
   })
 }
 

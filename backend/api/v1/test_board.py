@@ -2,13 +2,16 @@ import csv
 import io
 import logging
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import (
+    CurrentAdminUser,
     CurrentSuperAdminUser,
     DbSession,
     get_current_user,
@@ -307,6 +310,106 @@ async def get_case_matrix(user: User = Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="测试用例矩阵文件不存在"
         ) from exc
+
+
+class CoverageSyncRequest(BaseModel):
+    source: Literal["all", "e2e", "pr_breadth", "pr_lines"] = "all"
+
+
+@router.get("/coverage/e2e")
+async def get_e2e_coverage(db: DbSession, user: User = Depends(get_current_user)):
+    from test_board.coverage_sync import get_e2e_coverage as load_e2e_coverage
+
+    return await load_e2e_coverage(db)
+
+
+@router.get("/coverage/pr-pipeline/breadth")
+async def get_pr_coverage_breadth(
+    db: DbSession,
+    user: User = Depends(get_current_user),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=500),
+    module: str | None = None,
+    sort: str | None = None,
+    order: str = "desc",
+    format: str | None = None,
+):
+    from test_board.coverage_sync import get_pr_breadth
+
+    result = await get_pr_breadth(
+        db, page=page, per_page=per_page, module=module, sort=sort, order=order, fmt=format
+    )
+    if format == "csv" and "csv" in result:
+        return Response(
+            content=result["csv"],
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=pr_coverage_breadth.csv"},
+        )
+    return result
+
+
+@router.get("/coverage/pr-pipeline/lines")
+async def get_pr_coverage_lines(
+    db: DbSession,
+    user: User = Depends(get_current_user),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=500),
+    sort: str | None = None,
+    order: str = "desc",
+    format: str | None = None,
+):
+    from test_board.coverage_sync import get_pr_lines
+
+    result = await get_pr_lines(db, page=page, per_page=per_page, sort=sort, order=order, fmt=format)
+    if format == "csv" and "csv" in result:
+        return Response(
+            content=result["csv"],
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=pr_coverage_lines.csv"},
+        )
+    return result
+
+
+@router.get("/coverage/pr-pipeline/source")
+async def get_pr_coverage_source(
+    db: DbSession, user: User = Depends(get_current_user), path: str = Query(...)
+):
+    from test_board.coverage_sync import get_pr_source
+
+    try:
+        return await get_pr_source(db, path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/coverage/status")
+async def get_coverage_status(db: DbSession, user: User = Depends(get_current_user)):
+    from test_board.coverage_sync import get_sync_status
+
+    return await get_sync_status(db)
+
+
+@router.post("/coverage/sync")
+async def trigger_coverage_sync(request: CoverageSyncRequest, user: CurrentAdminUser):
+    from infrastructure.tasks.task_manager import TaskManager
+
+    async with SessionLocal() as db:
+        task_id = await TaskManager.create_task(
+            db,
+            "coverage_sync",
+            {"source": request.source},
+            f"coverage_sync:{request.source}:{uuid4()}",
+            required_capability="python",
+            priority=10,
+        )
+        await db.commit()
+    return {
+        "success": True,
+        "task_id": task_id,
+        "message": f"coverage sync ({request.source}) queued",
+    }
 
 
 @router.get("/trends")

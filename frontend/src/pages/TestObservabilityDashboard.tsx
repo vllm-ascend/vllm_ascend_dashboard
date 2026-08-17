@@ -8,10 +8,11 @@ import {
   CodeOutlined, PercentageOutlined, TableOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
-import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions, useUpdateCase } from '../hooks/useTestBoard'
+import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions, useUpdateCase, useTriggerCoverageSync } from '../hooks/useTestBoard'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import type { TestCaseItem, FlakyCaseDetail, FailureBreakdown, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
 import TestCaseFeatureMatrixTab from '../components/TestCaseFeatureMatrixTab'
+import UTCoverageTab from '../components/coverage/UTCoverageTab'
 import './TestObservabilityDashboard.css'
 
 const { Text, Title } = Typography
@@ -60,9 +61,14 @@ function formatLastRun(lastRunAt: string | null, staleDays: number = 7) {
 
 function TestObservabilityDashboard() {
   const [activeTab, setActiveTab] = useState('overview')
-  const { data: overview, isLoading: overviewLoading } = useTestOverview(7)
-  const { data: suites, isLoading: suitesLoading } = useTestSuites()
+  const isOverviewTab = activeTab === 'overview'
+  const isCasesTab = activeTab === 'cases'
+  const isFlakyTab = activeTab === 'flaky'
+  const isFailuresTab = activeTab === 'failures'
+  const { data: overview, isLoading: overviewLoading } = useTestOverview(7, isOverviewTab)
+  const { data: suites, isLoading: suitesLoading } = useTestSuites(isOverviewTab)
   const syncMutation = useTriggerSync()
+  const coverageSyncMutation = useTriggerCoverageSync()
   const { data: currentUser } = useCurrentUser()
   const isSuperAdmin = currentUser?.role === 'super_admin'
   const updateCaseMutation = useUpdateCase()
@@ -75,15 +81,15 @@ function TestObservabilityDashboard() {
     include_stale: includeStale,
     page: casePage,
     per_page: 20,
-  })
-  const { data: filterOptions } = useFilterOptions()
+  }, isCasesTab)
+  const { data: filterOptions } = useFilterOptions(isCasesTab)
 
   const [flakyPage, setFlakyPage] = useState(1)
-  const { data: flakyData, isLoading: flakyLoading } = useFlakyCases({ page: flakyPage, per_page: 20 })
+  const { data: flakyData, isLoading: flakyLoading } = useFlakyCases({ page: flakyPage, per_page: 20 }, isFlakyTab)
 
-  const { data: breakdown, isLoading: breakdownLoading } = useFailureBreakdown({ days: 30 })
-  const { data: owners, isLoading: ownersLoading } = useOwnerMatrix()
-  const { data: modules, isLoading: modulesLoading } = useModuleHealth()
+  const { data: breakdown, isLoading: breakdownLoading } = useFailureBreakdown({ days: 30 }, isFailuresTab)
+  const { data: owners, isLoading: ownersLoading } = useOwnerMatrix(isFailuresTab)
+  const { data: modules, isLoading: modulesLoading } = useModuleHealth(isFailuresTab)
 
   // 用例元数据编辑（超级管理员）
   const [editingCase, setEditingCase] = useState<TestCaseItem | null>(null)
@@ -509,6 +515,18 @@ function TestObservabilityDashboard() {
             >
               同步测试数据
             </Button>
+            <Button
+              icon={<PercentageOutlined />}
+              loading={coverageSyncMutation.isPending}
+              onClick={() => {
+                coverageSyncMutation.mutate('all', {
+                  onSuccess: (result) => message.success(result.message || '覆盖率同步已提交'),
+                  onError: () => message.error('覆盖率同步提交失败'),
+                })
+              }}
+            >
+              同步 UT 覆盖率
+            </Button>
           </Space>
         </div>
       </div>
@@ -516,6 +534,7 @@ function TestObservabilityDashboard() {
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
+        destroyInactiveTabPane
         items={[
           {
             key: 'overview',
@@ -760,6 +779,11 @@ function TestObservabilityDashboard() {
             key: 'case-matrix',
             label: <Space><TableOutlined /><span>测试用例</span></Space>,
             children: <TestCaseFeatureMatrixTab />,
+          },
+          {
+            key: 'ut-coverage',
+            label: <Space><PercentageOutlined /><span>UT 覆盖率</span></Space>,
+            children: <UTCoverageTab />,
           },
         ]}
       />

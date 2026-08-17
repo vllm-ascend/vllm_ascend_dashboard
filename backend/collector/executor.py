@@ -93,6 +93,7 @@ class CollectorRunner:
             "pr_historical_sync",
             "model_sync",
             "test_board_sync",
+            "coverage_sync",
             "code_heatmap_sync",
         }:
             from infrastructure.core.github_config import load_github_runtime_config
@@ -119,6 +120,8 @@ class CollectorRunner:
                 await self._run_issues_derivation(ctx)
             elif task_type == "test_board_sync":
                 await self._run_test_board_sync(ctx, task_params)
+            elif task_type == "coverage_sync":
+                await self._run_coverage_sync(ctx, task_params)
             elif task_type == "support_matrix_sync":
                 await self._run_support_matrix_sync(ctx, task_params)
             elif task_type == "model_sync":
@@ -312,6 +315,14 @@ class CollectorRunner:
             logger.info("test-board task %d completed: parsed=%d derivation=%s", ctx.task_id, count, derivation)
         finally:
             await github.close()
+
+    async def _run_coverage_sync(self, ctx: TaskContext, task_params: dict):
+        """Read the external coverage.py artifact and persist normalized data."""
+        from test_board.coverage_sync import sync_all_coverage
+
+        async with SessionLocal() as db:
+            result = await sync_all_coverage(db, source=str(task_params.get("source", "all")))
+        logger.info("coverage task %d completed: %s", ctx.task_id, result)
 
     async def _run_support_matrix_sync(self, ctx: TaskContext, task_params: dict):
         """Synchronize upstream support-matrix data in the Collector role."""

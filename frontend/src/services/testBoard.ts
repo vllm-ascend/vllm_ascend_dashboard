@@ -179,6 +179,96 @@ export interface TestCaseFeatureMatrixResponse {
   statistics: TestCaseFeatureMatrixStatistics
 }
 
+export interface CoverageSummary {
+  total_jobs?: number
+  total_covdata_files?: number
+  total_source_files_covered?: number
+  total_arcs?: number
+  by_test_type?: Record<string, number>
+  by_hardware?: Record<string, number>
+  num_statements?: number
+  covered_lines?: number
+  missing_lines?: number
+  percent_covered?: number
+  percent_statements_covered?: number
+  num_branches?: number
+  covered_branches?: number
+  missing_branches?: number
+  percent_branches_covered?: number
+  num_files?: number
+}
+
+export interface CoverageJob {
+  job_dir: string
+  test_path: string
+  test_type: string
+  test_func: string | null
+  task_id?: string
+  hardware: string
+  card_count: number
+  covdata_count: number
+  source_files_covered: number
+  arcs: number
+  latest_when: string | null
+}
+
+export interface CoverageFileMatrixItem {
+  source_path: string
+  module: string
+  covered_by_jobs: number
+  covered_by_hardware: string[]
+}
+
+export interface CoverageBreadthData {
+  summary: CoverageSummary
+  jobs: CoverageJob[]
+  file_matrix: CoverageFileMatrixItem[]
+  file_matrix_total?: number
+  by_module: Array<{ module: string; files: number; jobs_touching: number }>
+  tar_signature?: string
+  updated_at?: string | null
+}
+
+export interface CoverageLineFile {
+  path: string
+  module: string
+  statements: number
+  missing: number
+  covered: number
+  percent_covered: number
+  has_branches: boolean
+}
+
+export interface CoverageLinesData {
+  totals: CoverageSummary
+  by_module: Array<{
+    module: string
+    statements: number
+    covered: number
+    percent: number
+    branches: number
+    covered_branches: number
+    files: number
+  }>
+  files: CoverageLineFile[]
+  files_total?: number
+  source_commit?: string | null
+  covdata_commit?: string | null
+  coverage_tool_version?: string | null
+  installed_coverage_version?: string | null
+  status: string
+  status_reason?: string | null
+  warning?: string | null
+  updated_at?: string | null
+}
+
+export interface CoverageSyncStatus {
+  last_check_at?: string | null
+  e2e?: { success: boolean; skipped?: boolean; error?: string }
+  pr_breadth?: { success: boolean; skipped?: boolean; tar_signature?: string; error?: string }
+  pr_lines?: { success: boolean; skipped?: boolean; status?: string; error?: string }
+}
+
 export interface PaginatedResult<T> {
   total: number
   items: T[]
@@ -293,6 +383,37 @@ export const getTrends = async (days: number = 30): Promise<{
   pass_rate_trend: Array<{ date: string; rate: number }>
 }> => {
   const response = await api.get('/test-board/trends', { params: { days } })
+  return response.data
+}
+
+export const getCoverageBreadth = async (params?: {
+  page?: number
+  per_page?: number
+  module?: string
+  sort?: string
+  order?: string
+}): Promise<CoverageBreadthData> => {
+  const response = await api.get<CoverageBreadthData>('/test-board/coverage/pr-pipeline/breadth', { params })
+  return response.data
+}
+
+export const getCoverageLines = async (params?: {
+  page?: number
+  per_page?: number
+  sort?: string
+  order?: string
+}): Promise<CoverageLinesData> => {
+  const response = await api.get<CoverageLinesData>('/test-board/coverage/pr-pipeline/lines', { params })
+  return response.data
+}
+
+export const getCoverageSyncStatus = async (): Promise<CoverageSyncStatus> => {
+  const response = await api.get<CoverageSyncStatus>('/test-board/coverage/status')
+  return response.data
+}
+
+export const triggerCoverageSync = async (source: string = 'all'): Promise<{ success: boolean; task_id: number | null; message: string }> => {
+  const response = await api.post('/test-board/coverage/sync', { source })
   return response.data
 }
 

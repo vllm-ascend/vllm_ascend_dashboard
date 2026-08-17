@@ -100,6 +100,15 @@ class Settings(BaseSettings):
     PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES: int = 60  # Project Dashboard Git 仓库缓存更新间隔（分钟），默认 60 分钟
     GITHUB_CACHE_DIR: str = ""  # GitHub 本地缓存目录，默认为根目录 data/repos/
 
+    # External coverage.py artifact synchronization. The upstream CI format
+    # remains unchanged; the collector reads coverage.tar and writes the
+    # normalized result to MySQL.
+    COVERAGE_SYNC_INTERVAL_MINUTES: int = 60
+    PR_COVERAGE_TAR_URL: str = "https://vllm-ascend.obs.cn-north-4.myhuaweicloud.com/ci/precision-test/coverage.tar"
+    PR_COVERAGE_DOWNLOAD_TIMEOUT_SECONDS: int = 300
+    PR_COVERAGE_DOWNLOAD_RETRIES: int = 3
+    PR_COVERAGE_LINE_ENABLED: bool = True
+
     # 每日总结配置
     DAILY_SUMMARY_ENABLED: bool = True  # 是否启用每日总结生成任务
     DAILY_SUMMARY_CRON_HOUR: int = 8  # 每日总结生成时间（小时），默认早上 8 点
