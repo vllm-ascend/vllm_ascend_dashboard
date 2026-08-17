@@ -19,7 +19,11 @@ if sys.platform == 'win32':
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.middleware.usage_tracking import UsageTrackingMiddleware
+from api.middleware.usage_tracking import (
+    UsageTrackingMiddleware,
+    start_usage_tracking_worker,
+    stop_usage_tracking_worker,
+)
 from api.v1 import (
     alert_rules,
     auth,
@@ -453,11 +457,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("setup_db_logging failed (non-fatal): %s", e)
 
+    # Usage analytics are written by one bounded background worker instead of
+    # opening a second DB session for every HTTP response.
+    await start_usage_tracking_worker()
+
     yield
 
     logger.info("Shutting down application...")
 
     try:
+        await stop_usage_tracking_worker()
         await engine.dispose()
         logger.info("Database engine disposed successfully")
     except Exception as e:

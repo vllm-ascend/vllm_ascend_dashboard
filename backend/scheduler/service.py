@@ -307,6 +307,19 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add test board result parse job: {e}", exc_info=True)
 
+        coverage_interval = max(int(getattr(settings, "COVERAGE_SYNC_INTERVAL_MINUTES", 60)), 10)
+        try:
+            self.scheduler.add_job(
+                self._sync_coverage_job,
+                trigger=IntervalTrigger(minutes=coverage_interval),
+                id="coverage_sync",
+                name="Test Coverage Sync",
+                replace_existing=True,
+            )
+            logger.info("Test coverage sync scheduled every %s minutes", coverage_interval)
+        except Exception as e:
+            logger.error("Failed to add coverage sync job: %s", e, exc_info=True)
+
         try:
             self.scheduler.add_job(
                 self._calc_test_health_job,
@@ -575,6 +588,7 @@ class DataSyncScheduler:
         "model_report_sync",
         "project_dashboard_cache_update",
         "daily_summary_task",
+        "coverage_sync",
     )
 
     async def write_heartbeat(self, *, force_running: bool | None = None) -> None:
@@ -874,18 +888,15 @@ class DataSyncScheduler:
             from datetime import timedelta
 
             from sqlalchemy import select
-            from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-            from sqlalchemy.orm import sessionmaker
 
             from infrastructure.persistence.models import ProjectDashboardConfig
             from reporting.daily_report import _today_shanghai
             from reporting.daily_summary import DailySummaryService
 
             # 创建数据库会话
-            engine = create_async_engine(settings.DATABASE_URL, echo=False)
-            async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-            async with async_session() as db:
+            # Reuse the scheduler process' configured engine and pool instead
+            # of creating an untracked pool for every scheduled run.
+            async with SessionLocal() as db:
                 # 获取配置的项目列表
                 projects_stmt = select(ProjectDashboardConfig).where(
                     ProjectDashboardConfig.config_key == 'daily_summary_projects'
@@ -944,8 +955,6 @@ class DataSyncScheduler:
             from datetime import timedelta
 
             from sqlalchemy import select
-            from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-            from sqlalchemy.orm import sessionmaker
 
             from infrastructure.persistence.models import ProjectDashboardConfig
             from reporting.daily_report import (
@@ -958,10 +967,9 @@ class DataSyncScheduler:
                 logger.info("Report disabled, skipping")
                 return
 
-            engine = create_async_engine(settings.DATABASE_URL, echo=False)
-            async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-            async with async_session() as db:
+            # Reuse the scheduler process' configured engine and pool for the
+            # report job as well.
+            async with SessionLocal() as db:
                 # 读报告配置
                 stmt = select(ProjectDashboardConfig).where(
                     ProjectDashboardConfig.config_key == REPORT_CONFIG_KEY
@@ -991,8 +999,6 @@ class DataSyncScheduler:
                 history = await service.send_report(yesterday)
 
                 logger.info(f"Daily report result: status={history.status}, date={history.report_date}")
-
-            await engine.dispose()
 
             logger.info("=" * 60)
             logger.info("DAILY REPORT EMAIL JOB COMPLETED")
@@ -1054,6 +1060,23 @@ class DataSyncScheduler:
             await db.commit()
         if task_id:
             logger.info("Queued test-board sync task %d", task_id)
+
+    async def _sync_coverage_job(self) -> None:
+        """Queue coverage synchronization; the Collector owns external I/O."""
+        from infrastructure.tasks.task_manager import TaskManager
+
+        dedupe_key = f"coverage_sync:scheduled:{datetime.now(UTC).strftime('%Y-%m-%dT%H:%M')}"
+        async with SessionLocal() as db:
+            task_id = await TaskManager.create_task(
+                db,
+                "coverage_sync",
+                {"source": "all"},
+                dedupe_key,
+                required_capability="python",
+            )
+            await db.commit()
+        if task_id:
+            logger.info("Queued coverage sync task %d", task_id)
     async def _calc_test_health_job(self) -> None:
         logger.info("TEST BOARD HEALTH CALC JOB STARTED")
         async with SessionLocal() as db:

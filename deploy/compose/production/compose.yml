@@ -51,9 +51,10 @@ services:
     environment:
       # Database connection (MySQL)
       - DATABASE_URL=mysql+aiomysql://${CONTROL_DB_USER:-control_svc}:${CONTROL_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-vllm_dashboard}
-      - DB_POOL_SIZE=${DB_POOL_SIZE:-5}
-      - DB_MAX_OVERFLOW=${DB_MAX_OVERFLOW:-5}
-      - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-60}
+      # API handles the UI fan-out; keep a dedicated, bounded pool for it.
+      - DB_POOL_SIZE=${API_DB_POOL_SIZE:-10}
+      - DB_MAX_OVERFLOW=${API_DB_MAX_OVERFLOW:-10}
+      - DB_POOL_TIMEOUT=${API_DB_POOL_TIMEOUT:-30}
       - TZ=Asia/Shanghai
       - DATA_DIR=/app/data
       # LiteLLM gateway
@@ -187,6 +188,9 @@ services:
       - ${DASHBOARD_RUNTIME_ENV_FILE:-../../../.env.production}
     environment:
       - DATABASE_URL=mysql+aiomysql://${SCHEDULER_DB_USER:-scheduler_svc}:${SCHEDULER_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-vllm_dashboard}
+      - DB_POOL_SIZE=${SCHEDULER_DB_POOL_SIZE:-5}
+      - DB_MAX_OVERFLOW=${SCHEDULER_DB_MAX_OVERFLOW:-5}
+      - DB_POOL_TIMEOUT=${SCHEDULER_DB_POOL_TIMEOUT:-30}
       - TZ=Asia/Shanghai
       - DATA_DIR=/app/data
     command: python -m scheduler
@@ -218,6 +222,9 @@ services:
       - ${DASHBOARD_RUNTIME_ENV_FILE:-../../../.env.production}
     environment:
       - DATABASE_URL=mysql+aiomysql://${COLLECTOR_DB_USER:-collector_svc}:${COLLECTOR_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-vllm_dashboard}
+      - DB_POOL_SIZE=${COLLECTOR_DB_POOL_SIZE:-5}
+      - DB_MAX_OVERFLOW=${COLLECTOR_DB_MAX_OVERFLOW:-5}
+      - DB_POOL_TIMEOUT=${COLLECTOR_DB_POOL_TIMEOUT:-30}
       - TZ=Asia/Shanghai
       - DATA_DIR=/app/data
       - NODE_ID=collector-prod-1

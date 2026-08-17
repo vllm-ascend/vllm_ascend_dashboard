@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import Request, Response
@@ -9,7 +10,26 @@ from infrastructure.persistence.models import FeatureUsageLog
 
 logger = logging.getLogger(__name__)
 
-EXCLUDED_PATHS = ("/health", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh")
+_USAGE_QUEUE_MAXSIZE = 1024
+_USAGE_BATCH_SIZE = 100
+_USAGE_FLUSH_INTERVAL_SECONDS = 0.5
+_usage_queue: asyncio.Queue[dict[str, object]] | None = None
+_usage_worker_task: asyncio.Task[None] | None = None
+_usage_stop_event: asyncio.Event | None = None
+
+# The test board fans out several read-only requests when a tab is opened. Logging
+# each of those requests with a second database session can exhaust the small
+# application pool and leave the board stuck in its loading state.
+EXCLUDED_PATHS = (
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/api/v1/auth/login",
+    "/api/v1/auth/register",
+    "/api/v1/auth/refresh",
+    "/api/v1/test-board",
+)
 
 FEATURE_NAME_MAP = {
     "/api/v1/ci": "CI看板", "/api/v1/models": "模型看板", "/api/v1/performance": "性能数据",
@@ -30,6 +50,117 @@ def _feature_name(path: str) -> str:
     return path
 
 
+async def _persist_usage_batch(batch: list[dict[str, object]]) -> None:
+    """Persist usage records in one short transaction.
+
+    Usage tracking is deliberately decoupled from request handling.  A page can
+    issue many API calls at once; opening a database session for every response
+    would compete with the session used by the actual endpoint.
+    """
+    if not batch:
+        return
+
+    try:
+        async with SessionLocal() as db:
+            db.add_all(
+                FeatureUsageLog(
+                    user_id=int(item["user_id"]),
+                    feature_name=str(item["feature_name"]),
+                    request_path=str(item["request_path"]),
+                    metadata_json=dict(item["metadata_json"]),
+                )
+                for item in batch
+            )
+            await db.commit()
+    except Exception as exc:
+        # Usage analytics must never make the API unavailable.  The worker
+        # drops a failed batch after logging the error and continues draining.
+        logger.warning("Failed to persist feature usage batch (%d records): %s", len(batch), exc)
+
+
+async def _usage_worker() -> None:
+    """Drain the bounded usage queue with at most one DB session at a time."""
+    assert _usage_queue is not None
+    assert _usage_stop_event is not None
+
+    while not (_usage_stop_event.is_set() and _usage_queue.empty()):
+        try:
+            first = await asyncio.wait_for(
+                _usage_queue.get(), timeout=_USAGE_FLUSH_INTERVAL_SECONDS
+            )
+        except TimeoutError:
+            continue
+
+        batch = [first]
+        while len(batch) < _USAGE_BATCH_SIZE:
+            try:
+                batch.append(_usage_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+
+        try:
+            await _persist_usage_batch(batch)
+        finally:
+            for _ in batch:
+                _usage_queue.task_done()
+
+
+async def start_usage_tracking_worker() -> None:
+    """Start the per-process usage writer during the API lifespan."""
+    global _usage_queue, _usage_stop_event, _usage_worker_task
+
+    if _usage_worker_task and not _usage_worker_task.done():
+        return
+
+    _usage_queue = asyncio.Queue(maxsize=_USAGE_QUEUE_MAXSIZE)
+    _usage_stop_event = asyncio.Event()
+    _usage_worker_task = asyncio.create_task(_usage_worker(), name="feature-usage-writer")
+
+
+async def stop_usage_tracking_worker() -> None:
+    """Flush queued usage records and stop the writer before engine disposal."""
+    global _usage_queue, _usage_stop_event, _usage_worker_task
+
+    if not _usage_queue or not _usage_worker_task:
+        return
+
+    try:
+        try:
+            await asyncio.wait_for(_usage_queue.join(), timeout=5)
+        except TimeoutError:
+            logger.warning("Timed out flushing feature usage queue during shutdown")
+        assert _usage_stop_event is not None
+        _usage_stop_event.set()
+        if not _usage_worker_task.done():
+            try:
+                await _usage_worker_task
+            except asyncio.CancelledError:
+                pass
+        else:
+            # Retrieve a failed task exception without allowing it to break
+            # application shutdown.
+            try:
+                _usage_worker_task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning("Feature usage worker stopped unexpectedly: %s", exc)
+    finally:
+        _usage_queue = None
+        _usage_stop_event = None
+        _usage_worker_task = None
+
+
+def _enqueue_usage_record(record: dict[str, object]) -> None:
+    """Enqueue without blocking the response path; drop only on saturation."""
+    if _usage_queue is None:
+        return
+    try:
+        _usage_queue.put_nowait(record)
+    except asyncio.QueueFull:
+        logger.warning("Feature usage queue is full; dropping one usage record")
+
+
 class UsageTrackingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
@@ -45,25 +176,21 @@ class UsageTrackingMiddleware(BaseHTTPMiddleware):
         if not payload:
             return response
 
-        user_id = payload.get("user_id")
-        if not user_id:
-            username = payload.get("sub")
-            if username:
-                try:
-                    from sqlalchemy import select
-
-                    from infrastructure.persistence.models import User
-                    async with SessionLocal() as db:
-                        user_id = (await db.execute(select(User.id).where(User.username == username))).scalar_one_or_none()
-                except Exception:
-                    pass
-        if not user_id:
+        raw_user_id = payload.get("user_id")
+        try:
+            user_id = int(raw_user_id)
+        except (TypeError, ValueError):
             return response
 
-        try:
-            async with SessionLocal() as db:
-                db.add(FeatureUsageLog(user_id=user_id, feature_name=_feature_name(path), request_path=path, metadata_json={"method": request.method, "status_code": response.status_code}))
-                await db.commit()
-        except Exception as e:
-            logger.warning(f"Failed to log feature usage: {e}")
+        _enqueue_usage_record(
+            {
+                "user_id": user_id,
+                "feature_name": _feature_name(path),
+                "request_path": path,
+                "metadata_json": {
+                    "method": request.method,
+                    "status_code": response.status_code,
+                },
+            }
+        )
         return response
