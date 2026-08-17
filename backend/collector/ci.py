@@ -80,7 +80,8 @@ class CICollector:
         # the jobs response as a second source of truth.  Keep this list in
         # sync with the PR-only steps in the reusable Nightly workflows; a
         # successful or cancelled PR-only step is evidence that the run is a
-        # PR run, while a skipped step is present in normal Nightly runs too.
+        # PR run, while a skipped or not-yet-started step is present in normal
+        # Nightly runs too.
         pr_only_step_markers = (
             "checkout pr code",
             "uninstall vlm vllm-ascend and remove code (if pr test)",
@@ -89,19 +90,22 @@ class CICollector:
             "move code to /vllm-workspace",
             "install vllm-project/vllm-ascend",
         )
+        # Only inspect jobs that represent an actual test case. Aggregate
+        # setup/build jobs can contain the same conditional step names or be
+        # skipped for reasons unrelated to ``/nightly pr``.
+        test_job_markers = ("single-node", "double-node", "multi-node")
         for job in jobs or []:
             job_name = str(job.get("name") or "").strip().casefold()
-            # The current /nightly PR dispatcher sends skip_build_image=true.
-            # GitHub exposes the reusable build job as skipped in that case,
-            # while the regular scheduled dispatch runs it successfully.
-            if job_name.startswith("build nightly-") and job.get("conclusion") == "skipped":
-                return True
+            if not any(marker in job_name for marker in test_job_markers):
+                continue
+            if job.get("conclusion") == "skipped":
+                continue
 
             for step in job.get("steps") or []:
                 name = str(step.get("name") or "").strip().casefold()
                 if (
                     any(name == marker or name.startswith(f"{marker} ") for marker in pr_only_step_markers)
-                    and step.get("conclusion") != "skipped"
+                    and step.get("conclusion") not in (None, "skipped")
                 ):
                     return True
 
