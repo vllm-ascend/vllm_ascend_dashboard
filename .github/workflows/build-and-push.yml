@@ -177,6 +177,10 @@ jobs:
         with:
           context: ./frontend
           file: ./frontend/Dockerfile.prod
+          # Vite API configuration is compiled into the static bundle.  A
+          # runtime container environment variable cannot change it later.
+          build-args: |
+            VITE_API_BASE_URL=/api/v1
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.version.outputs.version }}

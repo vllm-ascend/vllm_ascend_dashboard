@@ -19,9 +19,19 @@ RUN pnpm install --frozen-lockfile
 # Copy source code
 COPY . .
 
-# Build with production settings
-ARG VITE_API_BASE_URL
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+# Vite values are compiled into the static bundle at build time.  Keep the
+# production default same-origin so an omitted build argument cannot point a
+# user's browser at its own localhost.
+ARG VITE_API_BASE_URL=/api/v1
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
+# A localhost API is only valid for a developer's local process and must not
+# be baked into a production image.
+RUN case "$VITE_API_BASE_URL" in \
+      http://localhost:*|https://localhost:*|http://127.0.0.1:*|https://127.0.0.1:*) \
+        echo "VITE_API_BASE_URL must not target localhost in a production image" >&2; \
+        exit 1 ;; \
+    esac
 
 RUN pnpm build
 
