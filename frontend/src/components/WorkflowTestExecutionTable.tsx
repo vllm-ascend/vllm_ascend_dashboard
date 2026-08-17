@@ -68,6 +68,7 @@ type WorkflowExecutionPreferences = {
   dateRange?: { start: string | null; end: string | null } | null
 }
 
+const DEFAULT_WORKFLOW = 'Nightly-A3'
 const WORKFLOW_EXECUTION_PREFERENCES_KEY = 'ci-workflow-execution-preferences'
 
 function readWorkflowExecutionPreferences(): WorkflowExecutionPreferences {
@@ -100,8 +101,9 @@ const renderSteps = (steps: StepSummary[] | null | undefined) => {
 function WorkflowTestExecutionTable({ enabled }: WorkflowTestExecutionTableProps) {
   const navigate = useNavigate()
   const [savedPreferences] = useState(readWorkflowExecutionPreferences)
-  const [workflowFilter, setWorkflowFilter] = useState<string[]>(() => savedPreferences.workflowFilter ?? [])
-  const [selectedWorkflow, setSelectedWorkflow] = useState<string | undefined>(() => savedPreferences.selectedWorkflow ?? undefined)
+  const initialWorkflow = savedPreferences.selectedWorkflow || savedPreferences.workflowFilter?.[0] || DEFAULT_WORKFLOW
+  const [workflowFilter, setWorkflowFilter] = useState<string[]>(() => savedPreferences.workflowFilter?.length ? savedPreferences.workflowFilter : [initialWorkflow])
+  const [selectedWorkflow, setSelectedWorkflow] = useState<string | undefined>(() => initialWorkflow)
   const [hardwareFilter, setHardwareFilter] = useState<string[]>(() => savedPreferences.hardwareFilter ?? [])
   const [statusFilter, setStatusFilter] = useState<string[]>(() => savedPreferences.statusFilter ?? [])
   const [resultFilter, setResultFilter] = useState<string[]>(() => savedPreferences.resultFilter ?? [])
@@ -321,8 +323,8 @@ function WorkflowTestExecutionTable({ enabled }: WorkflowTestExecutionTableProps
   ]
 
   const resetFilters = () => {
-    setWorkflowFilter([])
-    setSelectedWorkflow(undefined)
+    setWorkflowFilter([DEFAULT_WORKFLOW])
+    setSelectedWorkflow(DEFAULT_WORKFLOW)
     setHardwareFilter([])
     setStatusFilter([])
     setResultFilter([])
