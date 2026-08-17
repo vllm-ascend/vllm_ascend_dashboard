@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.schema import Table, sort_tables
 
@@ -17,7 +17,16 @@ TEST_DATABASE_URL = os.environ.get(
 
 def create_test_engine() -> AsyncEngine:
     """Return the dedicated MySQL integration-test engine."""
-    return create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def configure_test_mysql_session(dbapi_connection, connection_record) -> None:
+        del connection_record
+        cursor = dbapi_connection.cursor()
+        cursor.execute("SET time_zone = '+00:00'")
+        cursor.close()
+
+    return engine
 
 
 async def reset_tables(engine: AsyncEngine, tables: Iterable[Table]) -> None:

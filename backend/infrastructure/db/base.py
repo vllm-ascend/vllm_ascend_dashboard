@@ -32,17 +32,18 @@ engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
 
 
 @event.listens_for(engine.sync_engine, "connect")
-def set_mysql_sort_buffer_size(dbapi_connection, connection_record):
-    """Set sort_buffer_size for MySQL connections to avoid 'Out of sort memory' error"""
+def configure_mysql_session(dbapi_connection, connection_record):
+    """Configure every MySQL connection with safe, UTC-based session defaults."""
     try:
         cursor = dbapi_connection.cursor()
+        cursor.execute("SET time_zone = '+00:00'")
         cursor.execute("SET SESSION sort_buffer_size = 4 * 1024 * 1024")  # 4MB
         cursor.close()
-        logger.debug("MySQL sort_buffer_size set to 4MB")
+        logger.debug("MySQL session timezone set to UTC and sort_buffer_size set to 4MB")
     except Exception as e:
-        logger.warning(f"Failed to set sort_buffer_size: {e}")
+        logger.warning(f"Failed to configure MySQL session: {e}")
 
-logger.info("MySQL session sort_buffer_size will be set to 4MB on each connection")
+logger.info("MySQL sessions will use UTC timezone and a 4MB sort buffer")
 
 # 创建异步会话工厂
 # 注意：autocommit=False 确保需要显式调用 commit()
