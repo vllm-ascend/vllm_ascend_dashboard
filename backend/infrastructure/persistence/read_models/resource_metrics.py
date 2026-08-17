@@ -121,7 +121,12 @@ class ResourceMetricsQueryService:
             ).order_by(ResourceNodeMetrics.collected_at.asc())
 
             if node_names:
-                stmt = stmt.where(ResourceNodeMetrics.node_name.in_(tuple(node_names)))
+                # Pass a concrete list to SQLAlchemy's expanding IN bind. A
+                # tuple with one value can be treated as a scalar by some
+                # MySQL driver versions, which silently returns no nodes.
+                normalized_node_names = [name.strip() for name in node_names if name and name.strip()]
+                if normalized_node_names:
+                    stmt = stmt.where(ResourceNodeMetrics.node_name.in_(normalized_node_names))
 
             metrics_result = await self.db.execute(stmt)
             raw_metrics = list(metrics_result.scalars().all())

@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -784,9 +784,9 @@ class TestDBLogHandler:
 # ============================================================================
 
 
-@pytest.fixture
-def test_client(db_with_app_logs):
-    """Create a FastAPI TestClient patched to use our test DB."""
+@pytest_asyncio.fixture
+async def test_client(db_with_app_logs):
+    """Create an async client using the same event loop as the DB session."""
     from api.deps import get_db
     from api.main import app
 
@@ -794,14 +794,16 @@ def test_client(db_with_app_logs):
         yield db_with_app_logs
 
     app.dependency_overrides[get_db] = override_get_db
-    client = TestClient(app)
-    yield client
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
     app.dependency_overrides.clear()
 
 
 class TestLogSourcesAPI:
-    def test_returns_200(self, test_client):
-        response = test_client.get("/api/v1/logs/sources")
+    @pytest.mark.asyncio
+    async def test_returns_200(self, test_client):
+        response = await test_client.get("/api/v1/logs/sources")
         assert response.status_code == 200
         data = response.json()
         assert "sources" in data
@@ -814,8 +816,9 @@ class TestLogSourcesAPI:
             "scheduler",
         }
 
-    def test_source_has_required_fields(self, test_client):
-        response = test_client.get("/api/v1/logs/sources")
+    @pytest.mark.asyncio
+    async def test_source_has_required_fields(self, test_client):
+        response = await test_client.get("/api/v1/logs/sources")
         data = response.json()
         for source in data["sources"]:
             assert "key" in source
@@ -825,8 +828,9 @@ class TestLogSourcesAPI:
 
 
 class TestLogQueryAPI:
-    def test_returns_200_with_valid_body(self, test_client):
-        response = test_client.post(
+    @pytest.mark.asyncio
+    async def test_returns_200_with_valid_body(self, test_client):
+        response = await test_client.post(
             "/api/v1/logs/query",
             json={"page": 1, "page_size": 10},
         )
@@ -838,27 +842,31 @@ class TestLogQueryAPI:
         assert "entries" in data
         assert data["page"] == 1
 
-    def test_returns_422_for_invalid_page_size(self, test_client):
+    @pytest.mark.asyncio
+    async def test_returns_422_for_invalid_page_size(self, test_client):
         """page_size > 200 should be rejected."""
-        response = test_client.post(
+        response = await test_client.post(
             "/api/v1/logs/query",
             json={"page": 1, "page_size": 999},
         )
         assert response.status_code == 422
 
+
 class TestLogEntryAPI:
-    def test_returns_404_for_nonexistent_entry(self, test_client):
-        response = test_client.get(
+    @pytest.mark.asyncio
+    async def test_returns_404_for_nonexistent_entry(self, test_client):
+        response = await test_client.get(
             "/api/v1/logs/app:99999",
         )
         assert response.status_code == 404
 
-    def test_entry_endpoint_accepts_encoded_id(self, test_client):
+    @pytest.mark.asyncio
+    async def test_entry_endpoint_accepts_encoded_id(self, test_client):
         """GET /logs/{id} with URL-encoded ID should return 404 for
         nonexistent (not 500). The endpoint itself is covered by
         TestGetEntry tests."""
         # URL-encoded ID with special chars
-        response = test_client.get(
+        response = await test_client.get(
             "/api/v1/logs/claude_cli%3A2026-06-26%3Atest"
         )
         assert response.status_code == 404
