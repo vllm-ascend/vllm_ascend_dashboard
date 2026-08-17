@@ -113,7 +113,11 @@ async def test_query_node_metrics_basic(db_session: AsyncSession):
     await db_session.commit()
 
     service = ResourceMetricsQueryService(db_session)
-    result = await service.query_node_metrics(time_range="1h")
+    result = await service.query_node_metrics(
+        time_range="1h",
+        start_time=now - timedelta(minutes=1),
+        end_time=now + timedelta(minutes=1),
+    )
 
     clusters = result["clusters"]
     assert len(clusters) == 2
@@ -141,7 +145,12 @@ async def test_query_node_metrics_filter_cluster(db_session: AsyncSession):
     await db_session.commit()
 
     service = ResourceMetricsQueryService(db_session)
-    result = await service.query_node_metrics(cluster_ids=[c2.id], time_range="1h")
+    result = await service.query_node_metrics(
+        cluster_ids=[c2.id],
+        time_range="1h",
+        start_time=now - timedelta(minutes=1),
+        end_time=now + timedelta(minutes=1),
+    )
 
     clusters = result["clusters"]
     assert len(clusters) == 1
@@ -163,7 +172,12 @@ async def test_query_node_metrics_filter_node_names(db_session: AsyncSession):
     await db_session.commit()
 
     service = ResourceMetricsQueryService(db_session)
-    result = await service.query_node_metrics(node_names=["node-a2-01"], time_range="1h")
+    result = await service.query_node_metrics(
+        node_names=["node-a2-01"],
+        time_range="1h",
+        start_time=now - timedelta(minutes=1),
+        end_time=now + timedelta(minutes=1),
+    )
 
     clusters = result["clusters"]
     assert len(clusters) == 1
@@ -252,7 +266,11 @@ async def test_query_node_metrics_disabled_cluster_excluded(db_session: AsyncSes
     await db_session.commit()
 
     service = ResourceMetricsQueryService(db_session)
-    result = await service.query_node_metrics(time_range="1h")
+    result = await service.query_node_metrics(
+        time_range="1h",
+        start_time=now - timedelta(minutes=1),
+        end_time=now + timedelta(minutes=1),
+    )
 
     clusters = result["clusters"]
     assert len(clusters) == 1
