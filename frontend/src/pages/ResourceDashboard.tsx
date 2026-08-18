@@ -47,11 +47,8 @@ import {
 } from '../services/resourceDashboard'
 import { useNpuMetrics, useNodeMetrics } from '../hooks/useResourceMetrics'
 import type {
-  ClusterNodeMetrics,
-  ClusterNpuMetrics,
   NodeMetricPoint,
   NodeMetricsResponse,
-  NpuMetricPoint,
   NpuMetricsResponse,
   TopPodInfo,
 } from '../services/resourceMetrics'
@@ -102,17 +99,11 @@ const sortClustersByHardware = <T extends { name: string }>(clusters: T[]) => [.
   return rankDelta || left.name.localeCompare(right.name, 'zh-CN')
 })
 
-const isA3CardCluster = (clusterName: string) => {
-  const hardware = inferHardwareLabel(clusterName)
-  return hardware === 'A3' || hardware === 'A3-560T'
-}
-
 const mergeClusterSummaries = (summaries: ClusterResourceSummary[], cardName: string): ClusterResourceSummary => {
   const first = summaries[0]
   const nodeResources = summaries.flatMap(summary => summary.node_resources.flatMap(node => ({
     ...node,
-    // Node names are only unique inside one cluster. Prefix them when the A3
-    // card combines the A3 and A3-560T pools so the drawer table remains safe.
+    // Keep node names unique if a future card combines multiple source pools.
     node_name: summaries.length > 1 ? `${summary.cluster_name}/${node.node_name}` : node.node_name,
   })))
 
@@ -382,109 +373,16 @@ function buildNodeChartData(nodes: { node_name: string; metrics: NodeMetricPoint
   return Array.from(timeMap.values()).sort((a, b) => String(a.collected_at).localeCompare(String(b.collected_at)))
 }
 
-/**
- * The trend API returns one series per Kubernetes cluster.  A3-560T is a
- * separate cluster for collection purposes, but it belongs to the A3 pool in
- * the dashboard.  Keep the API response untouched and aggregate the two
- * series only for this view.
- */
+// Keep each configured resource cluster as an independent series in the
+// dashboard.  In particular, A3 and A3-560T must not be aggregated together.
 function mergeNpuTrendClusters(data: NpuMetricsResponse | undefined): NpuMetricsResponse | undefined {
-  if (!data) return undefined
-
-  const groups = new Map<string, { isA3: boolean; clusters: ClusterNpuMetrics[] }>()
-  for (const cluster of data.clusters) {
-    const isA3 = isA3CardCluster(cluster.cluster_name)
-    const key = isA3 ? 'hardware:A3' : `cluster:${cluster.cluster_id}`
-    const group = groups.get(key)
-    if (group) {
-      group.clusters.push(cluster)
-    } else {
-      groups.set(key, { isA3, clusters: [cluster] })
-    }
-  }
-
-  return {
-    clusters: Array.from(groups.values()).map(({ isA3, clusters }) => {
-      const first = isA3
-        ? clusters.find(cluster => inferHardwareLabel(cluster.cluster_name) === 'A3') ?? clusters[0]
-        : clusters[0]
-      if (!isA3) return first
-
-      const pointMap = new Map<string, NpuMetricPoint>()
-      for (const cluster of clusters) {
-        for (const point of cluster.metrics) {
-          const existing = pointMap.get(point.collected_at)
-          if (existing) {
-            existing.npu_total += point.npu_total
-            existing.npu_used += point.npu_used
-            existing.npu_available += point.npu_available
-            existing.executing_pods_count += point.executing_pods_count
-            existing.pr_count += point.pr_count
-            existing.top_pods = existing.top_pods.concat(point.top_pods)
-          } else {
-            pointMap.set(point.collected_at, {
-              ...point,
-              top_pods: [...point.top_pods],
-            })
-          }
-        }
-      }
-
-      const metrics = Array.from(pointMap.values())
-        .sort((left, right) => left.collected_at.localeCompare(right.collected_at))
-        .map(point => ({
-          ...point,
-          // A simple average would make a small pool count as much as the
-          // larger pool.  Calculate the utilization from the merged totals.
-          npu_utilization: point.npu_total > 0 ? (point.npu_used / point.npu_total) * 100 : 0,
-          top_pods: point.top_pods
-            .slice()
-            .sort((left, right) => right.npu - left.npu)
-            .slice(0, 5),
-        }))
-
-      return {
-        cluster_id: first.cluster_id,
-        cluster_name: 'A3',
-        metrics,
-      }
-    }),
-  }
+  return data
 }
 
 function mergeNodeTrendClusters(data: NodeMetricsResponse | undefined): NodeMetricsResponse | undefined {
   if (!data) return undefined
+  return data
 
-  const groups = new Map<string, { isA3: boolean; clusters: ClusterNodeMetrics[] }>()
-  for (const cluster of data.clusters) {
-    const isA3 = isA3CardCluster(cluster.cluster_name)
-    const key = isA3 ? 'hardware:A3' : `cluster:${cluster.cluster_id}`
-    const group = groups.get(key)
-    if (group) {
-      group.clusters.push(cluster)
-    } else {
-      groups.set(key, { isA3, clusters: [cluster] })
-    }
-  }
-
-  return {
-    clusters: Array.from(groups.values()).map(({ isA3, clusters }) => {
-      const first = isA3
-        ? clusters.find(cluster => inferHardwareLabel(cluster.cluster_name) === 'A3') ?? clusters[0]
-        : clusters[0]
-      const prefixNodes = isA3 && clusters.length > 1
-      return {
-        cluster_id: first.cluster_id,
-        cluster_name: isA3 ? 'A3' : first.cluster_name,
-        nodes: clusters.flatMap(cluster => cluster.nodes.map(node => ({
-          ...node,
-          // Node names are only unique within one cluster.  Prefix the source
-          // pool when A3 and A3-560T are displayed together.
-          node_name: prefixNodes ? `${cluster.cluster_name}/${node.node_name}` : node.node_name,
-        }))),
-      }
-    }),
-  }
 }
 
 function NodeTrendTooltipContent({ active, payload, label }: any) {
@@ -1053,8 +951,7 @@ function RealtimeDashboardTab() {
       if (!cluster) return
 
       const hardware = inferHardwareLabel(cluster.name)
-      const groupedA3 = isA3CardCluster(cluster.name)
-      const key = groupedA3 ? 'hardware:A3' : `cluster:${cluster.id}`
+      const key = `cluster:${cluster.id}`
       const existing = groups.get(key)
       if (existing) {
         existing.entries.push({ cluster, query: clusterQueries[index] })
@@ -1063,8 +960,8 @@ function RealtimeDashboardTab() {
 
       groups.set(key, {
         key,
-        name: groupedA3 ? 'A3' : cluster.name,
-        hardware: groupedA3 ? 'A3' : hardware,
+        name: cluster.name,
+        hardware,
         entries: [{ cluster, query: clusterQueries[index] }],
       })
     })
