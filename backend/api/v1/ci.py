@@ -41,6 +41,11 @@ from infrastructure.persistence.models import (
     NightlyTestCase,
     WorkflowConfig,
 )
+from infrastructure.persistence.run_attempts import (
+    extract_run_attempt,
+    filter_current_run_attempt,
+    is_current_run_attempt,
+)
 from tooling.ci_filters import build_workflow_time_filter
 from tooling.model_fo_mapping import (
     load_model_fo_mappings,
@@ -610,9 +615,13 @@ async def list_jobs_by_run(
     db: DbSession
 ):
     """获取指定 workflow run 的所有 jobs"""
+    run_result = await db.execute(select(CIResult).where(CIResult.run_id == run_id))
+    run = run_result.scalar_one_or_none()
     stmt = select(CIJob).where(CIJob.run_id == run_id).order_by(CIJob.id)
     result = await db.execute(stmt)
     jobs = result.scalars().all()
+    current_attempt = extract_run_attempt(run.data) if run else None
+    jobs = filter_current_run_attempt(jobs, current_attempt)
 
     response = []
     for job in jobs:
@@ -688,6 +697,24 @@ async def list_jobs(
     jobs = (await db.execute(
         stmt.order_by(CIJob.started_at.desc(), CIJob.id.desc()).limit(limit)
     )).scalars().all()
+
+    # Keep the flat Job view consistent with the per-run view. A re-run uses
+    # the same workflow run ID, so rows from an earlier attempt must not leak
+    # into the current result set.
+    run_ids = {job.run_id for job in jobs if job.run_id is not None}
+    if run_ids:
+        run_result = await db.execute(
+            select(CIResult.run_id, CIResult.data).where(CIResult.run_id.in_(run_ids))
+        )
+        run_attempts = {
+            run_id: extract_run_attempt(run_data)
+            for run_id, run_data in run_result.all()
+        }
+        jobs = [
+            job
+            for job in jobs
+            if is_current_run_attempt(job.data, run_attempts.get(job.run_id))
+        ]
 
     response = []
     for job in jobs:

@@ -23,6 +23,10 @@ from infrastructure.persistence.models import (
     DailyFailureRecord,
     NightlyTestCase,
 )
+from infrastructure.persistence.run_attempts import (
+    extract_run_attempt,
+    is_current_run_attempt,
+)
 from tooling.model_fo_mapping import (
     load_model_fo_mappings,
     lookup_model_fo,
@@ -157,14 +161,27 @@ class NightlyDataCollector:
         # on the same reporting day.  The job timestamp remains a fallback
         # for partially collected workflow data.
         workflow_completed_at: dict[int, datetime | None] = {}
+        workflow_attempt: dict[int, int | None] = {}
         run_ids = {job.run_id for job in tracked_jobs if job.run_id is not None}
         if run_ids:
             workflow_result = await self.db.execute(
-                select(CIResult.run_id, CIResult.completed_at).where(
+                select(CIResult.run_id, CIResult.completed_at, CIResult.data).where(
                     CIResult.run_id.in_(run_ids)
                 )
             )
-            workflow_completed_at = dict(workflow_result.all())
+            for run_id, completed_at, run_data in workflow_result.all():
+                workflow_completed_at[run_id] = completed_at
+                workflow_attempt[run_id] = extract_run_attempt(run_data)
+
+        # A GitHub re-run keeps the same workflow run ID but creates a new set
+        # of jobs. Only jobs from the final attempt are valid for the daily
+        # tracker; otherwise cancelled jobs from an interrupted attempt are
+        # incorrectly materialized as failures.
+        tracked_jobs = [
+            job
+            for job in tracked_jobs
+            if is_current_run_attempt(job.data, workflow_attempt.get(job.run_id))
+        ]
 
         snapshot_result = await self.db.execute(select(NightlyTestCase))
         snapshots = snapshot_result.scalars().all()
