@@ -179,6 +179,32 @@ export interface TestCaseFeatureMatrixResponse {
   statistics: TestCaseFeatureMatrixStatistics
 }
 
+export interface E2ECoverageSummary {
+  total_tests: number
+  marked_tests: number
+  marked_ratio: number
+  by_card: Record<string, number>
+}
+
+export interface E2ETestItem {
+  filepath: string
+  test_name: string
+  card_count: number
+  models: string[]
+  coverage: Record<string, string[]>
+  is_marked: boolean
+}
+
+export interface E2ECoverageData {
+  summary: E2ECoverageSummary
+  taxonomy: Record<string, string[]>
+  dim_labels: Record<string, string>
+  tests: E2ETestItem[]
+  source_file_hash?: string
+  repo_commit?: string | null
+  updated_at?: string | null
+}
+
 export interface CoverageSummary {
   total_jobs?: number
   total_covdata_files?: number
@@ -264,7 +290,7 @@ export interface CoverageLinesData {
 
 export interface CoverageSyncStatus {
   last_check_at?: string | null
-  e2e?: { success: boolean; skipped?: boolean; error?: string }
+  e2e?: { success: boolean; skipped?: boolean; updated_at?: string | null; repo_commit?: string | null; error?: string }
   pr_breadth?: { success: boolean; skipped?: boolean; tar_signature?: string; error?: string }
   pr_lines?: { success: boolean; skipped?: boolean; status?: string; error?: string }
 }
@@ -404,6 +430,11 @@ export const getCoverageLines = async (params?: {
   order?: string
 }): Promise<CoverageLinesData> => {
   const response = await api.get<CoverageLinesData>('/test-board/coverage/pr-pipeline/lines', { params })
+  return response.data
+}
+
+export const getE2ECoverage = async (): Promise<E2ECoverageData> => {
+  const response = await api.get<E2ECoverageData>('/test-board/coverage/e2e')
   return response.data
 }
 

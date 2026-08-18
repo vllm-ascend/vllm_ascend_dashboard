@@ -12,24 +12,27 @@ import logging
 import re
 from datetime import UTC, date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.clients.github_cache import get_github_cache_for_repo
 from infrastructure.core.config import settings
 from infrastructure.persistence.models import (
     CIJob,
+    CIResult,
     DailyFailureRecord,
     NightlyTestCase,
 )
 from tooling.model_fo_mapping import (
-    lookup_model_fo,
     load_model_fo_mappings,
+    lookup_model_fo,
     seed_missing_model_fo_mappings,
 )
 from tooling.parsers.nightly_config_parser import NightlyConfigParser, load_model_fo_map
 
 logger = logging.getLogger(__name__)
+
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 class NightlyDataCollector:
@@ -77,7 +80,7 @@ class NightlyDataCollector:
         parser = self._get_parser()
         seed_count = await seed_missing_model_fo_mappings(self.db, load_model_fo_map())
         fo_map = await load_model_fo_mappings(self.db)
-        today = date.today()
+        today = datetime.now(BEIJING_TZ).date()
         branches = parser.get_active_branches()
         target_branches = ["main", *(b for b in branches if b.startswith("releases/"))]
 
@@ -134,18 +137,34 @@ class NightlyDataCollector:
         retained in DailyFailureTracking for follow-up.
         """
 
-        beijing_tz = timezone(timedelta(hours=8))
         cutoff = datetime.now(UTC) - timedelta(days=14)
 
         result = await self.db.execute(
             select(CIJob).where(
-                CIJob.started_at >= cutoff,
+                or_(
+                    CIJob.started_at >= cutoff,
+                    CIJob.completed_at >= cutoff,
+                ),
                 CIJob.conclusion.in_(
                     ["failure", "timed_out", "startup_failure", "cancelled"]
                 ),
             )
         )
         tracked_jobs = result.scalars().all()
+
+        # A Nightly workflow is one reporting batch.  Prefer its final
+        # workflow timestamp so every job in a run crossing midnight lands
+        # on the same reporting day.  The job timestamp remains a fallback
+        # for partially collected workflow data.
+        workflow_completed_at: dict[int, datetime | None] = {}
+        run_ids = {job.run_id for job in tracked_jobs if job.run_id is not None}
+        if run_ids:
+            workflow_result = await self.db.execute(
+                select(CIResult.run_id, CIResult.completed_at).where(
+                    CIResult.run_id.in_(run_ids)
+                )
+            )
+            workflow_completed_at = dict(workflow_result.all())
 
         snapshot_result = await self.db.execute(select(NightlyTestCase))
         snapshots = snapshot_result.scalars().all()
@@ -171,6 +190,7 @@ class NightlyDataCollector:
             values.sort(key=lambda item: str(item.report_date), reverse=True)
 
         existing_result = await self.db.execute(select(DailyFailureRecord))
+        existing_records = existing_result.scalars().all()
         existing_keys = {
             (
                 str(record.report_date),
@@ -178,23 +198,31 @@ class NightlyDataCollector:
                 record.workflow_name,
                 record.job_name,
             )
-            for record in existing_result.scalars().all()
+            for record in existing_records
+        }
+        existing_by_job_id = {
+            record.job_id: record
+            for record in existing_records
+            if record.job_id is not None
+        }
+        existing_by_run_job = {
+            (record.run_id, record.workflow_name, record.job_name): record
+            for record in existing_records
         }
 
         branch_re = re.compile(r"^\S+\s+\(([^,]+),")
         new_count = 0
+        corrected_count = 0
         for job in tracked_jobs:
-            if not job.started_at:
+            report_date = self._report_date_for_job(
+                job,
+                workflow_completed_at.get(job.run_id),
+            )
+            if report_date is None:
                 continue
-            started = job.started_at
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=UTC)
-            report_date = started.astimezone(beijing_tz).date().isoformat()
             branch_match = branch_re.match(job.job_name or "")
             branch = branch_match.group(1) if branch_match else "main"
             key = (report_date, branch, job.workflow_name, job.job_name)
-            if key in existing_keys:
-                continue
 
             snapshot = self._match_snapshot(
                 snapshot_map,
@@ -209,45 +237,89 @@ class NightlyDataCollector:
                 # ``Build image`` and ``Remove node taints``.
                 continue
 
+            if key in existing_keys:
+                continue
+
+            # The first sync may have used the job start date.  When the job
+            # later gets its completion timestamp, find that materialized
+            # row by its stable GitHub job identity and move only its date.
+            # This preserves all fields entered by the user in the tracker.
+            existing = existing_by_job_id.get(job.job_id)
+            if existing is None:
+                existing = existing_by_run_job.get(
+                    (job.run_id, job.workflow_name, job.job_name)
+                )
+            if existing is not None:
+                if str(existing.report_date) != report_date:
+                    existing.report_date = date.fromisoformat(report_date)
+                    corrected_count += 1
+                existing_keys.add(key)
+                continue
+
             github_url = (
                 f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}"
                 f"/actions/runs/{job.run_id}/job/{job.job_id}"
                 if job.job_id
                 else None
             )
-            self.db.add(
-                DailyFailureRecord(
-                    report_date=report_date,
-                    source_branch=branch,
-                    workflow_name=job.workflow_name,
-                    job_name=job.job_name,
-                    run_id=job.run_id,
-                    job_id=job.job_id,
-                    conclusion=job.conclusion,
-                    started_at=job.started_at,
-                    completed_at=job.completed_at,
-                    duration_seconds=job.duration_seconds,
-                    hardware=job.hardware,
-                    display_name=snapshot.display_name,
-                    test_model=snapshot.test_model,
-                    model_fo=snapshot.model_fo,
-                    owner=snapshot.owner,
-                    deployment_type=snapshot.deployment_type,
-                    processing_status="未处理",
-                    github_job_url=github_url,
-                )
+            record = DailyFailureRecord(
+                report_date=report_date,
+                source_branch=branch,
+                workflow_name=job.workflow_name,
+                job_name=job.job_name,
+                run_id=job.run_id,
+                job_id=job.job_id,
+                conclusion=job.conclusion,
+                started_at=job.started_at,
+                completed_at=job.completed_at,
+                duration_seconds=job.duration_seconds,
+                hardware=job.hardware,
+                display_name=snapshot.display_name,
+                test_model=snapshot.test_model,
+                model_fo=snapshot.model_fo,
+                owner=snapshot.owner,
+                deployment_type=snapshot.deployment_type,
+                processing_status="未处理",
+                github_job_url=github_url,
             )
             existing_keys.add(key)
+            if job.job_id is not None:
+                existing_by_job_id[job.job_id] = record
+            existing_by_run_job[(job.run_id, job.workflow_name, job.job_name)] = record
             new_count += 1
 
-        if new_count:
+        if new_count or corrected_count:
             await self.db.commit()
         logger.info(
-            "Daily failure materialization completed: %d records from %d tracked jobs",
+            "Daily failure materialization completed: %d new, %d corrected records from %d tracked jobs",
             new_count,
+            corrected_count,
             len(tracked_jobs),
         )
         return new_count
+
+    @staticmethod
+    def _report_date_for_job(
+        job: CIJob,
+        workflow_completed_at: datetime | None = None,
+    ) -> str | None:
+        """Return the Nightly reporting day in Beijing time.
+
+        A Nightly workflow triggered before midnight can finish and produce
+        its result after midnight.  The whole workflow batch belongs to the
+        latter day, so workflow completion time is authoritative.  Job
+        completion and then job start time are fallbacks for incomplete API
+        data.
+        Naive database timestamps are treated as UTC, matching the project's
+        storage convention.
+        """
+
+        event_time = workflow_completed_at or job.completed_at or job.started_at
+        if event_time is None:
+            return None
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=UTC)
+        return event_time.astimezone(BEIJING_TZ).date().isoformat()
 
     @staticmethod
     def _match_snapshot(

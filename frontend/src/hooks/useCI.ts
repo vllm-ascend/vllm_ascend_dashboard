@@ -19,10 +19,11 @@ export const useRuns = (params?: {
   status?: string
   hardware?: string
   limit?: number
-}) => {
+}, enabled = true) => {
   return useQuery({
     queryKey: ['ci-runs', params],
     queryFn: () => ciApi.getRuns(params),
+    enabled,
   })
 }
 

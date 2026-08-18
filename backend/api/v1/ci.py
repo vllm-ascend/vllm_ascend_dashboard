@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import Date, case, cast, func, or_, select
+from sqlalchemy import case, func, or_, select, text
 
 from api.deps import CurrentAdminUser, CurrentSuperAdminUser, CurrentUser, DbSession
 from contracts.schemas import (
@@ -43,8 +43,8 @@ from infrastructure.persistence.models import (
 )
 from tooling.ci_filters import build_workflow_time_filter
 from tooling.model_fo_mapping import (
-    lookup_model_fo,
     load_model_fo_mappings,
+    lookup_model_fo,
     seed_missing_model_fo_mappings,
     set_model_fo_mapping,
 )
@@ -98,9 +98,9 @@ async def list_runs(
     if hardware:
         stmt = stmt.where(CIResult.hardware == hardware)
 
-    stmt = stmt.order_by(
-        CIResult.started_at.desc()
-    ).limit(limit)
+    # Workflow 列表按结束时间排序；运行中的记录回退到开始时间。
+    run_belonging_time = func.coalesce(CIResult.completed_at, CIResult.started_at)
+    stmt = stmt.order_by(run_belonging_time.desc()).limit(limit)
 
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -351,9 +351,16 @@ async def get_ci_trends(
 
     wf_filter = build_workflow_time_filter(CIResult, wf_configs)
 
+    # 所属日期按 Workflow 结束时间计算，并转换为北京时间日期；运行中的
+    # Workflow 暂无结束时间时回退到开始时间。
+    run_belonging_time = func.coalesce(CIResult.completed_at, CIResult.started_at)
+    run_belonging_date = func.date(
+        func.date_add(run_belonging_time, text("INTERVAL 8 HOUR"))
+    )
+
     # 构建基础查询
     stmt = select(
-        cast(CIResult.started_at, Date).label('date'),
+        run_belonging_date.label('date'),
         func.count().label('total_runs'),
         func.sum(
             case(
@@ -374,8 +381,8 @@ async def get_ci_trends(
             )
         ).label('max_duration'),
     ).where(
-        CIResult.started_at >= start_date,
-        CIResult.started_at <= end_date,
+        run_belonging_time >= start_date,
+        run_belonging_time <= end_date,
         wf_filter,
     )
 
@@ -384,11 +391,7 @@ async def get_ci_trends(
     if hardware:
         stmt = stmt.where(CIResult.hardware == hardware)
 
-    stmt = stmt.group_by(
-        cast(CIResult.started_at, Date)
-    ).order_by(
-        cast(CIResult.started_at, Date)
-    )
+    stmt = stmt.group_by(run_belonging_date).order_by(run_belonging_date)
 
     result = await db.execute(stmt)
     rows = result.all()

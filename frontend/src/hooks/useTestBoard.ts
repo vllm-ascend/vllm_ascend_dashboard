@@ -167,6 +167,15 @@ export const useCoverageLines = (params?: {
   })
 }
 
+export const useE2ECoverage = (enabled = true) => {
+  return useQuery({
+    queryKey: ['test-board-coverage-e2e'],
+    queryFn: testBoardApi.getE2ECoverage,
+    enabled,
+    refetchInterval: 600000,
+  })
+}
+
 export const useCoverageSyncStatus = () => {
   return useQuery({
     queryKey: ['test-board-coverage-status'],

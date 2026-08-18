@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from collector.nightly_data import NightlyDataCollector
@@ -60,3 +61,47 @@ def test_match_snapshot_falls_back_for_historical_job_without_exact_snapshot():
     )
 
     assert result is current
+
+
+def test_report_date_uses_job_completion_date_when_nightly_crosses_midnight():
+    job = SimpleNamespace(
+        started_at=datetime(2026, 8, 17, 15, 45, tzinfo=UTC),  # 23:45 Beijing
+        completed_at=datetime(2026, 8, 17, 16, 10, tzinfo=UTC),  # 00:10 next day
+    )
+
+    assert NightlyDataCollector._report_date_for_job(job) == "2026-08-18"
+
+
+def test_report_date_uses_workflow_completion_for_the_whole_nightly_batch():
+    job = SimpleNamespace(
+        started_at=datetime(2026, 8, 17, 15, 30, tzinfo=UTC),  # 23:30 Beijing
+        completed_at=datetime(2026, 8, 17, 15, 50, tzinfo=UTC),  # 23:50 Beijing
+    )
+    workflow_completed_at = datetime(2026, 8, 17, 16, 10, tzinfo=UTC)  # next day
+
+    assert (
+        NightlyDataCollector._report_date_for_job(job, workflow_completed_at)
+        == "2026-08-18"
+    )
+
+
+def test_report_date_uses_workflow_completion_when_job_completion_is_missing():
+    job = SimpleNamespace(
+        started_at=datetime(2026, 8, 17, 15, 45, tzinfo=UTC),
+        completed_at=None,
+    )
+    workflow_completed_at = datetime(2026, 8, 17, 16, 5, tzinfo=UTC)
+
+    assert (
+        NightlyDataCollector._report_date_for_job(job, workflow_completed_at)
+        == "2026-08-18"
+    )
+
+
+def test_report_date_treats_naive_database_timestamps_as_utc():
+    job = SimpleNamespace(
+        started_at=datetime(2026, 8, 17, 15, 45),
+        completed_at=datetime(2026, 8, 17, 16, 10),
+    )
+
+    assert NightlyDataCollector._report_date_for_job(job) == "2026-08-18"

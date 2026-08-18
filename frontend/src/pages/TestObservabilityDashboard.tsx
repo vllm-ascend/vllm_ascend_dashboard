@@ -13,6 +13,7 @@ import { useCurrentUser } from '../hooks/useCurrentUser'
 import type { TestCaseItem, FlakyCaseDetail, FailureBreakdown, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
 import TestCaseFeatureMatrixTab from '../components/TestCaseFeatureMatrixTab'
 import UTCoverageTab from '../components/coverage/UTCoverageTab'
+import E2ECoverageTab from '../components/coverage/E2ECoverageTab'
 import './TestObservabilityDashboard.css'
 
 const { Text, Title } = Typography
@@ -784,6 +785,11 @@ function TestObservabilityDashboard() {
             key: 'ut-coverage',
             label: <Space><PercentageOutlined /><span>UT 覆盖率</span></Space>,
             children: <UTCoverageTab />,
+          },
+          {
+            key: 'e2e-coverage',
+            label: <Space><PercentageOutlined /><span>E2E 覆盖率</span></Space>,
+            children: <E2ECoverageTab />,
           },
         ]}
       />
