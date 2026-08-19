@@ -8,6 +8,7 @@ deployments.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -162,15 +163,20 @@ class NightlyDataCollector:
         # for partially collected workflow data.
         workflow_completed_at: dict[int, datetime | None] = {}
         workflow_attempt: dict[int, int | None] = {}
+        workflow_branch: dict[int, str | None] = {}
         run_ids = {job.run_id for job in tracked_jobs if job.run_id is not None}
         if run_ids:
             workflow_result = await self.db.execute(
-                select(CIResult.run_id, CIResult.completed_at, CIResult.data).where(
-                    CIResult.run_id.in_(run_ids)
-                )
+                select(
+                    CIResult.run_id,
+                    CIResult.completed_at,
+                    CIResult.branch,
+                    CIResult.data,
+                ).where(CIResult.run_id.in_(run_ids))
             )
-            for run_id, completed_at, run_data in workflow_result.all():
+            for run_id, completed_at, branch, run_data in workflow_result.all():
                 workflow_completed_at[run_id] = completed_at
+                workflow_branch[run_id] = branch
                 workflow_attempt[run_id] = extract_run_attempt(run_data)
 
         # A GitHub re-run keeps the same workflow run ID but creates a new set
@@ -227,7 +233,6 @@ class NightlyDataCollector:
             for record in existing_records
         }
 
-        branch_re = re.compile(r"^\S+\s+\(([^,]+),")
         new_count = 0
         corrected_count = 0
         for job in tracked_jobs:
@@ -237,8 +242,10 @@ class NightlyDataCollector:
             )
             if report_date is None:
                 continue
-            branch_match = branch_re.match(job.job_name or "")
-            branch = branch_match.group(1) if branch_match else "main"
+            branch = self._source_branch_for_job(
+                job,
+                workflow_branch.get(job.run_id),
+            )
             key = (report_date, branch, job.workflow_name, job.job_name)
 
             snapshot = self._match_snapshot(
@@ -337,6 +344,36 @@ class NightlyDataCollector:
         if event_time.tzinfo is None:
             event_time = event_time.replace(tzinfo=UTC)
         return event_time.astimezone(BEIJING_TZ).date().isoformat()
+
+    @staticmethod
+    def _source_branch_for_job(
+        job: CIJob,
+        workflow_branch: str | None = None,
+    ) -> str:
+        """Return the authoritative Git branch for a collected Nightly job.
+
+        GitHub's workflow ``head_branch`` is persisted as ``CIResult.branch``
+        and in the raw job payload. Job names are display text and may replace
+        ``/`` with ``-`` (for example ``releases/v0.26.0rc`` becomes
+        ``releases-v0.26.0rc``), so parsing the name is only a legacy fallback.
+        """
+
+        if workflow_branch and workflow_branch.strip():
+            return workflow_branch.strip()
+
+        payload = job.data
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError):
+                payload = None
+        if isinstance(payload, dict):
+            head_branch = payload.get("head_branch")
+            if isinstance(head_branch, str) and head_branch.strip():
+                return head_branch.strip()
+
+        branch_match = re.match(r"^\S+\s+\(([^,]+),", job.job_name or "")
+        return branch_match.group(1).strip() if branch_match else "main"
 
     @staticmethod
     def _match_snapshot(

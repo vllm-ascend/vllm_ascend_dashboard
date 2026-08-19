@@ -105,3 +105,36 @@ def test_report_date_treats_naive_database_timestamps_as_utc():
     )
 
     assert NightlyDataCollector._report_date_for_job(job) == "2026-08-18"
+
+
+def test_source_branch_prefers_workflow_branch_over_display_name():
+    job = SimpleNamespace(
+        job_name="single-node (releases-v0.26.0rc, glm-4.7-w8a8) / glm-4.7-w8a8",
+        data='{"head_branch": "main"}',
+    )
+
+    assert (
+        NightlyDataCollector._source_branch_for_job(job, "releases/v0.26.0rc")
+        == "releases/v0.26.0rc"
+    )
+
+
+def test_source_branch_uses_job_payload_when_workflow_is_missing():
+    job = SimpleNamespace(
+        job_name="single-node (releases-v0.26.0rc, glm-4.7-w8a8) / glm-4.7-w8a8",
+        data={"head_branch": "releases/v0.26.0rc"},
+    )
+
+    assert (
+        NightlyDataCollector._source_branch_for_job(job)
+        == "releases/v0.26.0rc"
+    )
+
+
+def test_source_branch_parses_display_name_only_for_legacy_data():
+    job = SimpleNamespace(
+        job_name="single-node (main, glm-4.7-w8a8) / glm-4.7-w8a8",
+        data="not-json",
+    )
+
+    assert NightlyDataCollector._source_branch_for_job(job) == "main"
