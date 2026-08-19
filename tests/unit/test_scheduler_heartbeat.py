@@ -194,3 +194,10 @@ async def test_write_heartbeat_force_running_false_on_shutdown(monkeypatch):
     await ds.write_heartbeat(force_running=False)
 
     assert session.added[0].running is False
+
+
+def test_scheduler_start_does_not_shadow_cron_trigger():
+    """CronTrigger must stay module-scoped so the first scheduled job can use it."""
+    from scheduler.service import DataSyncScheduler
+
+    assert "CronTrigger" not in DataSyncScheduler.start.__code__.co_varnames

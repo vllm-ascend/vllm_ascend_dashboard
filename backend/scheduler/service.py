@@ -134,8 +134,6 @@ class DataSyncScheduler:
 
         # 每日总结生成任务 - 每天早上 8 点执行（可配置）
         try:
-            from apscheduler.triggers.cron import CronTrigger
-
             cron_hour = getattr(settings, 'DAILY_SUMMARY_CRON_HOUR', 8)
             cron_minute = getattr(settings, 'DAILY_SUMMARY_CRON_MINUTE', 0)
             enabled = getattr(settings, 'DAILY_SUMMARY_ENABLED', True)
@@ -214,7 +212,6 @@ class DataSyncScheduler:
 
         # NPU 指标数据清理任务 - 每天凌晨 00:00 执行
         try:
-            from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._cleanup_resource_metrics_job,
                 trigger=CronTrigger(hour=0, minute=0, timezone=self._timezone),
@@ -230,8 +227,6 @@ class DataSyncScheduler:
 
         # 每日运行报告邮件推送任务 - 默认 8:30 执行（DB 中的时间由 apply_db_config_overrides 覆盖）
         try:
-            from apscheduler.triggers.cron import CronTrigger
-
             report_enabled = getattr(settings, 'REPORT_ENABLED', True)
             report_hour = getattr(settings, 'REPORT_SCHEDULE_HOUR', 8)
             report_minute = getattr(settings, 'REPORT_SCHEDULE_MINUTE', 30)
@@ -347,7 +342,6 @@ class DataSyncScheduler:
             logger.error(f"Failed to add test suite snapshot job: {e}", exc_info=True)
 
         try:
-            from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._cleanup_test_runs_job,
                 trigger=CronTrigger(hour=2, minute=0, timezone=self._timezone),
@@ -361,7 +355,6 @@ class DataSyncScheduler:
 
         # 已退出测试用例物理清理 — 每日凌晨 02:30 删除超过 STALE_CASE_DELETE_DAYS 天未运行的用例
         try:
-            from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._cleanup_stale_cases_job,
                 trigger=CronTrigger(hour=2, minute=30, timezone=self._timezone),
@@ -376,7 +369,6 @@ class DataSyncScheduler:
         # 上游支持矩阵同步任务 - 每日同步
         if getattr(settings, 'SUPPORT_MATRIX_SYNC_ENABLED', True):
             try:
-                from apscheduler.triggers.cron import CronTrigger
                 sync_hour = getattr(settings, 'SUPPORT_MATRIX_SYNC_CRON_HOUR', 6)
                 sync_minute = getattr(settings, 'SUPPORT_MATRIX_SYNC_CRON_MINUTE', 0)
                 self.scheduler.add_job(
@@ -392,7 +384,6 @@ class DataSyncScheduler:
 
         # 代码度量定时清理
         try:
-            from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._cleanup_code_metrics_job,
                 trigger=CronTrigger(hour=3, minute=0, timezone=self._timezone),
@@ -406,7 +397,6 @@ class DataSyncScheduler:
 
         # 代码度量热力图同步
         try:
-            from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._sync_heatmap_job,
                 trigger=CronTrigger(hour=4, minute=0, timezone=self._timezone),
@@ -420,7 +410,6 @@ class DataSyncScheduler:
 
         # 代码度量本地采集
         try:
-            from apscheduler.triggers.cron import CronTrigger
             self.scheduler.add_job(
                 self._collect_code_metrics_job,
                 trigger=CronTrigger(hour=5, minute=0, timezone=self._timezone),
@@ -568,8 +557,6 @@ class DataSyncScheduler:
         self, enabled: bool = True, cron_hour: int = 8, cron_minute: int = 30
     ):
         """动态更新每日报告邮件定时任务"""
-        from apscheduler.triggers.cron import CronTrigger
-
         try:
             if enabled:
                 self.scheduler.add_job(
@@ -1073,8 +1060,6 @@ class DataSyncScheduler:
             cron_minute: 执行时间（分钟）
             timezone: 时区
         """
-        from apscheduler.triggers.cron import CronTrigger
-
         try:
             if enabled:
                 self.scheduler.add_job(
