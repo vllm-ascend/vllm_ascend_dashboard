@@ -142,7 +142,15 @@ class E2ECoverageParser:
 
     def parse(self) -> dict:
         cache = get_github_cache()
-        path = cache.cache_dir / self.HTML_REL_PATH
+        get_worktree = getattr(cache, "get_worktree", None)
+        worktree = (
+            get_worktree("origin/main", purpose="coverage")
+            if callable(get_worktree)
+            else cache.cache_dir
+        )
+        if worktree is None:
+            raise FileNotFoundError("origin/main source worktree is unavailable")
+        path = worktree / self.HTML_REL_PATH
         if not path.exists():
             raise FileNotFoundError(f"coverage.html not found: {path}")
         content = path.read_text(encoding="utf-8")
@@ -403,6 +411,12 @@ def _process_line_coverage(
 ) -> dict[str, Any]:
     raw, _ = _aggregate_raw_coverage(tar_path, test_type=test_type)
     cache = get_github_cache()
+    get_worktree = getattr(cache, "get_worktree", None)
+    source_tree = (
+        get_worktree("origin/main", purpose="coverage")
+        if callable(get_worktree)
+        else cache.cache_dir
+    ) or cache.cache_dir
     files: list[dict[str, Any]] = []
     details: dict[str, dict[str, Any]] = {}
     module_totals: dict[str, dict[str, int]] = defaultdict(
@@ -410,7 +424,7 @@ def _process_line_coverage(
     )
     fallback_paths: list[str] = []
     for path, executed in sorted(raw["lines"].items()):
-        statements, excluded, possible_arcs, analyzed = _source_analysis(path, cache.cache_dir)
+        statements, excluded, possible_arcs, analyzed = _source_analysis(path, source_tree)
         if not analyzed:
             # Keep non-Python/temporarily unavailable sources visible, but mark
             # the aggregate partial instead of pretending to know the denominator.
@@ -756,7 +770,13 @@ async def get_pr_source(db: AsyncSession, path: str) -> dict[str, Any]:
     if not data:
         raise FileNotFoundError("PR line coverage not synced yet")
     cache = get_github_cache()
-    source_path = cache.cache_dir / path
+    get_worktree = getattr(cache, "get_worktree", None)
+    source_tree = (
+        get_worktree("origin/main", purpose="coverage")
+        if callable(get_worktree)
+        else cache.cache_dir
+    ) or cache.cache_dir
+    source_path = source_tree / path
     if not source_path.is_file():
         raise FileNotFoundError(f"source not found: {path}")
     detail = (data.get("details") or {}).get(path, {})

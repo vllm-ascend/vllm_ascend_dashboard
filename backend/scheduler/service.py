@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import bindparam, text
 
@@ -102,17 +103,18 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add CI data sync job: {e}", exc_info=True)
 
-        # Project Dashboard Git 仓库缓存更新任务 - 每小时更新一次
-        cache_update_interval = getattr(settings, 'PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES', 60)
+        # Repository snapshots are refreshed centrally once per day. Analysis
+        # tasks consume this persistent snapshot and never pull on demand.
+        settings.PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES = 1440
         try:
             self.scheduler.add_job(
                 self._update_project_dashboard_cache_job,
-                trigger=IntervalTrigger(minutes=cache_update_interval),
+                trigger=CronTrigger(hour=4, minute=30, timezone=self._timezone),
                 id="project_dashboard_cache_update",
-                name="Project Dashboard Cache Update",
+                name="Repository Mirror Refresh",
                 replace_existing=True,
             )
-            logger.info(f"[2/4] Project dashboard cache update scheduled every {cache_update_interval} minutes")
+            logger.info("[2/4] Repository mirror refresh scheduled daily at 04:30")
         except Exception as e:
             logger.error(f"Failed to add project dashboard cache update job: {e}", exc_info=True)
 
@@ -459,6 +461,13 @@ class DataSyncScheduler:
                     if config_key in runtime_config:
                         setattr(settings, setting_name, runtime_config[config_key])
 
+                # Older database configuration may still contain the former
+                # hourly value. Do not let it restore per-analysis-era churn.
+                settings.PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES = max(
+                    int(settings.PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES),
+                    1440,
+                )
+
                 self.scheduler.add_job(
                     self._sync_ci_data_job,
                     trigger=IntervalTrigger(minutes=settings.CI_SYNC_INTERVAL_MINUTES),
@@ -468,11 +477,9 @@ class DataSyncScheduler:
                 )
                 self.scheduler.add_job(
                     self._update_project_dashboard_cache_job,
-                    trigger=IntervalTrigger(
-                        minutes=settings.PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES
-                    ),
+                    trigger=CronTrigger(hour=4, minute=30, timezone=self._timezone),
                     id="project_dashboard_cache_update",
-                    name="Project Dashboard Cache Update",
+                    name="Repository Mirror Refresh",
                     replace_existing=True,
                 )
                 self.scheduler.add_job(
@@ -679,60 +686,6 @@ class DataSyncScheduler:
         if task_id:
             logger.info("Queued Nightly data synchronization task %d", task_id)
 
-    async def run_ci_post_sync(self, db) -> None:
-        """CI 采集完成后的数据管线，scheduler 全量路径与 COLLECTOR_MODE collector 共用。
-
-        步骤：刷新 WorkflowConfig.last_sync_at → 更新本地仓库缓存（供 nightly_config.yaml
-        快照）→ 快照各分支用例配置 → 物化每日失败记录。
-
-        COLLECTOR_MODE 下 scheduler 仅创建采集任务后返回，采集由 collector 执行；
-        若不在 collector 侧补跑这些步骤，last_sync_at 不更新、用例快照停滞、
-        每日失败记录不再增长（这正是 2026-08 失败用例跟踪断数据的根因之一）。
-
-        每步独立、best-effort；失败时记 ERROR（而非旧版的 non-fatal WARNING），
-        避免像 source_branch 缺列那样被静默吞掉数天无人察觉。
-        """
-        from datetime import UTC
-
-        # 1. 更新所有启用 workflow 的 last_sync_at
-        try:
-            from app.models import WorkflowConfig
-            from sqlalchemy import update
-
-            await db.execute(
-                update(WorkflowConfig)
-                .where(WorkflowConfig.enabled)
-                .values(last_sync_at=datetime.now(UTC))
-            )
-            await db.commit()
-        except Exception as e:
-            logger.error("CI post-sync: update WorkflowConfig.last_sync_at failed: %s", e)
-
-        # 2. 更新本地代码仓库（nightly_config.yaml 快照依赖此缓存）
-        try:
-            from app.services.github_cache import get_github_cache
-
-            cache = get_github_cache()
-            if cache.clone():
-                cache.pull()
-            logger.info("Local repo updated after CI sync")
-        except Exception as e:
-            logger.error("CI post-sync: local repo update failed: %s", e)
-
-        # 3. 快照各分支 nightly_config.yaml
-        try:
-            await self._snapshot_nightly_configs(db)
-        except Exception as e:
-            logger.error("CI post-sync: snapshot nightly configs failed: %s", e)
-
-        # 4. 物化每日失败记录表
-        try:
-            count = await self._populate_daily_failure_records(db)
-            if count > 0:
-                logger.info("Populated %d new daily failure records", count)
-        except Exception as e:
-            logger.error("CI post-sync: populate daily failure records failed: %s", e)
-
     async def _sync_ci_data_job(self) -> None:
         """Queue CI synchronization; Collector owns GitHub I/O and all writes."""
         from infrastructure.tasks.task_manager import TaskManager
@@ -809,50 +762,38 @@ class DataSyncScheduler:
                 logger.error(f"LOG CLEANUP FAILED: {e}", exc_info=True)
                 await db.rollback()
 
-    def _update_project_dashboard_cache_job(self) -> None:
-        """Project Dashboard Git 仓库缓存更新任务"""
-        logger.info("=" * 60)
-        logger.info("PROJECT DASHBOARD CACHE UPDATE JOB STARTED")
-        logger.info("=" * 60)
+    async def _update_project_dashboard_cache_job(self) -> None:
+        """Queue one daily mirror refresh for every active Collector node."""
+        from infrastructure.tasks.task_manager import TaskManager
 
-        try:
-            from infrastructure.clients.github_cache import (
-                get_github_cache,
-                get_github_cache_for_repo,
-            )
-
-            results = []
-
-            # 更新 vllm-ascend 仓库
-            logger.info("Updating vllm-ascend repository...")
-            ascend_cache = get_github_cache()
-            if not ascend_cache._is_repo_cloned():
-                success = ascend_cache.clone()
-                results.append(f"vllm-ascend: {'cloned' if success else 'clone failed'}")
-            else:
-                success = ascend_cache.pull()
-                results.append(f"vllm-ascend: {'pulled' if success else 'pull failed'}")
-
-            # 更新 vllm 仓库
-            logger.info("Updating vllm repository...")
-            vllm_cache = get_github_cache_for_repo(owner="vllm-project", repo="vllm")
-            if not vllm_cache._is_repo_cloned():
-                success = vllm_cache.clone()
-                results.append(f"vllm: {'cloned' if success else 'clone failed'}")
-            else:
-                success = vllm_cache.pull()
-                results.append(f"vllm: {'pulled' if success else 'pull failed'}")
-
-            logger.info(f"Cache update results: {', '.join(results)}")
-            logger.info("=" * 60)
-            logger.info("PROJECT DASHBOARD CACHE UPDATE JOB COMPLETED")
-            logger.info("=" * 60)
-
-        except Exception as e:
-            logger.error("=" * 60)
-            logger.error(f"PROJECT DASHBOARD CACHE UPDATE JOB FAILED - Error: {e}", exc_info=True)
-            logger.error("=" * 60)
-            raise
+        today = datetime.now(UTC).strftime('%Y-%m-%d')
+        async with SessionLocal() as db:
+            node_ids = (
+                await db.execute(
+                    text(
+                        """
+                        SELECT node_id
+                        FROM collector_heartbeats
+                        WHERE running = 1
+                          AND updated_at >= NOW() - INTERVAL 2 MINUTE
+                        """
+                    )
+                )
+            ).scalars().all()
+            targets = sorted({str(node_id) for node_id in node_ids if node_id}) or [""]
+            task_ids = []
+            for node_id in targets:
+                task_id = await TaskManager.create_task(
+                    db,
+                    "repo_cache_refresh",
+                    {"repo_type": "all", "target_node": node_id or None},
+                    f"repo_cache_refresh:scheduled:{today}:{node_id or 'fallback'}",
+                    required_capability=f"node:{node_id}" if node_id else "python",
+                )
+                if task_id:
+                    task_ids.append(task_id)
+            await db.commit()
+        logger.info("Repository mirror refresh tasks queued: %s", task_ids)
 
     async def _sync_model_reports_job(self) -> None:
         """Queue model report synchronization for a Collector with Python capability."""

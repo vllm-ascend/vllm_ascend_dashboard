@@ -98,39 +98,6 @@ class NightlyConfigParser:
     def is_available(self) -> bool:
         return self.config_file.exists()
 
-    def checkout_branch(self, branch: str) -> bool:
-        """切换到指定分支，返回是否成功。支持 origin/ 和 upstream/ 前缀。"""
-        import subprocess
-        env = {**os.environ, "MSYS_NO_PATHCONV": "1"}
-        try:
-            # 如果分支在 origin 或 upstream 远程存在，创建本地 tracking branch
-            for remote in ["origin", "upstream"]:
-                ref = f"{remote}/{branch}"
-                r = subprocess.run(
-                    ["git", "-C", str(self.repo_path), "rev-parse", "--verify", ref],
-                    capture_output=True, text=True, timeout=10, env=env,
-                )
-                if r.returncode == 0:
-                    # 创建/更新本地分支跟踪远程
-                    subprocess.run(
-                        ["git", "-C", str(self.repo_path), "fetch", remote, branch],
-                        capture_output=True, text=True, timeout=30, env=env,
-                    )
-                    subprocess.run(
-                        ["git", "-C", str(self.repo_path), "checkout", "-B", branch, ref],
-                        capture_output=True, text=True, timeout=30, env=env,
-                    )
-                    return True
-            # 本地分支直接 checkout
-            subprocess.run(
-                ["git", "-C", str(self.repo_path), "checkout", branch],
-                capture_output=True, text=True, timeout=30, env=env,
-            )
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to checkout branch {branch}: {e}")
-            return False
-
     def get_active_branches(self) -> list[str]:
         """获取所有 release 分支（origin + upstream 远程）"""
         import subprocess
@@ -159,7 +126,17 @@ class NightlyConfigParser:
             return []
 
         with open(self.config_file, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+            return self.parse_content(
+                f.read(), report_date=report_date, source_branch=source_branch
+            )
+
+    @staticmethod
+    def parse_content(
+        content: str, report_date: str = "", source_branch: str = "main"
+    ) -> list[TestCaseDef]:
+        """Parse an explicit-ref YAML payload without checking out a branch."""
+        del report_date, source_branch  # retained for the parser's public contract
+        data = yaml.safe_load(content)
         if not data:
             return []
 

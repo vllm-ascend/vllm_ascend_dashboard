@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from infrastructure.clients.git_mirror import GitMirrorRepository
 from infrastructure.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -38,29 +39,36 @@ class GitHubLocalCache:
         self.owner = owner or settings.GITHUB_OWNER or "vllm-project"
         self.repo = repo or settings.GITHUB_REPO or "vllm-ascend"
         self.repo_name = f"{self.owner}_{self.repo}"
-        # 使用配置的缓存目录，默认放在根目录 data 下
+        self.mirror: GitMirrorRepository | None = None
+        # Explicit paths retain legacy checkout semantics for local tooling.
         if cache_dir:
             self.cache_dir = Path(cache_dir)
-        elif settings.GITHUB_CACHE_DIR:
-            # 使用配置文件中指定的缓存目录
-            self.cache_dir = Path(settings.GITHUB_CACHE_DIR) / "repos" / self.repo_name
         else:
-            # 默认缓存目录：
-            # - 生产环境：/app/data/repos (Docker volume 持久化)
-            # - 开发环境：根目录 data/repos
-            data_root = Path(settings.DATA_DIR)
+            data_root = Path(settings.GITHUB_CACHE_DIR or settings.DATA_DIR)
             if not data_root.is_absolute():
                 data_root = Path.cwd() / data_root
-            self.cache_dir = data_root.resolve() / "repos" / self.repo_name
+            data_root = data_root.resolve()
+            self.mirror = GitMirrorRepository(
+                storage_root=data_root,
+                owner=self.owner,
+                repo=self.repo,
+                clone_url=f"https://github.com/{self.owner}/{self.repo}.git",
+                legacy_worktree=data_root / "repos" / self.repo_name,
+            )
+            self.cache_dir = self.mirror.main_worktree
         self.clone_url = f"https://github.com/{self.owner}/{self.repo}.git"
         self._ensure_cache_dir()
 
     def _ensure_cache_dir(self):
         """确保缓存目录存在"""
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        if self.mirror is None:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _is_repo_cloned(self) -> bool:
         """检查仓库是否已克隆"""
+        if self.mirror is not None:
+            return self.mirror.is_ready() and (self.cache_dir / ".git").exists()
         git_dir = self.cache_dir / ".git"
         return git_dir.exists()
 
@@ -94,6 +102,8 @@ class GitHubLocalCache:
 
     def clone(self) -> bool:
         """克隆仓库到本地（包含完整历史和 tags）"""
+        if self.mirror is not None:
+            return self.mirror.bootstrap()
         if self._is_repo_cloned():
             logger.info(f"Repository already cloned at {self.cache_dir}")
             return True
@@ -189,6 +199,8 @@ class GitHubLocalCache:
 
     def pull(self) -> bool:
         """拉取最新代码和 tags"""
+        if self.mirror is not None:
+            return self.mirror.refresh()
         if not self._is_repo_cloned():
             logger.info("Repository not cloned, attempting to clone")
             return self.clone()
@@ -341,6 +353,8 @@ class GitHubLocalCache:
 
     def fetch_full_history(self) -> bool:
         """获取完整的 git 历史和 tags（用于修复浅克隆）"""
+        if self.mirror is not None:
+            return self.mirror.is_ready() and not (self.mirror.mirror_dir / "shallow").exists()
         if not self._is_repo_cloned():
             return self.clone()
 
@@ -425,6 +439,9 @@ class GitHubLocalCache:
             if not self.clone():
                 return None
 
+        if self.mirror is not None:
+            return self.mirror.read_file(branch, file_path)
+
         try:
             result = subprocess.run(
                 ["git", "show", f"{branch}:{file_path}"],
@@ -437,6 +454,50 @@ class GitHubLocalCache:
         except Exception as e:
             logger.error(f"Failed to get file content: {str(e)}")
             return None
+
+    def ensure_ref(self, ref: str, *, branch: str | None = None) -> bool:
+        """Ensure one commit/ref exists without refreshing every branch."""
+        if self.mirror is not None:
+            return self.mirror.ensure_ref(ref, branch=branch)
+        if not self._is_repo_cloned() and not self.clone():
+            return False
+        verify = ["git", "-C", str(self.cache_dir), "rev-parse", "--verify", f"{ref}^{{commit}}"]
+        if subprocess.run(verify, capture_output=True, timeout=30).returncode == 0:
+            return True
+        if branch:
+            subprocess.run(
+                ["git", "-C", str(self.cache_dir), "fetch", "origin", branch],
+                capture_output=True,
+                timeout=300,
+                env=self._get_git_env(),
+            )
+        return subprocess.run(verify, capture_output=True, timeout=30).returncode == 0
+
+    def get_remote_branches(self, prefix: str = "") -> list[str]:
+        if not self._is_repo_cloned() and not self.clone():
+            return []
+        if self.mirror is not None:
+            return self.mirror.remote_branches(prefix)
+        result = subprocess.run(
+            ["git", "-C", str(self.cache_dir), "branch", "-r", "--format=%(refname:strip=3)"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return sorted(
+            branch for branch in result.stdout.splitlines()
+            if branch.startswith(prefix) and branch != "HEAD"
+        )
+
+    def get_worktree(self, ref: str = "main", *, purpose: str = "main") -> Path | None:
+        """Materialize a stable main tree or an isolated detached worktree."""
+        if not self._is_repo_cloned() and not self.clone():
+            return None
+        if self.mirror is None:
+            return self.cache_dir
+        if purpose == "main" and ref in {"main", "origin/main"}:
+            return self.mirror.ensure_main_worktree(refresh=False)
+        return self.mirror.isolated_worktree(ref, purpose)
 
     def get_all_tags(self) -> list[str]:
         """获取所有 tags 列表"""
@@ -639,7 +700,7 @@ class GitHubLocalCache:
             head_ref = head_tag if head_tag != "main" else "origin/main"
 
             # If either is main, fetch latest main branch
-            if base_tag == "main" or head_tag == "main":
+            if self.mirror is None and (base_tag == "main" or head_tag == "main"):
                 env = self._get_git_env()
                 subprocess.run(
                     ["git", "fetch", "origin", "main"],
@@ -952,13 +1013,27 @@ def ensure_analysis_repos_ready(*, update: bool = True) -> dict[str, str]:
     # must be serialized to avoid git index/ref lock conflicts.
     with _analysis_repos_lock:
         for name, cache in caches.items():
-            ready = cache.pull() if update else cache.clone()
+            was_cloned = cache._is_repo_cloned()
+            if update:
+                ready = cache.pull()
+            elif was_cloned:
+                # The daily refresh owns network access. Existing snapshots
+                # are intentionally accepted without fetch/pull here.
+                ready = True
+            else:
+                # Bootstrap a clean deployment on first use; subsequent
+                # analyses remain fully local until the daily refresh.
+                ready = cache.clone()
             if not ready or not cache._is_repo_cloned():
                 raise RuntimeError(
                     f"Required analysis repository is unavailable: {name} "
                     f"({cache.clone_url})"
                 )
-            if not cache.fetch_full_history():
+            if update or not was_cloned:
+                history_ready = cache.fetch_full_history()
+            else:
+                history_ready = not (cache.cache_dir / ".git" / "shallow").exists()
+            if not history_ready:
                 raise RuntimeError(
                     f"Required analysis repository has incomplete history: {name} "
                     f"({cache.cache_dir})"
@@ -967,107 +1042,16 @@ def ensure_analysis_repos_ready(*, update: bool = True) -> dict[str, str]:
 
 
 def ensure_repo_cloned() -> bool:
-    """确保仓库已克隆（包含完整历史和 tags）"""
+    """Check local readiness without performing network I/O in API callers."""
     cache = get_github_cache()
-    # 直接进行完整克隆
-    return cache.clone()
+    return cache._is_repo_cloned()
 
 
-def update_repo() -> bool:
-    """更新仓库到最新（包含完整历史和 tags）"""
-    cache = get_github_cache()
-    return cache.pull()
-
-
-def rebuild_repo() -> bool:
-    """删除并重新克隆仓库（用于修复损坏的缓存或获取完整历史）"""
-    cache = get_github_cache()
-
-    logger.info(f"Cache directory: {cache.cache_dir}")
-
-    # 删除旧目录
-    import shutil
-    if cache.cache_dir.exists():
-        logger.info(f"Removing old cache directory: {cache.cache_dir}")
-        try:
-            shutil.rmtree(cache.cache_dir)
-        except Exception as e:
-            logger.error(f"Failed to remove cache directory: {e}")
-            return False
-
-    # 重新克隆
-    logger.info("Starting fresh clone...")
-    return cache.clone()
-
-
-def fix_repo() -> bool:
-    """修复仓库（清理锁文件和 git 状态，无需重新克隆）"""
-    cache = get_github_cache()
-
-    logger.info(f"Attempting to fix cache directory: {cache.cache_dir}")
-
-    if not cache._is_repo_cloned():
-        logger.info("Repository not cloned, cloning instead")
-        return cache.clone()
-
-    # 清理锁文件
-    cache._cleanup_git_locks()
-
-    try:
-        env = cache._get_git_env()
-
-        # 清理所有本地修改
-        logger.info("Resetting local changes...")
-        subprocess.run(
-            ["git", "reset", "--hard", "HEAD"],
-            cwd=str(cache.cache_dir),
-            capture_output=True,
-            timeout=30,
-            env=env,
-        )
-
-        # 清理未跟踪文件
-        logger.info("Cleaning untracked files...")
-        subprocess.run(
-            ["git", "clean", "-fd"],
-            cwd=str(cache.cache_dir),
-            capture_output=True,
-            timeout=30,
-            env=env,
-        )
-
-        # 清理所有远程分支引用
-        logger.info("Pruning remote branches...")
-        subprocess.run(
-            ["git", "remote", "prune", "origin"],
-            cwd=str(cache.cache_dir),
-            capture_output=True,
-            timeout=30,
-            env=env,
-        )
-
-        # fetch 最新状态
-        logger.info("Fetching latest state...")
-        subprocess.run(
-            ["git", "fetch", "--all", "--prune"],
-            cwd=str(cache.cache_dir),
-            capture_output=True,
-            timeout=120,
-            env=env,
-        )
-
-        # 确保在 main 分支
-        logger.info("Checking out main branch...")
-        subprocess.run(
-            ["git", "checkout", "main"],
-            cwd=str(cache.cache_dir),
-            capture_output=True,
-            timeout=30,
-            env=env,
-        )
-
-        logger.info("Repository fixed successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to fix repository: {e}")
-        return False
+__all__ = [
+    "GitHubLocalCache",
+    "ensure_analysis_repos_ready",
+    "ensure_repo_cloned",
+    "get_github_cache",
+    "get_github_cache_for_repo",
+    "get_vllm_cache",
+]

@@ -359,6 +359,20 @@ class DailyFailureUpdateRequest(BaseModel):
     closure_time: datetime | None = None
 
 
+class DailyFailureBatchUpdateRequest(BaseModel):
+    """批量更新失败记录；未提交的字段保持原值。"""
+
+    processing_status: str | None = Field(
+        default=None,
+        pattern="^(未处理|处理中|已关闭)$",
+    )
+    problem_category: str | None = None
+    related_pr: str | None = None
+    notes: str | None = None
+    processing_time: datetime | None = None
+    closure_time: datetime | None = None
+
+
 class DailyFailureListResponse(BaseModel):
     """每日失败列表响应"""
     date: str

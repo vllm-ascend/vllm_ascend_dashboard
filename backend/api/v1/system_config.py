@@ -6,10 +6,11 @@ import logging
 import re
 from datetime import UTC
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import (
@@ -328,10 +329,10 @@ async def update_sync_config(
             )
 
     if project_dashboard_cache_interval_minutes is not None:
-        if project_dashboard_cache_interval_minutes < 1 or project_dashboard_cache_interval_minutes > 1440:
+        if project_dashboard_cache_interval_minutes != 1440:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Project Dashboard 缓存更新间隔必须在 1-1440 分钟之间",
+                detail="Git 仓库缓存固定每天更新一次（1440 分钟）",
             )
 
     if github_cache_dir is not None:
@@ -608,11 +609,11 @@ async def get_git_cache_status(
 
     # 获取默认仓库（vllm-ascend）的缓存状态
     ascend_cache = get_github_cache()
-    ascend_commit = ascend_cache.get_latest_commit()
+    ascend_commit = ascend_cache.get_latest_commit() if ascend_cache._is_repo_cloned() else None
 
     # 获取 vllm 仓库的缓存状态
     vllm_cache = get_github_cache_for_repo(owner="vllm-project", repo="vllm")
-    vllm_commit = vllm_cache.get_latest_commit()
+    vllm_commit = vllm_cache.get_latest_commit() if vllm_cache._is_repo_cloned() else None
 
     return {
         "repositories": {
@@ -621,6 +622,7 @@ async def get_git_cache_status(
                 "repo": ascend_cache.repo,
                 "latest_commit": ascend_commit,
                 "cache_dir": str(ascend_cache.cache_dir),
+                "mirror_dir": str(ascend_cache.mirror.mirror_dir) if ascend_cache.mirror else None,
                 "is_cloned": ascend_cache._is_repo_cloned(),
             },
             "vllm": {
@@ -628,6 +630,7 @@ async def get_git_cache_status(
                 "repo": vllm_cache.repo,
                 "latest_commit": vllm_commit,
                 "cache_dir": str(vllm_cache.cache_dir),
+                "mirror_dir": str(vllm_cache.mirror.mirror_dir) if vllm_cache.mirror else None,
                 "is_cloned": vllm_cache._is_repo_cloned(),
             },
         },
@@ -642,60 +645,53 @@ async def get_git_cache_status(
 async def sync_git_cache(
     current_user: Annotated[User, Depends(get_current_active_super_admin_user)],
     repo_type: str = Query("all", description="仓库类型: ascend, vllm, all"),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    同步 Git 缓存
+    """Queue a mirror refresh; API workers never perform Git/network I/O."""
+    if repo_type not in {"ascend", "vllm", "all"}:
+        raise HTTPException(status_code=400, detail="repo_type 必须是 ascend、vllm 或 all")
 
-    支持同步指定仓库或所有仓库
-    """
-    from infrastructure.clients.github_cache import (
-        get_github_cache,
-        get_github_cache_for_repo,
-    )
+    from infrastructure.tasks.task_manager import TaskManager
 
-    results = []
-
-    if repo_type == "all" or repo_type == "ascend":
-        ascend_cache = get_github_cache()
-        if not ascend_cache._is_repo_cloned():
-            success = ascend_cache.clone()
-            results.append({
-                "repo": "ascend",
-                "action": "clone",
-                "success": success,
-                "message": "克隆成功" if success else "克隆失败",
-            })
-        else:
-            success = ascend_cache.pull()
-            results.append({
-                "repo": "ascend",
-                "action": "pull",
-                "success": success,
-                "message": "更新成功" if success else "更新失败",
-            })
-
-    if repo_type == "all" or repo_type == "vllm":
-        vllm_cache = get_github_cache_for_repo(owner="vllm-project", repo="vllm")
-        if not vllm_cache._is_repo_cloned():
-            success = vllm_cache.clone()
-            results.append({
-                "repo": "vllm",
-                "action": "clone",
-                "success": success,
-                "message": "克隆成功" if success else "克隆失败",
-            })
-        else:
-            success = vllm_cache.pull()
-            results.append({
-                "repo": "vllm",
-                "action": "pull",
-                "success": success,
-                "message": "更新成功" if success else "更新失败",
-            })
-
+    node_ids = (
+        await db.execute(
+            text(
+                """
+                SELECT node_id FROM collector_heartbeats
+                WHERE running = 1 AND updated_at >= NOW() - INTERVAL 2 MINUTE
+                """
+            )
+        )
+    ).scalars().all()
+    targets = sorted({str(node_id) for node_id in node_ids if node_id}) or [""]
+    task_ids = []
+    request_id = str(uuid4())
+    for node_id in targets:
+        task_id = await TaskManager.create_task(
+            db,
+            "repo_cache_refresh",
+            {"repo_type": repo_type, "target_node": node_id or None},
+            f"repo_cache_refresh:manual:{repo_type}:{request_id}:{node_id or 'fallback'}",
+            required_capability=f"node:{node_id}" if node_id else "python",
+            priority=20,
+        )
+        if task_id:
+            task_ids.append(task_id)
+    await db.commit()
     return {
-        "success": all(r["success"] for r in results),
-        "results": results,
+        "success": True,
+        "status": "queued",
+        "task_id": task_ids[0] if task_ids else None,
+        "task_ids": task_ids,
+        "repo_type": repo_type,
+        "results": [
+            {
+                "repo": repo_type,
+                "action": "queued",
+                "success": True,
+                "message": "镜像更新任务已进入 Collector 队列",
+            }
+        ],
     }
 
 

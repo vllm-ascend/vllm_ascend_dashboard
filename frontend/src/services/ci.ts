@@ -258,6 +258,8 @@ export interface DailyFailureUpdateRequest {
   closure_time?: string | null
 }
 
+export type DailyFailureBatchUpdateRequest = Partial<DailyFailureUpdateRequest>
+
 /**
  * 获取每日失败 Job 列表（按天分组）
  * 不传日期范围则返回全部数据
@@ -286,11 +288,30 @@ export const updateFailureStatus = async (
 
 export const batchUpdateFailureStatus = async (
   ids: number[],
-  data: DailyFailureUpdateRequest
+  data: DailyFailureBatchUpdateRequest
 ): Promise<{ message: string; count: number }> => {
   const response = await api.put<{ message: string; count: number }>(
     `/ci/daily-failures/batch-status?${ids.map(id => `ids=${id}`).join('&')}`,
     data
+  )
+  return response.data
+}
+
+export interface BatchAnalyzeDailyFailuresResponse {
+  success: boolean
+  selected: number
+  queued: number
+  analyzing: number
+  completed: number
+  skipped: number
+  errors: string[]
+}
+
+export const batchAnalyzeDailyFailures = async (
+  ids: number[]
+): Promise<BatchAnalyzeDailyFailuresResponse> => {
+  const response = await api.post<BatchAnalyzeDailyFailuresResponse>(
+    `/ci/daily-failures/batch-analyze?${ids.map(id => `ids=${id}`).join('&')}`
   )
   return response.data
 }

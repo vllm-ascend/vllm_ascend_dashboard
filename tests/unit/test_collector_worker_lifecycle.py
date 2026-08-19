@@ -24,6 +24,8 @@ async def test_executor_success_marks_task_completed() -> None:
     )
     worker._complete_task = AsyncMock(return_value=True)
 
+    assert worker.capabilities == ["python", "node:collector-test"]
+
     await worker._run_task_with_lease(_context())
 
     executor.assert_awaited_once()

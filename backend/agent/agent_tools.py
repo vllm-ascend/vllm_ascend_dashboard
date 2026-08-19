@@ -343,13 +343,16 @@ def _agent_repo_path(repository: str = "vllm_ascend") -> Path:
         configured = os.environ.get("AGENT_REPO_PATH", "").strip()
         if configured:
             return Path(configured).resolve()
-        repo_name = f"{settings.GITHUB_OWNER}_{settings.GITHUB_REPO}"
+        from infrastructure.clients.github_cache import get_github_cache
+
+        return get_github_cache().cache_dir.resolve()
     else:
         configured = os.environ.get("AGENT_VLLM_REPO_PATH", "").strip()
         if configured:
             return Path(configured).resolve()
-        repo_name = "vllm-project_vllm"
-    return (Path(settings.DATA_DIR) / "repos" / repo_name).resolve()
+        from infrastructure.clients.github_cache import get_vllm_cache
+
+        return get_vllm_cache().cache_dir.resolve()
 
 
 def _valid_git_ref(value: str) -> bool:

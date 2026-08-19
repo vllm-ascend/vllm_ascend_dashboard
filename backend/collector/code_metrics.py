@@ -92,6 +92,9 @@ class CodeMetricsCollector:
         try:
             from infrastructure.clients.github_cache import get_github_cache_for_repo
             cache = get_github_cache_for_repo("vllm-project", "vllm-ascend")
+            worktree = cache.get_worktree("origin/main", purpose="code-metrics")
+            if worktree is not None:
+                return str(worktree)
             if hasattr(cache, 'repo_path'):
                 return cache.repo_path
             elif hasattr(cache, '_repo_path'):

@@ -95,6 +95,7 @@ class CollectorRunner:
             "test_board_sync",
             "coverage_sync",
             "code_heatmap_sync",
+            "repo_cache_refresh",
         }:
             from infrastructure.core.github_config import load_github_runtime_config
 
@@ -134,6 +135,8 @@ class CollectorRunner:
                 await self._run_resource_metrics_collect(ctx)
             elif task_type == "resource_metrics_cleanup":
                 await self._run_resource_metrics_cleanup(ctx)
+            elif task_type == "repo_cache_refresh":
+                await self._run_repo_cache_refresh(ctx, task_params)
             else:
                 raise ValueError(f"Unsupported collection task type: {task_type}")
         finally:
@@ -250,6 +253,23 @@ class CollectorRunner:
                 branch=str(task_params.get("branch", "main"))
             )
         logger.info("Code metrics task %d completed: %s", ctx.task_id, result)
+
+    async def _run_repo_cache_refresh(self, ctx: TaskContext, task_params: dict) -> None:
+        """Refresh both bare mirrors and their fixed main worktrees."""
+        from infrastructure.clients.github_cache import get_github_cache, get_vllm_cache
+
+        repo_type = str(task_params.get("repo_type", "all"))
+        caches = {"ascend": get_github_cache(), "vllm": get_vllm_cache()}
+        if repo_type not in {"ascend", "vllm", "all"}:
+            raise ValueError(f"unsupported repository cache type: {repo_type}")
+        selected = caches if repo_type == "all" else {repo_type: caches[repo_type]}
+        repositories = {}
+        for name, cache in selected.items():
+            ready = await asyncio.to_thread(cache.pull)
+            if not ready or not cache.fetch_full_history():
+                raise RuntimeError(f"repository mirror refresh failed: {name}")
+            repositories[name] = str(cache.cache_dir.resolve())
+        logger.info("Repository mirror refresh task %d completed: %s", ctx.task_id, repositories)
 
     async def _run_code_heatmap_sync(self, ctx: TaskContext, task_params: dict):
         """Synchronize the code heatmap via GitHub from the Collector role."""

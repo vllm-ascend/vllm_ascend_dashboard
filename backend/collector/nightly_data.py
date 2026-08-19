@@ -22,6 +22,7 @@ from infrastructure.persistence.models import (
     CIJob,
     CIResult,
     DailyFailureRecord,
+    JobFailureAnalysis,
     NightlyTestCase,
 )
 from infrastructure.persistence.run_attempts import (
@@ -33,7 +34,11 @@ from tooling.model_fo_mapping import (
     lookup_model_fo,
     seed_missing_model_fo_mappings,
 )
-from tooling.parsers.nightly_config_parser import NightlyConfigParser, load_model_fo_map
+from tooling.parsers.nightly_config_parser import (
+    CONFIG_PATH,
+    NightlyConfigParser,
+    load_model_fo_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,28 +51,15 @@ class NightlyDataCollector:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    def _get_parser(self) -> NightlyConfigParser:
-        """Return a parser backed by the shared disposable Git cache.
-
-        The cache is normally refreshed by the project-dashboard cache job.  A
-        clone is still ensured here because this task must also work when it is
-        the first Collector task executed after a clean deployment.
-        """
-
-        parser = NightlyConfigParser()
-        if parser.is_available:
-            return parser
-
+    def _get_cache(self):
+        """Return the bare mirror facade, bootstrapping a clean deployment."""
         cache = get_github_cache_for_repo(settings.GITHUB_OWNER, settings.GITHUB_REPO)
-        if not cache.clone():
+        if not cache._is_repo_cloned() and not cache.clone():
             raise RuntimeError(
                 "vllm-ascend repository cache is unavailable; "
                 f"expected {cache.cache_dir}"
             )
-        parser = NightlyConfigParser(repo_path=str(cache.cache_dir))
-        if not parser.is_available:
-            raise RuntimeError(f"nightly_config.yaml not found at {parser.config_file}")
-        return parser
+        return cache
 
     async def sync(self) -> dict[str, int]:
         """Run both stages in dependency order and return row counts."""
@@ -82,19 +74,22 @@ class NightlyDataCollector:
     async def snapshot_configs(self) -> int:
         """Snapshot active branches from ``nightly_config.yaml``."""
 
-        parser = self._get_parser()
+        cache = self._get_cache()
         seed_count = await seed_missing_model_fo_mappings(self.db, load_model_fo_map())
         fo_map = await load_model_fo_mappings(self.db)
         today = datetime.now(BEIJING_TZ).date()
-        branches = parser.get_active_branches()
+        branches = cache.get_remote_branches("releases/")
         target_branches = ["main", *(b for b in branches if b.startswith("releases/"))]
 
         total = 0
         for branch in target_branches:
-            if not parser.checkout_branch(branch):
-                logger.warning("Unable to checkout Nightly config branch %s", branch)
+            content = cache.get_file_content(CONFIG_PATH, branch)
+            if content is None:
+                logger.warning("Unable to read Nightly config at ref %s", branch)
                 continue
-            cases = parser.parse(report_date=today.isoformat(), source_branch=branch)
+            cases = NightlyConfigParser.parse_content(
+                content, report_date=today.isoformat(), source_branch=branch
+            )
             for case in cases:
                 result = await self.db.execute(
                     select(NightlyTestCase).where(
@@ -232,9 +227,40 @@ class NightlyDataCollector:
             (record.run_id, record.workflow_name, record.job_name): record
             for record in existing_records
         }
+        existing_by_key = {
+            (
+                str(record.report_date),
+                record.source_branch,
+                record.workflow_name,
+                record.job_name,
+            ): record
+            for record in existing_records
+        }
+
+        # Failure analysis and daily materialization can finish in either
+        # order. Load completed categories once to avoid an N+1 query while
+        # enriching newly-created and existing daily records.
+        tracked_job_ids = {job.job_id for job in tracked_jobs if job.job_id is not None}
+        analyses_by_job_id: dict[int, JobFailureAnalysis] = {}
+        analyses_by_run_job: dict[tuple[int, str, str], JobFailureAnalysis] = {}
+        if tracked_job_ids:
+            analysis_result = await self.db.execute(
+                select(JobFailureAnalysis).where(
+                    JobFailureAnalysis.job_id.in_(tracked_job_ids),
+                    JobFailureAnalysis.analysis_status.in_(["completed", "reused"]),
+                )
+            )
+            for analysis in analysis_result.scalars().all():
+                if not analysis.problem_category:
+                    continue
+                analyses_by_job_id[analysis.job_id] = analysis
+                analyses_by_run_job[
+                    (analysis.run_id, analysis.workflow_name, analysis.job_name)
+                ] = analysis
 
         new_count = 0
         corrected_count = 0
+        category_sync_count = 0
         for job in tracked_jobs:
             report_date = self._report_date_for_job(
                 job,
@@ -261,22 +287,32 @@ class NightlyDataCollector:
                 # ``Build image`` and ``Remove node taints``.
                 continue
 
-            if key in existing_keys:
-                continue
-
             # The first sync may have used the job start date.  When the job
             # later gets its completion timestamp, find that materialized
             # row by its stable GitHub job identity and move only its date.
             # This preserves all fields entered by the user in the tracker.
-            existing = existing_by_job_id.get(job.job_id)
+            existing = existing_by_key.get(key)
+            if existing is None:
+                existing = existing_by_job_id.get(job.job_id)
             if existing is None:
                 existing = existing_by_run_job.get(
                     (job.run_id, job.workflow_name, job.job_name)
                 )
+
+            analysis = analyses_by_job_id.get(job.job_id)
+            if analysis is None:
+                analysis = analyses_by_run_job.get(
+                    (job.run_id, job.workflow_name, job.job_name)
+                )
+            problem_category = analysis.problem_category if analysis else None
+
             if existing is not None:
                 if str(existing.report_date) != report_date:
                     existing.report_date = date.fromisoformat(report_date)
                     corrected_count += 1
+                if problem_category and existing.problem_category != problem_category:
+                    existing.problem_category = problem_category
+                    category_sync_count += 1
                 existing_keys.add(key)
                 continue
 
@@ -304,6 +340,7 @@ class NightlyDataCollector:
                 owner=snapshot.owner,
                 deployment_type=snapshot.deployment_type,
                 processing_status="未处理",
+                problem_category=problem_category,
                 github_job_url=github_url,
             )
             existing_keys.add(key)
@@ -312,12 +349,14 @@ class NightlyDataCollector:
             existing_by_run_job[(job.run_id, job.workflow_name, job.job_name)] = record
             new_count += 1
 
-        if new_count or corrected_count:
+        if new_count or corrected_count or category_sync_count:
             await self.db.commit()
         logger.info(
-            "Daily failure materialization completed: %d new, %d corrected records from %d tracked jobs",
+            "Daily failure materialization completed: %d new, %d corrected, "
+            "%d categories synced from %d tracked jobs",
             new_count,
             corrected_count,
+            category_sync_count,
             len(tracked_jobs),
         )
         return new_count

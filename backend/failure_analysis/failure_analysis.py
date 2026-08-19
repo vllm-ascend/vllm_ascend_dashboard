@@ -13,6 +13,7 @@ from infrastructure.core.config import settings
 from infrastructure.persistence.models import (
     CIJob,
     CIResult,
+    DailyFailureRecord,
     JobFailureAnalysis,
     ProjectDashboardConfig,
 )
@@ -37,6 +38,54 @@ class FailureAnalysisService:
 
     def __init__(self):
         self.file_store = FailureAnalysisFileStore()
+
+    @staticmethod
+    async def _sync_problem_category_to_daily_failure(
+        db: AsyncSession,
+        *,
+        job_id: int,
+        run_id: int,
+        workflow_name: str,
+        job_name: str,
+        problem_category: str | None,
+    ) -> int:
+        """Copy an analysis category to its materialized daily failure row.
+
+        GitHub's job id is the stable identity. The run/workflow/job tuple is
+        only a compatibility fallback for historical rows without ``job_id``.
+        """
+        category = str(problem_category or "").strip()
+        if not category:
+            return 0
+
+        result = await db.execute(
+            select(DailyFailureRecord).where(DailyFailureRecord.job_id == job_id)
+        )
+        records = result.scalars().all()
+        if not records:
+            fallback_result = await db.execute(
+                select(DailyFailureRecord).where(
+                    DailyFailureRecord.job_id.is_(None),
+                    DailyFailureRecord.run_id == run_id,
+                    DailyFailureRecord.workflow_name == workflow_name,
+                    DailyFailureRecord.job_name == job_name,
+                )
+            )
+            records = fallback_result.scalars().all()
+
+        changed = 0
+        for record in records:
+            if record.problem_category != category:
+                record.problem_category = category
+                changed += 1
+        if changed:
+            logger.info(
+                "Synced failure-analysis category %r to %d daily record(s) for job %s",
+                category,
+                changed,
+                job_id,
+            )
+        return changed
 
     @staticmethod
     def _data_root() -> Path:
@@ -193,7 +242,12 @@ class FailureAnalysisService:
         job = result.scalar_one_or_none()
         if not job:
             raise ValueError(f"CIJob with job_id={job_id} not found")
-        if job.conclusion not in ("failure", "cancelled"):
+        if job.conclusion not in (
+            "failure",
+            "timed_out",
+            "startup_failure",
+            "cancelled",
+        ):
             raise ValueError(f"CIJob {job_id} conclusion is '{job.conclusion}', not a failed/cancelled job")
 
         existing_stmt = select(JobFailureAnalysis).where(
@@ -202,6 +256,16 @@ class FailureAnalysisService:
         existing_result = await db.execute(existing_stmt)
         existing = existing_result.scalar_one_or_none()
         if existing and existing.analysis_status in ("completed", "reused") and not force:
+            changed = await self._sync_problem_category_to_daily_failure(
+                db,
+                job_id=job_id,
+                run_id=job.run_id,
+                workflow_name=job.workflow_name,
+                job_name=job.job_name,
+                problem_category=existing.problem_category,
+            )
+            if changed:
+                await db.commit()
             return existing
 
         fingerprint = self.compute_failure_fingerprint(job)
@@ -236,6 +300,14 @@ class FailureAnalysisService:
                 target.triggered_by = triggered_by
                 if target not in db:
                     db.add(target)
+                await self._sync_problem_category_to_daily_failure(
+                    db,
+                    job_id=job_id,
+                    run_id=job.run_id,
+                    workflow_name=job.workflow_name,
+                    job_name=job.job_name,
+                    problem_category=target.problem_category,
+                )
                 await db.commit()
                 await db.refresh(target)
                 return target
@@ -408,6 +480,15 @@ class FailureAnalysisService:
             analysis.prompt_tokens = None  # CLI 妯″紡涓嶅彲鐢?
             analysis.completion_tokens = None
             analysis.generation_time_seconds = int(llm_result.duration_seconds)
+
+            await self._sync_problem_category_to_daily_failure(
+                db,
+                job_id=job_id,
+                run_id=job.run_id,
+                workflow_name=job.workflow_name,
+                job_name=job.job_name,
+                problem_category=analysis.problem_category,
+            )
 
             await db.commit()
             await db.refresh(analysis)
@@ -1112,9 +1193,45 @@ class FailureAnalysisService:
             lines.append(commit_diff)
 
         # 纭繚鏈湴 Git 浠撳簱宸?clone
-        from infrastructure.clients.github_cache import ensure_analysis_repos_ready
-        analysis_repos = await asyncio.to_thread(ensure_analysis_repos_ready, update=True)
-        analysis_repos["vllm_ascend"]
+        from infrastructure.clients.github_cache import (
+            ensure_analysis_repos_ready,
+            get_github_cache,
+            get_vllm_cache,
+        )
+        # Repositories are refreshed by the daily Scheduler job. A failure
+        # analysis uses the persistent snapshot so transient GitHub/DNS
+        # failures cannot abort an otherwise self-contained analysis.
+        source_warning = ""
+        source_repositories_ready = True
+        try:
+            analysis_repos = await asyncio.to_thread(
+                ensure_analysis_repos_ready, update=False
+            )
+        except RuntimeError as exc:
+            # Logs, steps and artifacts remain useful evidence. Repository
+            # availability must not turn a diagnosable CI failure into a dead
+            # collection task.
+            ascend_cache = get_github_cache()
+            vllm_cache = get_vllm_cache()
+            analysis_repos = {
+                "vllm_ascend": str(ascend_cache.cache_dir.resolve()),
+                "vllm": str(vllm_cache.cache_dir.resolve()),
+            }
+            source_repositories_ready = ascend_cache._is_repo_cloned()
+            source_warning = f"源码镜像当前不可用，已降级为日志分析：{exc}"
+
+        if tested_commit and source_repositories_ready:
+            branch_hint = tested_branch or (ci_result.branch if ci_result else None)
+            target_ready = await asyncio.to_thread(
+                get_github_cache().ensure_ref,
+                tested_commit,
+                branch=branch_hint,
+            )
+            if not target_ready:
+                source_warning = (
+                    f"本地镜像缺少被测提交 {tested_commit}，且定向补充失败；"
+                    "本次仅使用日志、步骤和 Artifact 证据。"
+                )
         ref_value = tested_commit or (ci_result.head_sha if ci_result and ci_result.head_sha else "main")
 
         # 棰勬媺鍙栨墍鏈夊彲鐢ㄦ棩蹇楀埌鏈湴锛孋LI 鍙鏈湴鏂囦欢涓?curl
@@ -1141,6 +1258,8 @@ class FailureAnalysisService:
                 lines.append(f"- Run 全部 job 列表：`{logs['jobs_list']}`，用于定位多节点/worker job 日志")
         lines.append("- Annotations、Steps、历史对比、Commit Diff：下方已预加载")
         lines.append("")
+        if source_warning:
+            lines.append(f"- **源码证据限制**：{source_warning}")
         lines.append("**源码分析工具建议：**")
         lines.append("  grep_content(pattern, log_path)               -> 先定位关键日志行号")
         lines.append("  read_log_excerpt(log_path, start, end)        -> 按行号读取失败附近片段；大日志禁止反复整文件读取")

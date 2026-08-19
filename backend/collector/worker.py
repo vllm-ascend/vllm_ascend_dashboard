@@ -57,7 +57,7 @@ class CollectorWorker:
         drain_timeout: int = 300,
     ):
         self.node_id = node_id
-        self.capabilities = capabilities
+        self.capabilities = list(dict.fromkeys([*capabilities, f"node:{node_id}"]))
         self._session_factory = db_session_factory
         self._task_executor = task_executor or self._execute_with_lease
         self._max_concurrent = max_concurrent

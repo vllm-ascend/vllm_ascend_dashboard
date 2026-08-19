@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from collector.nightly_data import NightlyDataCollector
+from tooling.parsers.nightly_config_parser import NightlyConfigParser
 
 
 def _snapshot(*, report_date: str, branch: str = "main", workflow: str = "Nightly-A3", job_name: str, test_model: str):
@@ -118,6 +119,24 @@ def test_source_branch_prefers_workflow_branch_over_display_name():
         == "releases/v0.26.0rc"
     )
 
+
+def test_nightly_yaml_parses_from_explicit_ref_content_without_checkout():
+    cases = NightlyConfigParser.parse_content(
+        """
+a3:
+  single_node:
+    test_config:
+      - name: single-node-main
+        config_file_path: Qwen.yaml
+        os: linux
+""",
+        report_date="2026-08-19",
+        source_branch="releases/v1",
+    )
+
+    assert [(case.workflow, case.name, case.model_path) for case in cases] == [
+        ("Nightly-A3", "single-node-main", "Qwen.yaml")
+    ]
 
 def test_source_branch_uses_job_payload_when_workflow_is_missing():
     job = SimpleNamespace(

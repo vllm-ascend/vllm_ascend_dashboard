@@ -519,7 +519,7 @@ function SystemConfig() {
       const { getSystemConfig } = await import('../services/systemConfig')
       const data = await getSystemConfig()
       setGithubCacheDir(data.sync_config.github_cache_dir || '')
-      setProjectDashboardCacheInterval(data.sync_config.project_dashboard_cache_interval_minutes || 60)
+      setProjectDashboardCacheInterval(data.sync_config.project_dashboard_cache_interval_minutes || 1440)
     } catch (error: any) {
       console.error('Failed to load GitHub cache dir:', error)
     }
@@ -2626,9 +2626,9 @@ function SystemConfig() {
             name="project_dashboard_cache_interval_minutes"
             label="缓存更新间隔（分钟）"
             rules={[{ required: true, message: '请输入缓存更新间隔' }]}
-            extra="Project Dashboard Git 仓库缓存更新间隔，范围 1-1440 分钟，默认 60 分钟"
+            extra="Git 仓库缓存固定每天更新一次；失败分析直接使用本地快照"
           >
-            <InputNumber min={1} max={1440} style={{ width: '100%' }} />
+            <InputNumber min={1440} max={1440} disabled style={{ width: '100%' }} />
           </Form.Item>
 
           <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>

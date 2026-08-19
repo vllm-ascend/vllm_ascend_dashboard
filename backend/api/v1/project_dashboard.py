@@ -4,8 +4,10 @@ Project Dashboard API 路由
 """
 import logging
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_active_admin_user, get_current_user
@@ -17,7 +19,7 @@ from contracts.schemas import (
     VersionQualityReportRequest,
 )
 from infrastructure.clients.github_api import get_github_api_service
-from infrastructure.clients.github_cache import ensure_repo_cloned, get_github_cache, update_repo
+from infrastructure.clients.github_cache import ensure_repo_cloned, get_github_cache
 from infrastructure.db.base import get_db
 from infrastructure.persistence.models import User
 from project_dashboard.service import get_project_dashboard_service
@@ -870,53 +872,80 @@ async def update_dashboard_config(
         )
 
 
+async def _queue_ascend_mirror_refresh(
+    db: AsyncSession,
+    *,
+    reason: str,
+    priority: int,
+) -> list[int]:
+    """Queue one refresh for every live Collector node."""
+    from infrastructure.tasks.task_manager import TaskManager
+
+    node_ids = (
+        await db.execute(
+            text(
+                """
+                SELECT node_id FROM collector_heartbeats
+                WHERE running = 1 AND updated_at >= NOW() - INTERVAL 2 MINUTE
+                """
+            )
+        )
+    ).scalars().all()
+    targets = sorted({str(node_id) for node_id in node_ids if node_id}) or [""]
+    request_id = str(uuid4())
+    task_ids: list[int] = []
+    for node_id in targets:
+        task_id = await TaskManager.create_task(
+            db,
+            "repo_cache_refresh",
+            {"repo_type": "ascend", "target_node": node_id or None},
+            f"repo_cache_refresh:{reason}:{request_id}:{node_id or 'fallback'}",
+            required_capability=f"node:{node_id}" if node_id else "python",
+            priority=priority,
+        )
+        if task_id:
+            task_ids.append(task_id)
+    await db.commit()
+    return task_ids
+
+
 @router.post("/cache/update")
 async def update_local_cache(
-    current_user: Annotated[User, Depends(get_current_active_admin_user)]
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
+    db: AsyncSession = Depends(get_db),
 ):
     """
     手动更新本地 git 仓库缓存
 
     仅管理员可操作
     """
-    success = update_repo()
-
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update local repository cache",
-        )
+    task_ids = await _queue_ascend_mirror_refresh(
+        db, reason="project-dashboard", priority=20
+    )
 
     return {
         "success": True,
-        "message": "Local repository cache updated successfully",
+        "status": "queued",
+        "task_id": task_ids[0] if task_ids else None,
+        "task_ids": task_ids,
+        "message": "Repository mirror refresh queued",
     }
 
 
 @router.post("/cache/rebuild")
 async def rebuild_local_cache(
-    current_user: Annotated[User, Depends(get_current_active_admin_user)]
+    current_user: Annotated[User, Depends(get_current_active_admin_user)],
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    删除并重新克隆本地 git 仓库缓存
-
-    用于修复损坏的缓存或获取完整的 git 历史
-
-    仅管理员可操作
-    """
-    from infrastructure.clients.github_cache import rebuild_repo
-
-    success = rebuild_repo()
-
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to rebuild local repository cache",
-        )
+    """Compatibility endpoint: queue a non-destructive mirror refresh."""
+    task_ids = await _queue_ascend_mirror_refresh(db, reason="repair", priority=30)
 
     return {
         "success": True,
-        "message": "Local repository cache rebuilt successfully. This may take several minutes.",
+        "status": "queued",
+        "task_id": task_ids[0] if task_ids else None,
+        "task_ids": task_ids,
+        "message": "Repository mirror refresh/verification queued",
     }
 
 
@@ -925,25 +954,13 @@ async def fix_github_cache(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Fix local GitHub repository cache without full reclone
-
-    This cleans up lock files, resets local changes, and fetches latest state.
-    Much faster than rebuilding the entire repository.
-
-    Admin only
-    """
-    from infrastructure.clients.github_cache import fix_repo
-
-    success = fix_repo()
-
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fix local repository cache",
-        )
+    """Compatibility endpoint: queue a non-destructive mirror refresh."""
+    task_ids = await _queue_ascend_mirror_refresh(db, reason="fix", priority=30)
 
     return {
         "success": True,
-        "message": "Local repository cache fixed successfully",
+        "status": "queued",
+        "task_id": task_ids[0] if task_ids else None,
+        "task_ids": task_ids,
+        "message": "Repository mirror refresh/verification queued",
     }

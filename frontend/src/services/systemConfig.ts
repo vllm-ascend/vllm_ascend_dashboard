@@ -12,6 +12,7 @@ export interface GitRepoStatus {
     date: string
   } | null
   cache_dir: string
+  mirror_dir?: string | null
   is_cloned: boolean
 }
 

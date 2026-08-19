@@ -170,10 +170,22 @@ export const useUpdateFailureStatus = () => {
 export const useBatchUpdateFailureStatus = () => {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ ids, data }: { ids: number[]; data: ciApi.DailyFailureUpdateRequest }) =>
+    mutationFn: ({ ids, data }: { ids: number[]; data: ciApi.DailyFailureBatchUpdateRequest }) =>
       ciApi.batchUpdateFailureStatus(ids, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['daily-failures'] })
+    },
+  })
+}
+
+export const useBatchAnalyzeDailyFailures = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: number[]) => ciApi.batchAnalyzeDailyFailures(ids),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['daily-failures'] })
+      queryClient.invalidateQueries({ queryKey: ['failure-analysis-list'] })
+      queryClient.invalidateQueries({ queryKey: ['job-failure-analysis'] })
     },
   })
 }

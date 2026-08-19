@@ -52,27 +52,35 @@ async def sync_support_matrix(
     """
     try:
         github_cache = get_github_cache()
-        # Fix #D: 确保本地 clone 是最新的
-        try:
-            github_cache.pull()
-        except Exception as e:
-            logger.warning(f"Failed to pull latest from upstream, using cached version: {e}")
-
-        repo_dir = github_cache.cache_dir
-
-        models_path = repo_dir / settings.SUPPORT_MATRIX_MODELS_PATH
-        features_path = repo_dir / settings.SUPPORT_MATRIX_FEATURES_PATH
-        compat_path = repo_dir / settings.SUPPORT_MATRIX_COMPAT_PATH
-
-        if not models_path.exists():
-            msg = f"supported_models.md not found in local clone: {models_path}"
+        # The central daily repository-refresh job owns network updates.
+        # Consumers use the persistent snapshot; only a clean deployment may
+        # bootstrap the cache here.
+        if not github_cache._is_repo_cloned() and not github_cache.clone():
+            msg = f"vllm-ascend repository cache is unavailable: {github_cache.cache_dir}"
             logger.error(msg)
             await _record_sync_status(db, success=False, error=msg, dry_run=dry_run)
             return {"success": False, "error": msg}
 
-        models_content = models_path.read_text(encoding="utf-8")
-        features_content = features_path.read_text(encoding="utf-8") if features_path.exists() else ""
-        compat_content = compat_path.read_text(encoding="utf-8") if compat_path.exists() else ""
+        models_content = github_cache.get_file_content(
+            settings.SUPPORT_MATRIX_MODELS_PATH, "origin/main"
+        )
+        features_content = github_cache.get_file_content(
+            settings.SUPPORT_MATRIX_FEATURES_PATH, "origin/main"
+        )
+        compat_content = github_cache.get_file_content(
+            settings.SUPPORT_MATRIX_COMPAT_PATH, "origin/main"
+        )
+
+        if models_content is None:
+            msg = (
+                "supported_models.md not found in origin/main: "
+                f"{settings.SUPPORT_MATRIX_MODELS_PATH}"
+            )
+            logger.error(msg)
+            await _record_sync_status(db, success=False, error=msg, dry_run=dry_run)
+            return {"success": False, "error": msg}
+        features_content = features_content or ""
+        compat_content = compat_content or ""
 
         upstream_models = parse_supported_models(models_content)
         upstream_features = parse_supported_features(features_content)

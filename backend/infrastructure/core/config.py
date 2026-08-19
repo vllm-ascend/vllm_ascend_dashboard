@@ -97,8 +97,10 @@ class Settings(BaseSettings):
     PR_PIPELINE_INCREMENTAL_LOOKBACK_MINUTES: int = 15
 
     # Project Dashboard 配置
-    PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES: int = 60  # Project Dashboard Git 仓库缓存更新间隔（分钟），默认 60 分钟
-    GITHUB_CACHE_DIR: str = ""  # GitHub 本地缓存目录，默认为根目录 data/repos/
+    # Git repositories are persistent analysis inputs. Refreshing them once a
+    # day is sufficient; individual analyses must use the local snapshot.
+    PROJECT_DASHBOARD_CACHE_INTERVAL_MINUTES: int = 1440
+    GITHUB_CACHE_DIR: str = ""  # Git 镜像/worktree 存储根目录，默认使用 DATA_DIR
 
     # External coverage.py artifact synchronization. The upstream CI format
     # remains unchanged; the collector reads coverage.tar and writes the

@@ -19,6 +19,7 @@ from contracts.schemas import (
     CIStats,
     CISyncResponse,
     CITrend,
+    DailyFailureBatchUpdateRequest,
     DailyFailureJob,
     DailyFailureListResponse,
     DailyFailureStats,
@@ -1147,7 +1148,12 @@ async def analyze_failed_job(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"CIJob with job_id={job_id} not found")
-    if job.conclusion not in ("failure", "cancelled"):
+    if job.conclusion not in (
+        "failure",
+        "timed_out",
+        "startup_failure",
+        "cancelled",
+    ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Job conclusion is '{job.conclusion}', not a failed job")
 
     # 2. 检查已有记录
@@ -1156,6 +1162,7 @@ async def analyze_failed_job(
     ).order_by(JobFailureAnalysis.id.desc()).limit(1)
     existing_result = await db.execute(existing_stmt)
     existing = existing_result.scalar_one_or_none()
+    service = FailureAnalysisService()
 
     # 2a. 分析进行中 → 直接返回，让前端轮询（force 也不允许重复提交）
     if existing and existing.analysis_status == "analyzing":
@@ -1163,11 +1170,20 @@ async def analyze_failed_job(
 
     # 2b. 已完成且非 force → 直接返回缓存
     if existing and existing.analysis_status in ("completed", "reused") and not force:
+        changed = await service._sync_problem_category_to_daily_failure(
+            db,
+            job_id=job_id,
+            run_id=job.run_id,
+            workflow_name=job.workflow_name,
+            job_name=job.job_name,
+            problem_category=existing.problem_category,
+        )
+        if changed:
+            await db.commit()
         return existing
 
     # 3. 创建或复用 "analyzing" 占位记录，立即返回。强制重跑时
     # 保留同一行和 share URL，避免 DELETE 锁冲突及前端轮询旧 ID。
-    service = FailureAnalysisService()
     fingerprint = service.compute_failure_fingerprint(job)
     if existing:
         placeholder = existing
@@ -1211,6 +1227,74 @@ async def analyze_failed_job(
     # Preserve the existing API contract: the caller receives the durable
     # placeholder and can poll the normal analysis endpoint for completion.
     return placeholder
+
+
+@router.post("/daily-failures/batch-analyze")
+async def batch_analyze_daily_failures(
+    ids: list[int],
+    current_user: CurrentAdminUser,
+    db: DbSession,
+):
+    """Queue failure analysis for explicitly selected daily failure rows."""
+    if not ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ids 不能为空",
+        )
+    unique_ids = list(dict.fromkeys(ids))
+    if len(unique_ids) > 50:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="单次最多分析 50 条记录",
+        )
+
+    result = await db.execute(
+        select(DailyFailureRecord).where(DailyFailureRecord.id.in_(unique_ids))
+    )
+    records = result.scalars().all()
+    if len(records) != len(unique_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="部分每日失败记录不存在",
+        )
+
+    queued = 0
+    analyzing = 0
+    completed = 0
+    skipped = 0
+    errors: list[str] = []
+    seen_job_ids: set[int] = set()
+    for record in records:
+        if not record.job_id or record.job_id in seen_job_ids:
+            skipped += 1
+            continue
+        seen_job_ids.add(record.job_id)
+        try:
+            analysis = await analyze_failed_job(
+                record.job_id,
+                current_user,
+                db,
+                False,
+            )
+            if analysis.analysis_status in ("completed", "reused"):
+                completed += 1
+            elif analysis.analysis_status == "analyzing" and analysis.analysis_phase != "queued":
+                analyzing += 1
+            else:
+                queued += 1
+        except HTTPException as exc:
+            skipped += 1
+            errors.append(f"{record.job_name}: {exc.detail}")
+
+    return {
+        "success": True,
+        "selected": len(unique_ids),
+        "queued": queued,
+        "analyzing": analyzing,
+        "completed": completed,
+        "skipped": skipped,
+        "errors": errors[:10],
+    }
 
 
 @router.post("/failure-analysis/cancel/{job_id}")
@@ -1726,7 +1810,7 @@ async def update_failure_status(
 @router.put("/daily-failures/batch-status")
 async def batch_update_failure_status(
     ids: list[int],
-    update: DailyFailureUpdateRequest,
+    update: DailyFailureBatchUpdateRequest,
     current_user: CurrentUser,
     db: DbSession,
 ):
@@ -1735,6 +1819,9 @@ async def batch_update_failure_status(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ids 不能为空")
     if len(ids) > 200:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="单次最多 200 条")
+    update_fields = update.model_fields_set
+    if not update_fields:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="至少选择一个更新字段")
 
     stmt = select(DailyFailureRecord).where(DailyFailureRecord.id.in_(ids))
     result = await db.execute(stmt)
@@ -1751,9 +1838,18 @@ async def batch_update_failure_status(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"没有权限更新 {rec.workflow_name}/{rec.job_name}（责任人：{rec.owner or '未配置'}）",
                 )
-        rec.processing_status = update.processing_status
-        rec.problem_category = update.problem_category
-        rec.notes = update.notes
+        if "processing_status" in update_fields:
+            rec.processing_status = update.processing_status
+        if "problem_category" in update_fields:
+            rec.problem_category = update.problem_category
+        if "related_pr" in update_fields:
+            rec.related_pr = update.related_pr
+        if "notes" in update_fields:
+            rec.notes = update.notes
+        if "processing_time" in update_fields:
+            rec.processing_time = update.processing_time
+        if "closure_time" in update_fields:
+            rec.closure_time = update.closure_time
         rec.updated_by = current_user.username
         rec.status_updated_at = now
 
@@ -1863,11 +1959,26 @@ async def sync_test_cases_from_yaml(
     db: DbSession,
 ):
     """从本地 vllm-ascend 仓库的 nightly YAML 配置同步用例到静态表"""
-    from tooling.parsers.nightly_config_parser import NightlyConfigParser, load_model_fo_map
+    from infrastructure.clients.github_cache import get_github_cache_for_repo
+    from infrastructure.core.config import settings
+    from tooling.parsers.nightly_config_parser import (
+        CONFIG_PATH,
+        NightlyConfigParser,
+        load_model_fo_map,
+    )
 
     seed_count = await seed_missing_model_fo_mappings(db, load_model_fo_map())
     fo_map = await load_model_fo_mappings(db)
-    parser = NightlyConfigParser()
+    cache = get_github_cache_for_repo(settings.GITHUB_OWNER, settings.GITHUB_REPO)
+    if not cache._is_repo_cloned():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "vllm-ascend Git 镜像尚未就绪，请先在系统配置中触发 "
+                "Git 缓存同步，并等待 Collector 完成"
+            ),
+        )
+    parser = NightlyConfigParser(repo_path=str(cache.cache_dir))
     info = parser.get_repo_info()
 
     if not info["available"]:
@@ -1879,19 +1990,21 @@ async def sync_test_cases_from_yaml(
 
     from datetime import date as date_type
 
-    parser = NightlyConfigParser()
     today = str(date_type.today())
 
     # 先做快照：从各活跃分支拉取 YAML
-    branches = parser.get_active_branches()
+    branches = cache.get_remote_branches("releases/")
     target_branches = ["main"] + [b for b in branches if b.startswith("releases/")]
     total_created = 0
     total_updated = 0
 
     for branch in target_branches:
-        if not parser.checkout_branch(branch):
+        content = cache.get_file_content(CONFIG_PATH, branch)
+        if content is None:
             continue
-        cases = parser.parse(report_date=today, source_branch=branch)
+        cases = NightlyConfigParser.parse_content(
+            content, report_date=today, source_branch=branch
+        )
         if not cases:
             continue
 

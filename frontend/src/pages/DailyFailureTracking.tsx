@@ -29,10 +29,14 @@ import {
   CloseCircleOutlined,
   CheckSquareOutlined,
 } from '@ant-design/icons'
-import { useDailyFailures, useUpdateFailureStatus, useBatchUpdateFailureStatus } from '../hooks/useCI'
+import {
+  useBatchUpdateFailureStatus,
+  useDailyFailures,
+  useUpdateFailureStatus,
+} from '../hooks/useCI'
 import { formatDuration, renderConclusionTag } from '../utils/ciRenderers'
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
-import type { DailyFailureJob } from '../services/ci'
+import type { DailyFailureBatchUpdateRequest, DailyFailureJob } from '../services/ci'
 import dayjs, { Dayjs } from 'dayjs'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceDot, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts'
 
@@ -301,6 +305,52 @@ function DailyFailureTracking() {
   const updateMutation = useUpdateFailureStatus()
   const batchUpdateMutation = useBatchUpdateFailureStatus()
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [batchEditing, setBatchEditing] = useState(false)
+  const [batchStatus, setBatchStatus] = useState<string | undefined>()
+  const [batchProblemCategory, setBatchProblemCategory] = useState<string | undefined>()
+  const [batchRelatedPr, setBatchRelatedPr] = useState<string | undefined>()
+  const [batchNotes, setBatchNotes] = useState<string | undefined>()
+  const [batchProcessingTime, setBatchProcessingTime] = useState<Dayjs | null | undefined>()
+  const [batchClosureTime, setBatchClosureTime] = useState<Dayjs | null | undefined>()
+
+  const openBatchUpdate = () => {
+    setBatchStatus(undefined)
+    setBatchProblemCategory(undefined)
+    setBatchRelatedPr(undefined)
+    setBatchNotes(undefined)
+    setBatchProcessingTime(undefined)
+    setBatchClosureTime(undefined)
+    setBatchEditing(true)
+  }
+
+  const handleBatchUpdate = async () => {
+    const update: DailyFailureBatchUpdateRequest = {}
+    if (batchStatus !== undefined) update.processing_status = batchStatus
+    if (batchProblemCategory !== undefined) update.problem_category = batchProblemCategory || null
+    if (batchRelatedPr !== undefined) update.related_pr = batchRelatedPr || null
+    if (batchNotes !== undefined) update.notes = batchNotes || null
+    if (batchProcessingTime !== undefined) {
+      update.processing_time = batchProcessingTime?.toISOString() || null
+    }
+    if (batchClosureTime !== undefined) {
+      update.closure_time = batchClosureTime?.toISOString() || null
+    }
+    if (Object.keys(update).length === 0) {
+      message.warning('请至少填写一个需要批量更新的字段')
+      return
+    }
+    try {
+      const result = await batchUpdateMutation.mutateAsync({
+        ids: selectedRowKeys.map(Number),
+        data: update,
+      })
+      message.success(`已更新 ${result.count} 条记录`)
+      setBatchEditing(false)
+      setSelectedRowKeys([])
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '批量更新失败')
+    }
+  }
 
   // Expose edit handler to column renderers
   ;(window as any).__openEditDailyFailure = (job: DailyFailureJob) => {
@@ -570,29 +620,28 @@ function DailyFailureTracking() {
       )}
 
       {displayMode === 'list' && <Card>
-        {selectedRowKeys.length > 0 && (
-          <div style={{ marginBottom: 12, padding: '8px 12px', background: '#e6f4ff', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Text strong>已选 {selectedRowKeys.length} 条</Text>
-            <Select
-              placeholder="批量更新状态"
-              style={{ width: 140 }}
-              onChange={(value) => {
-                batchUpdateMutation.mutate(
-                  { ids: selectedRowKeys as number[], data: { processing_status: value } },
-                  { onSuccess: () => { message.success(`已更新 ${selectedRowKeys.length} 条`); setSelectedRowKeys([]) },
-                    onError: (e: any) => message.error(e?.response?.data?.detail || '失败') }
-                )
-              }}
-              options={Object.entries(STATUS_CONFIG).map(([v, c]) => ({ label: c.label, value: v }))}
-            />
+        <div style={{ marginBottom: 12, padding: '8px 12px', background: '#f8fafc', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Text type={selectedRowKeys.length > 0 ? undefined : 'secondary'}>
+            已选 {selectedRowKeys.length} 条
+          </Text>
+          <Button
+            type="primary"
+            size="small"
+            icon={<EditOutlined />}
+            disabled={selectedRowKeys.length === 0}
+            onClick={openBatchUpdate}
+          >
+            批量更新
+          </Button>
+          {selectedRowKeys.length > 0 && (
             <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
-          </div>
-        )}
+          )}
+        </div>
         <Table
           columns={[...jobColumns, ...failureTimingColumns]}
           dataSource={allJobs}
           loading={isLoading}
-          rowKey={(record) => `${record._date}-${record.id}`}
+          rowKey="id"
           rowSelection={{
             selectedRowKeys,
             onChange: setSelectedRowKeys,
@@ -628,6 +677,89 @@ function DailyFailureTracking() {
           size="small"
         />
       </Drawer>
+
+      <Modal
+        title={<Space><EditOutlined /><span>批量更新（{selectedRowKeys.length} 条）</span></Space>}
+        open={batchEditing}
+        onOk={handleBatchUpdate}
+        onCancel={() => setBatchEditing(false)}
+        confirmLoading={batchUpdateMutation.isPending}
+        okText="保存"
+        cancelText="取消"
+        width={480}
+      >
+        <Text type="secondary">只更新填写的字段，未填写的字段保持原值。</Text>
+        <Space direction="vertical" size={16} style={{ width: '100%', marginTop: 16 }}>
+          <div>
+            <Text type="secondary">处理时间：</Text>
+            <DatePicker
+              value={batchProcessingTime}
+              onChange={setBatchProcessingTime}
+              showTime
+              allowClear
+              placeholder="不修改"
+              format="YYYY-MM-DD HH:mm:ss"
+              style={{ width: '100%', marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <Text type="secondary">闭环时间：</Text>
+            <DatePicker
+              value={batchClosureTime}
+              onChange={setBatchClosureTime}
+              showTime
+              allowClear
+              placeholder="不修改"
+              format="YYYY-MM-DD HH:mm:ss"
+              style={{ width: '100%', marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <Text type="secondary">处理状态：</Text>
+            <Select
+              value={batchStatus}
+              onChange={setBatchStatus}
+              allowClear
+              placeholder="不修改"
+              style={{ width: '100%', marginTop: 4 }}
+              options={Object.entries(STATUS_CONFIG).map(([value, config]) => ({
+                label: <Space>{config.icon}<span>{config.label}</span></Space>,
+                value,
+              }))}
+            />
+          </div>
+          <div>
+            <Text type="secondary">问题分类：</Text>
+            <Select
+              value={batchProblemCategory}
+              onChange={setBatchProblemCategory}
+              allowClear
+              placeholder="不修改"
+              style={{ width: '100%', marginTop: 4 }}
+              options={PROBLEM_CATEGORIES.map(category => ({ label: category, value: category }))}
+            />
+          </div>
+          <div>
+            <Text type="secondary">关联 PR：</Text>
+            <Input
+              value={batchRelatedPr}
+              onChange={(event) => setBatchRelatedPr(event.target.value)}
+              placeholder="不修改；填写如 1234"
+              style={{ marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <Text type="secondary">备注：</Text>
+            <TextArea
+              value={batchNotes}
+              onChange={(event) => setBatchNotes(event.target.value)}
+              placeholder="不修改"
+              rows={4}
+              style={{ marginTop: 4 }}
+            />
+          </div>
+        </Space>
+      </Modal>
 
       {/* 编辑处理状态弹窗 */}
       <Modal
