@@ -1,7 +1,9 @@
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from collector.nightly_data import NightlyDataCollector
+from infrastructure.persistence.models import DailyFailureRecord
 from tooling.parsers.nightly_config_parser import NightlyConfigParser
 
 
@@ -13,6 +15,33 @@ def _snapshot(*, report_date: str, branch: str = "main", workflow: str = "Nightl
         job_name=job_name,
         test_model=test_model,
     )
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def all(self):
+        return self.rows
+
+    def scalars(self):
+        return self
+
+
+class _FakeSession:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.added = []
+        self.commit_count = 0
+
+    async def execute(self, _statement):
+        return _FakeResult(next(self.responses))
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def commit(self):
+        self.commit_count += 1
 
 
 def test_match_snapshot_prefers_exact_report_date():
@@ -157,3 +186,49 @@ def test_source_branch_parses_display_name_only_for_legacy_data():
     )
 
     assert NightlyDataCollector._source_branch_for_job(job) == "main"
+
+
+def test_populate_daily_failure_records_adds_new_records_to_session():
+    now = datetime.now(UTC).replace(microsecond=0)
+    report_date = (now.astimezone(timezone(timedelta(hours=8)))).date().isoformat()
+    job_name = "single-node (main, MiniMax-M3-W8A8-A3.yaml) / MiniMax-M3-W8A8-A3"
+    job = SimpleNamespace(
+        job_id=123,
+        run_id=456,
+        workflow_name="Nightly-A3",
+        job_name=job_name,
+        conclusion="failure",
+        started_at=now,
+        completed_at=now,
+        duration_seconds=60,
+        hardware="A3",
+        data={"run_attempt": 1, "head_branch": "main"},
+    )
+    snapshot = SimpleNamespace(
+        report_date=report_date,
+        source_branch="main",
+        workflow_name="Nightly-A3",
+        job_name="MiniMax-M3-W8A8-A3",
+        test_model="MiniMax-M3-W8A8-A3.yaml",
+        display_name="MiniMax-M3-W8A8-A3",
+        model_fo="MiniMax-M3",
+        owner=None,
+        deployment_type="single-node",
+    )
+    db = _FakeSession(
+        [
+            [job],
+            [(456, now, "main", {"run_attempt": 1})],
+            [snapshot],
+            [],
+            [],
+        ]
+    )
+
+    count = asyncio.run(NightlyDataCollector(db).populate_daily_failure_records())
+
+    assert count == 1
+    assert db.commit_count == 1
+    assert len(db.added) == 1
+    assert isinstance(db.added[0], DailyFailureRecord)
+    assert db.added[0].job_id == 123

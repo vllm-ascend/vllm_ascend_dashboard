@@ -343,6 +343,7 @@ class NightlyDataCollector:
                 problem_category=problem_category,
                 github_job_url=github_url,
             )
+            self.db.add(record)
             existing_keys.add(key)
             if job.job_id is not None:
                 existing_by_job_id[job.job_id] = record
