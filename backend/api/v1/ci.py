@@ -1210,16 +1210,16 @@ async def analyze_failed_job(
     await db.commit()
     await db.refresh(placeholder)
 
-    # 4. Enqueue durable analysis work for a Collector worker.
-    from uuid import uuid4
-
+    # 4. Enqueue durable analysis work for a Collector worker.  The job ID is
+    # the stable dedupe identity; a random suffix allowed concurrent clicks to
+    # enqueue duplicate analyses for the same GitHub job and race on one row.
     from infrastructure.tasks.task_manager import TaskManager
 
     await TaskManager.create_task(
         db,
         "failure_analysis",
         {"job_id": job_id, "force": force, "triggered_by": "manual"},
-        f"failure_analysis:{job_id}:{uuid4()}",
+        f"failure_analysis:{job_id}",
         required_capability="python",
         priority=20,
     )

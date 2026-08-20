@@ -224,18 +224,30 @@ async def _cleanup_stale_analyses():
 
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with async_session() as db:
-            from sqlalchemy import or_, update
+            from sqlalchemy import and_, or_, update
 
             from infrastructure.persistence.models import JobFailureAnalysis
 
-            cutoff = datetime.now(UTC) - timedelta(hours=1)
+            # Use the last progress update rather than created_at.  A queued
+            # record may be old while its Collector task is actively running;
+            # using created_at would mark a healthy long-running analysis as
+            # failed during an unrelated API restart.
+            cutoff = datetime.now(UTC) - timedelta(hours=2)
+            stale_marker = or_(
+                JobFailureAnalysis.updated_at < cutoff,
+                and_(
+                    JobFailureAnalysis.updated_at.is_(None),
+                    JobFailureAnalysis.created_at < cutoff,
+                ),
+            )
 
-            # 1. 超时：超过 1 小时的标记为超时失败
+            # Only stale records are cleaned.  Recent rows are left alone so a
+            # backend restart cannot interrupt an analysis owned by Collector.
             result = await db.execute(
                 update(JobFailureAnalysis)
                 .where(
                     JobFailureAnalysis.analysis_status == "analyzing",
-                    JobFailureAnalysis.created_at < cutoff,
+                    stale_marker,
                     or_(
                         JobFailureAnalysis.analysis_phase.is_(None),
                         JobFailureAnalysis.analysis_phase != "completed",
@@ -243,29 +255,12 @@ async def _cleanup_stale_analyses():
                 )
                 .values(
                     analysis_status="failed",
-                    error_message="分析超时，启动时自动标记为失败",
+                    analysis_phase="failed",
+                    error_message="分析超时（超过 2 小时无进度），启动时自动标记为失败",
                 )
             )
             if result.rowcount:
                 logger.warning("Timed out %d stale analysis records", result.rowcount)
-
-            # 2. 重启：剩余 analyzing 记录（1 小时内的）均为重启中断
-            result = await db.execute(
-                update(JobFailureAnalysis)
-                .where(
-                    JobFailureAnalysis.analysis_status == "analyzing",
-                    or_(
-                        JobFailureAnalysis.analysis_phase.is_(None),
-                        JobFailureAnalysis.analysis_phase != "completed",
-                    ),
-                )
-                .values(
-                    analysis_status="failed",
-                    error_message="服务重启，分析中断",
-                )
-            )
-            if result.rowcount:
-                logger.warning("Restart-cleaned %d interrupted analysis records", result.rowcount)
 
             await db.commit()
     except Exception as e:

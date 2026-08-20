@@ -269,7 +269,19 @@ class FailureAnalysisService:
             return existing
 
         fingerprint = self.compute_failure_fingerprint(job)
-        llm_config = await self._get_llm_config(db)
+        try:
+            llm_config = await self._get_llm_config(db)
+        except Exception as exc:
+            # The API creates the placeholder before enqueueing this task.  If
+            # runtime configuration disappears before the Collector starts,
+            # close that placeholder instead of leaving it in analyzing.
+            if existing:
+                existing.analysis_status = "failed"
+                existing.analysis_phase = "failed"
+                existing.error_message = str(exc)
+                await db.commit()
+                return existing
+            raise
 
         # 鎸囩汗澶嶇敤锛堜粎 scheduler 瑙﹀彂锛屾墜鍔?force=true 璺宠繃锛?
         if not force:
@@ -312,27 +324,10 @@ class FailureAnalysisService:
                 await db.refresh(target)
                 return target
 
-        # 浠庢暟鎹簱璇诲彇 CLI 閰嶇疆锛堥粯璁ゅ€煎厹搴曪級
-        agent_config = await self._get_agent_config(db)
-        runtime = str(agent_config.get("runtime", "claude_cli")).strip().lower()
-        if runtime not in {"claude_cli", "custom_agent"}:
-            logger.warning("Unknown failure-analysis runtime %r; using claude_cli", runtime)
-            runtime = "claude_cli"
-        max_turns_val = max(3, min(int(agent_config.get("max_turns", 80)), 300))
-        timeout_val = max(60, min(int(agent_config.get("timeout_seconds", 1800)), 7200))
-        system_prompt = await self._get_system_prompt(db)
-        user_prompt = await self._build_job_context(
-            job,
-            db,
-            max_turns=max_turns_val,
-            timeout_seconds=timeout_val,
-            # The evidence pipeline must receive primary failure facts directly.
-            # A tool path alone allowed some investigations to finish without
-            # opening an otherwise valid downloaded Job log.
-            inline_logs=runtime == "custom_agent",
-        )
-
-        # 濡傛灉涔嬪墠鏈夊け璐?鍗′綇鐨勮褰曪紝澶嶇敤鑰屼笉鏄彃鍏ユ柊璁板綍锛堥伩鍏?UNIQUE 鍐茬獊锛?
+        # Create/update the durable analysis row before preparing evidence.  Log
+        # downloads and prompt construction can fail (for example when GitHub
+        # has already removed a job log); keeping this row inside the guarded
+        # section ensures the API never leaves it stuck in ``analyzing``.
         if existing:
             analysis = existing
             analysis.analysis_status = "analyzing"
@@ -355,6 +350,29 @@ class FailureAnalysisService:
         await db.refresh(analysis)
 
         try:
+            # Read runtime configuration and prepare the evidence inside the
+            # same failure boundary as the LLM call.  Previously
+            # ``_build_job_context`` ran before this ``try`` block, so a 404
+            # from GitHub left the placeholder permanently in ``analyzing``.
+            agent_config = await self._get_agent_config(db)
+            runtime = str(agent_config.get("runtime", "claude_cli")).strip().lower()
+            if runtime not in {"claude_cli", "custom_agent"}:
+                logger.warning("Unknown failure-analysis runtime %r; using claude_cli", runtime)
+                runtime = "claude_cli"
+            max_turns_val = max(3, min(int(agent_config.get("max_turns", 80)), 300))
+            timeout_val = max(60, min(int(agent_config.get("timeout_seconds", 1800)), 7200))
+            system_prompt = await self._get_system_prompt(db)
+            user_prompt = await self._build_job_context(
+                job,
+                db,
+                max_turns=max_turns_val,
+                timeout_seconds=timeout_val,
+                # The evidence pipeline must receive primary failure facts directly.
+                # A tool path alone allowed some investigations to finish without
+                # opening an otherwise valid downloaded Job log.
+                inline_logs=runtime == "custom_agent",
+            )
+
             provider_config = {
                 "provider": llm_config.provider,
                 "api_key": llm_config.decrypted_api_key,
@@ -2073,6 +2091,75 @@ class FailureAnalysisService:
         logger.info("PDF generated: %s", pdf_path)
         return str(pdf_path)
 
+    @staticmethod
+    def _extract_job_log_from_run_zip(
+        run_zip_path: Path,
+        *,
+        job_id: int,
+        job_name: str,
+        destination: Path,
+    ) -> bool:
+        """Recover a job log from the run-level archive when the job endpoint is gone.
+
+        GitHub's job-log endpoint can return 404/410 after the individual log blob
+        has been removed even though the run-level archive is still available.
+        Run archives normally use the job name as the top-level directory.  Only
+        an unambiguous name/ID match is extracted; we never use another matrix
+        job's log as a silent substitute.
+        """
+        import shutil
+        import zipfile
+
+        def normalize(value: str) -> str:
+            return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+        job_key = normalize(job_name)
+        job_tokens = set(job_key.split())
+        try:
+            with zipfile.ZipFile(run_zip_path) as archive:
+                members = [
+                    name for name in archive.namelist()
+                    if name and not name.endswith("/")
+                ]
+                scored: list[tuple[int, str]] = []
+                for member in members:
+                    member_key = normalize(member)
+                    score = 0
+                    if str(job_id) in member:
+                        score += 200
+                    if job_key and job_key in member_key:
+                        score += 100
+                    top_level = normalize(Path(member).parts[0])
+                    if job_key and top_level == job_key:
+                        score += 100
+                    if job_tokens:
+                        overlap = len(job_tokens & set(member_key.split()))
+                        if overlap >= max(2, (len(job_tokens) + 1) // 2):
+                            score += overlap
+                    if score:
+                        scored.append((score, member))
+
+                if not scored:
+                    return False
+                best_score = max(score for score, _ in scored)
+                selected = sorted(
+                    member for score, member in scored if score == best_score
+                )
+                # A weak token-only match is not safe for matrix jobs.
+                if best_score < 100:
+                    return False
+
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with destination.open("wb") as output:
+                    for member in selected:
+                        output.write(f"\n===== {member} =====\n".encode())
+                        with archive.open(member) as source:
+                            shutil.copyfileobj(source, output)
+                return destination.exists() and destination.stat().st_size > 0
+        except (OSError, zipfile.BadZipFile, KeyError) as exc:
+            logger.warning("Failed to extract job %s from run log ZIP %s: %s", job_id, run_zip_path, exc)
+            return False
+
     async def _download_all_logs(self, job: CIJob) -> dict[str, str | None]:
         """Download available logs to local files and return their paths."""
 
@@ -2089,7 +2176,8 @@ class FailureAnalysisService:
 
         result = {"job_log": None, "run_log_zip": None, "artifacts_dir": None, "jobs_list": None}
 
-        # 1. Job log
+        # 1. Job log.  GitHub may remove the individual blob while retaining the
+        # run archive, so a 404 is recorded and handled by the fallback below.
         job_log_path = log_dir / f"{job.job_id}.log"
         if job_log_path.exists() and job_log_path.stat().st_size == 0:
             job_log_path.unlink()
@@ -2119,26 +2207,58 @@ class FailureAnalysisService:
                     await asyncio.sleep(2 ** (attempt - 1))
         if job_log_path.exists() and job_log_path.stat().st_size > 0:
             result["job_log"] = str(job_log_path)
-        else:
-            detail = "; ".join(job_log_errors) or "no cached file and no download response"
-            logger.error("Required job log unavailable for job %s: %s", job.job_id, detail)
-            raise RuntimeError(
-                f"Required GitHub job log unavailable for job {job.job_id}: {detail}"
-            )
 
-        # 2. Run 鍏ㄩ儴鏃ュ織 ZIP
+        # 2. Run-level log ZIP fallback.  This is especially useful for expired
+        # or missing per-job blobs and for startup failures that never produced
+        # a standalone job log.
         run_zip_path = log_dir / f"run_{job.run_id}_logs.zip"
+        run_log_errors: list[str] = []
         if not run_zip_path.exists():
             run_url = f"https://api.github.com/repos/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/actions/runs/{job.run_id}/logs"
             try:
                 async with aiohttp.ClientSession(timeout=request_timeout) as session:
                     async with session.get(run_url, headers=headers) as resp:
                         if resp.status == 200:
-                            run_zip_path.write_bytes(await resp.read())
+                            payload = await resp.read()
+                            if payload:
+                                run_zip_path.write_bytes(payload)
+                            else:
+                                run_log_errors.append("run logs returned HTTP 200 with empty body")
+                        else:
+                            body = (await resp.text(errors="replace"))[:500]
+                            run_log_errors.append(f"run logs HTTP {resp.status}: {body}")
             except Exception as e:
+                run_log_errors.append(f"run logs {type(e).__name__}: {e}")
                 logger.warning("Failed to fetch run logs ZIP: %s", e)
         if run_zip_path.exists():
             result["run_log_zip"] = str(run_zip_path)
+            if not result["job_log"]:
+                recovered = await asyncio.to_thread(
+                    self._extract_job_log_from_run_zip,
+                    run_zip_path,
+                    job_id=job.job_id,
+                    job_name=job.job_name,
+                    destination=job_log_path,
+                )
+                if recovered:
+                    result["job_log"] = str(job_log_path)
+
+        if not result["job_log"]:
+            job_detail = "; ".join(job_log_errors) or "no cached file and no download response"
+            fallback_detail = "; ".join(run_log_errors) or (
+                "run archive unavailable or did not contain an unambiguous matching job log"
+            )
+            logger.error(
+                "Required job log unavailable for job %s after run-archive fallback: %s; %s",
+                job.job_id,
+                job_detail,
+                fallback_detail,
+            )
+            raise RuntimeError(
+                f"Required GitHub job log unavailable for job {job.job_id}; "
+                "the per-job log may have expired or been removed, and the run-level "
+                f"fallback could not recover it ({job_detail}; {fallback_detail})"
+            )
 
         # 3. Artifacts 鈥?涓嬭浇鍚庤嚜鍔ㄨВ鍘?
         artifacts_dir = log_dir / f"artifacts_{job.run_id}"
