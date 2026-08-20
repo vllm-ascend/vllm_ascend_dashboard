@@ -7,6 +7,7 @@ persists the normalized result in MySQL through ``ProjectDashboardConfig``.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import csv
 import hashlib
@@ -20,8 +21,9 @@ import tarfile
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import coverage
@@ -42,6 +44,8 @@ PR_BREADTH_KEY = "pr_pipeline_coverage_breadth"
 PR_LINES_KEY = "pr_pipeline_coverage_lines"
 SYNC_STATUS_KEY = "coverage_sync_status"
 GITHUB_ACTIONS_PREFIX = "/__w/vllm-ascend/vllm-ascend/"
+LINE_ANALYSIS_VERSION = "triton-jit-exclusion-v6"
+COVERAGE_SOURCE_PREFIX = "vllm-ascend/covstub/"
 
 _coverage_sync_lock: asyncio.Lock | None = None
 
@@ -389,34 +393,135 @@ def _process_tar_breadth(tar_path: Path, signature: str) -> dict[str, Any]:
     }
 
 
+def _is_triton_jit_decorator(node: ast.expr) -> bool:
+    """Return whether *node* is ``@triton.jit`` (with or without arguments)."""
+    target = node.func if isinstance(node, ast.Call) else node
+    return (
+        isinstance(target, ast.Attribute)
+        and target.attr == "jit"
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "triton"
+    )
+
+
+def _triton_jit_excluded_lines(source: str, filename: str) -> set[int]:
+    """Find complete source ranges for functions compiled by Triton.
+
+    ``coverage.py`` traces Python execution.  A ``@triton.jit`` function is
+    compiled and executed outside the Python interpreter, so including its
+    Python body in the denominator makes line coverage misleading.  The
+    function name is intentionally irrelevant: helpers and kernels are both
+    excluded when they carry the decorator.
+    """
+    tree = ast.parse(source, filename=filename)
+    excluded: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(_is_triton_jit_decorator(item) for item in node.decorator_list):
+            continue
+        start = min((item.lineno for item in node.decorator_list), default=node.lineno)
+        end = node.end_lineno or node.lineno
+        excluded.update(range(start, end + 1))
+    return excluded
+
+
 def _source_analysis(path: str, cache_dir: Path) -> tuple[set[int], set[int], set[tuple[int, int]], bool]:
     source_path = cache_dir / path
     if not source_path.is_file() or source_path.suffix != ".py":
         return set(), set(), set(), False
     try:
+        source = source_path.read_text(encoding="utf-8", errors="replace")
         parser = PythonParser(
-            text=source_path.read_text(encoding="utf-8", errors="replace"),
+            text=source,
             filename=str(source_path),
         )
         parser.parse_source()
-        statements = set(parser.statements) - set(getattr(parser, "excluded", set()))
-        return statements, set(getattr(parser, "excluded", set())), parser.arcs(), True
+        excluded = set(getattr(parser, "excluded", set()))
+        excluded.update(_triton_jit_excluded_lines(source, str(source_path)))
+        statements = set(parser.statements) - excluded
+        possible_arcs = {
+            arc
+            for arc in parser.arcs()
+            if abs(arc[0]) not in excluded and abs(arc[1]) not in excluded
+        }
+        return statements, excluded, possible_arcs, True
     except Exception as exc:
         logger.warning("Cannot analyze source file %s: %s", path, exc)
         return set(), set(), set(), False
+
+
+@contextmanager
+def _embedded_coverage_source(tar_path: Path) -> Iterator[Path | None]:
+    """Expose the exact source snapshot packaged alongside coverage data."""
+    temp_dir = tempfile.TemporaryDirectory(prefix="coverage-source-")
+    root = Path(temp_dir.name)
+    found = False
+    try:
+        with tarfile.open(tar_path, "r") as archive:
+            for member in archive:
+                if not member.isfile() or not member.name.startswith(COVERAGE_SOURCE_PREFIX):
+                    continue
+                relative = member.name[len(COVERAGE_SOURCE_PREFIX):]
+                parts = PurePosixPath(relative).parts
+                if not relative or PurePosixPath(relative).is_absolute() or ".." in parts:
+                    continue
+                source = archive.extractfile(member)
+                if source is None:
+                    continue
+                destination = root.joinpath(*parts)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with destination.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+                found = True
+        yield root if found else None
+    finally:
+        temp_dir.cleanup()
+
+
+@contextmanager
+def _coverage_source_tree(tar_path: Path) -> Iterator[tuple[Path, str | None, str]]:
+    """Select source that is available with the coverage archive.
+
+    The embedded ``covstub`` snapshot is the authoritative source because it
+    travels with the coverage data and does not require any CI-side metadata.
+    ``origin/main`` is used only when an archive has no embedded snapshot and
+    may produce an approximate denominator.
+    """
+    cache = get_github_cache()
+    get_worktree = getattr(cache, "get_worktree", None)
+
+    with _embedded_coverage_source(tar_path) as embedded_tree:
+        if embedded_tree:
+            yield embedded_tree, None, "archive_covstub"
+            return
+
+    source_tree = (
+        get_worktree("origin/main", purpose="coverage")
+        if callable(get_worktree)
+        else cache.cache_dir
+    ) or cache.cache_dir
+    yield source_tree, _safe_latest_commit(cache), "origin_main_fallback"
 
 
 def _process_line_coverage(
     tar_path: Path, signature: str, test_type: str | None = "ut"
 ) -> dict[str, Any]:
     raw, _ = _aggregate_raw_coverage(tar_path, test_type=test_type)
-    cache = get_github_cache()
-    get_worktree = getattr(cache, "get_worktree", None)
-    source_tree = (
-        get_worktree("origin/main", purpose="coverage")
-        if callable(get_worktree)
-        else cache.cache_dir
-    ) or cache.cache_dir
+    with _coverage_source_tree(tar_path) as (source_tree, source_commit, source_origin):
+        return _process_line_coverage_with_source(
+            raw, source_tree, source_commit, source_origin, signature, test_type
+        )
+
+
+def _process_line_coverage_with_source(
+    raw: dict[str, dict[str, set]],
+    source_tree: Path,
+    source_commit: str | None,
+    source_origin: str,
+    signature: str,
+    test_type: str | None,
+) -> dict[str, Any]:
     files: list[dict[str, Any]] = []
     details: dict[str, dict[str, Any]] = {}
     module_totals: dict[str, dict[str, int]] = defaultdict(
@@ -432,7 +537,8 @@ def _process_line_coverage(
             fallback_paths.append(path)
         if not statements:
             continue
-        covered = statements & executed
+        effective_executed = executed - excluded
+        covered = statements & effective_executed
         executed_arcs = raw["arcs"].get(path, set())
         branch_total = len(possible_arcs)
         branch_covered = len(possible_arcs & executed_arcs)
@@ -456,7 +562,7 @@ def _process_line_coverage(
             }
         )
         details[path] = {
-            "executed_lines": sorted(executed),
+            "executed_lines": sorted(effective_executed),
             "missing_lines": missing,
             "excluded_lines": sorted(excluded),
             "executed_branches": sorted(executed_arcs),
@@ -504,8 +610,10 @@ def _process_line_coverage(
         "by_module": by_module,
         "files": files,
         "details": details,
+        "analysis_version": LINE_ANALYSIS_VERSION,
         "tar_signature": signature,
-        "source_commit": _safe_latest_commit(cache),
+        "source_commit": source_commit,
+        "source_origin": source_origin,
         "covdata_commit": None,
         "covdata_when": None,
         "version_gap_commits": None,
@@ -616,7 +724,11 @@ async def sync_pr_lines(
             path, signature = await _download_with_signature()
         assert signature is not None
         existing = await _load_config(db, PR_LINES_KEY)
-        if existing and existing.get("tar_signature") == signature:
+        if (
+            existing
+            and existing.get("tar_signature") == signature
+            and existing.get("analysis_version") == LINE_ANALYSIS_VERSION
+        ):
             return {"success": True, "skipped": True, "tar_signature": signature}
         result = await asyncio.to_thread(_process_line_coverage, path, signature, "ut")
         await _save_config(db, PR_LINES_KEY, result, "PR/UT 流水线行覆盖率")
@@ -747,6 +859,8 @@ async def get_pr_lines(
         "covdata_when": data.get("covdata_when"),
         "coverage_tool_version": data.get("coverage_tool_version"),
         "installed_coverage_version": data.get("installed_coverage_version"),
+        "analysis_version": data.get("analysis_version"),
+        "source_origin": data.get("source_origin"),
         "status": data.get("status", "unknown"),
         "status_reason": data.get("status_reason"),
         "warning": data.get("warning"),

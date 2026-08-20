@@ -96,11 +96,86 @@ def test_line_coverage_filters_to_ut_and_calculates_source_denominator(
 
     assert result["test_type"] == "ut"
     assert result["status"] == "ok"
+    assert result["analysis_version"] == coverage_sync.LINE_ANALYSIS_VERSION
     assert result["source_commit"] == "test-commit"
     assert result["totals"]["num_statements"] > result["totals"]["covered_lines"]
     assert result["totals"]["missing_lines"] > 0
     assert result["files"][0]["path"] == "vllm_ascend/sample.py"
     assert result["details"]["vllm_ascend/sample.py"]["executed_lines"] == [1, 2, 3]
+
+
+def test_source_analysis_excludes_complete_triton_jit_functions(tmp_path: Path) -> None:
+    source_dir = tmp_path / "vllm_ascend"
+    source_dir.mkdir()
+    (source_dir / "kernels.py").write_text(
+        "import triton\n"
+        "\n"
+        "@triton.jit\n"
+        "def plain_kernel(value):\n"
+        "    if value:\n"
+        "        return value\n"
+        "    return 0\n"
+        "\n"
+        "@triton.jit(do_not_specialize=['value'])\n"
+        "def configured_kernel(value):\n"
+        "    return value + 1\n"
+        "\n"
+        "@triton.jit\n"
+        "def jit_helper(value):\n"
+        "    return value + 2\n"
+        "\n"
+        "def host_function(value):\n"
+        "    if value:\n"
+        "        return 1\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    statements, excluded, arcs, analyzed = coverage_sync._source_analysis(
+        "vllm_ascend/kernels.py", tmp_path
+    )
+
+    assert analyzed is True
+    assert set(range(3, 8)) <= excluded
+    assert set(range(9, 12)) <= excluded
+    assert set(range(13, 16)) <= excluded
+    assert statements.isdisjoint(set(range(3, 16)))
+    assert {17, 18, 19, 20} <= statements
+    assert all(abs(start) not in excluded and abs(end) not in excluded for start, end in arcs)
+
+
+def test_embedded_coverage_source_is_available_without_checkout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tar_path = tmp_path / "coverage-with-source.tar"
+    source_path = tmp_path / "sample.py"
+    source_path.write_text("def sample():\n    return 1\n", encoding="utf-8")
+    with tarfile.open(tar_path, "w") as archive:
+        archive.add(
+            source_path,
+            arcname="vllm-ascend/covstub/vllm_ascend/sample.py",
+        )
+
+    checkout_calls: list[tuple[tuple, dict]] = []
+
+    def unexpected_checkout(*args, **kwargs):
+        checkout_calls.append((args, kwargs))
+        raise AssertionError("embedded coverage source should not require checkout")
+
+    monkeypatch.setattr(
+        coverage_sync,
+        "get_github_cache",
+        lambda: SimpleNamespace(
+            cache_dir=tmp_path / "missing-cache",
+        get_worktree=unexpected_checkout,
+        ),
+    )
+
+    with coverage_sync._coverage_source_tree(tar_path) as (root, commit, origin):
+        assert root.joinpath("vllm_ascend/sample.py").read_text(encoding="utf-8") == source_path.read_text(encoding="utf-8")
+        assert commit is None
+        assert origin == "archive_covstub"
+    assert checkout_calls == []
 
 
 @pytest.mark.asyncio
