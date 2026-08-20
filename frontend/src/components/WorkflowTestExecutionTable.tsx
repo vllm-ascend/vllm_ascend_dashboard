@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import {
   Button,
   Card,
-  DatePicker,
   Empty,
   Input,
   Select,
@@ -24,9 +23,15 @@ import {
   renderStatusTag,
 } from '../utils/ciRenderers'
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
+import {
+  WorkflowDateFilter,
+  getDateRangeForMode,
+  getInitialCustomDateRange,
+  getInitialDateFilterMode,
+  type DateFilterMode,
+} from './WorkflowDateFilter'
 
 const { Text } = Typography
-const { RangePicker } = DatePicker
 
 interface WorkflowTestExecutionTableProps {
   enabled: boolean
@@ -71,76 +76,6 @@ type WorkflowExecutionPreferences = {
   logSearch?: string
   dateFilterMode?: DateFilterMode
   dateRange?: { start: string | null; end: string | null } | null
-}
-
-type DateFilterMode = 'recent_day' | 'recent_week' | 'custom' | 'all'
-
-const getDefaultDateRange = (baseDate = dayjs()): [Dayjs, Dayjs] => {
-  const today = baseDate
-  return [today.startOf('day'), today.endOf('day')]
-}
-
-const getDateRangeForMode = (mode: DateFilterMode, baseDate = dayjs()): [Dayjs, Dayjs] | null => {
-  if (mode === 'recent_day') return getDefaultDateRange(baseDate)
-  if (mode === 'recent_week') {
-    return [baseDate.subtract(6, 'day').startOf('day'), baseDate.endOf('day')]
-  }
-  return null
-}
-
-function getInitialDateFilterMode(preferences: WorkflowExecutionPreferences): DateFilterMode {
-  if (preferences.dateFilterMode) return preferences.dateFilterMode
-  if (preferences.dateRange === null) return 'all'
-  if (!preferences.dateRange?.start && !preferences.dateRange?.end) return 'recent_day'
-
-  const today = dayjs()
-  const start = preferences.dateRange.start ? dayjs(preferences.dateRange.start) : null
-  const end = preferences.dateRange.end ? dayjs(preferences.dateRange.end) : null
-  if (start?.isSame(today, 'day') && end?.isSame(today, 'day')) return 'recent_day'
-  if (start?.isSame(today.subtract(6, 'day'), 'day') && end?.isSame(today, 'day')) return 'recent_week'
-  return 'custom'
-}
-
-function getInitialCustomDateRange(preferences: WorkflowExecutionPreferences, mode: DateFilterMode) {
-  if (mode !== 'custom' || !preferences.dateRange) return null
-  return [
-    preferences.dateRange.start ? dayjs(preferences.dateRange.start) : null,
-    preferences.dateRange.end ? dayjs(preferences.dateRange.end) : null,
-  ] as [Dayjs | null, Dayjs | null]
-}
-
-interface DateFilterControlProps {
-  mode: DateFilterMode
-  customDateRange: [Dayjs | null, Dayjs | null] | null
-  onModeChange: (mode: DateFilterMode) => void
-  onRangeChange: (range: [Dayjs | null, Dayjs | null] | null) => void
-}
-
-function DateFilterControl({ mode, customDateRange, onModeChange, onRangeChange }: DateFilterControlProps) {
-  return (
-    <Space.Compact>
-      <Select
-        value={mode}
-        options={[
-          { label: '最近一天', value: 'recent_day' },
-          { label: '最近一周', value: 'recent_week' },
-          { label: '自定义日期', value: 'custom' },
-          { label: '全部日期', value: 'all' },
-        ]}
-        onChange={(value: DateFilterMode) => onModeChange(value)}
-        style={{ width: 130 }}
-      />
-      {mode === 'custom' && (
-        <RangePicker
-          value={customDateRange as any}
-          onChange={(dates) => onRangeChange(dates as [Dayjs | null, Dayjs | null] | null)}
-          allowClear
-          format="YYYY-MM-DD"
-          style={{ width: 240 }}
-        />
-      )}
-    </Space.Compact>
-  )
 }
 
 function readPreferences(): WorkflowExecutionPreferences {
@@ -381,7 +316,7 @@ function WorkflowTestExecutionTable({ enabled }: WorkflowTestExecutionTableProps
             placeholder="按 Workflow 筛选"
             style={{ width: 190 }}
           />
-          <DateFilterControl
+          <WorkflowDateFilter
             mode={dateFilterMode}
             customDateRange={customDateRange}
             onModeChange={(value) => {

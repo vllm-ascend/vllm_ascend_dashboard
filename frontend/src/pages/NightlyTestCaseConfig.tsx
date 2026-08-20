@@ -11,7 +11,6 @@ import {
   Input,
   Form,
   message,
-  DatePicker,
 } from 'antd'
 import {
   PlusOutlined,
@@ -25,6 +24,13 @@ import {
 } from '../hooks/useCI'
 import type { NightlyTestCase } from '../services/ci'
 import dayjs from 'dayjs'
+import {
+  WorkflowDateFilter,
+  getDateRangeForMode,
+  getInitialCustomDateRange,
+  getInitialDateFilterMode,
+  type DateFilterMode,
+} from '../components/WorkflowDateFilter'
 
 const { Text, Title } = Typography
 
@@ -36,6 +42,8 @@ const WORKFLOW_OPTIONS = [
 
 type NightlyConfigPreferences = {
   selectedDate?: string | null
+  dateFilterMode?: DateFilterMode
+  dateRange?: { start: string | null; end: string | null } | null
   selectedBranch?: string
   workflowFilter?: string | null
 }
@@ -54,9 +62,20 @@ function readNightlyConfigPreferences(): NightlyConfigPreferences {
 
 function NightlyTestCaseConfig() {
   const [savedPreferences] = useState(readNightlyConfigPreferences)
-  const [selectedDate, setSelectedDate] = useState<dayjs.Dayjs | null>(() => (
-    savedPreferences.selectedDate ? dayjs(savedPreferences.selectedDate) : null
+  const datePreferences = useMemo(() => ({
+    dateFilterMode: savedPreferences.dateFilterMode ?? (savedPreferences.selectedDate ? 'custom' as const : undefined),
+    dateRange: savedPreferences.dateRange ?? (
+      savedPreferences.selectedDate
+        ? { start: savedPreferences.selectedDate, end: savedPreferences.selectedDate }
+        : undefined
+    ),
+  }), [savedPreferences])
+  const initialDateFilterMode = getInitialDateFilterMode(datePreferences)
+  const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>(initialDateFilterMode)
+  const [customDateRange, setCustomDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(() => (
+    getInitialCustomDateRange(datePreferences, initialDateFilterMode)
   ))
+  const [currentDay, setCurrentDay] = useState(() => dayjs().format('YYYY-MM-DD'))
   const [selectedBranch, setSelectedBranch] = useState(() => savedPreferences.selectedBranch ?? 'main')
 
   const [workflowFilter, setWorkflowFilter] = useState<string | undefined>(() => (
@@ -66,27 +85,39 @@ function NightlyTestCaseConfig() {
   const [editingRecord, setEditingRecord] = useState<NightlyTestCase | null>(null)
   const [form] = Form.useForm()
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const nextDay = dayjs().format('YYYY-MM-DD')
+      setCurrentDay((previousDay) => previousDay === nextDay ? previousDay : nextDay)
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const dateRange = useMemo(
+    () => dateFilterMode === 'custom' ? customDateRange : getDateRangeForMode(dateFilterMode, dayjs(currentDay)),
+    [currentDay, customDateRange, dateFilterMode],
+  )
+
   const { data: testCases, isLoading, refetch } = useNightlyTestCases({
-    report_date: selectedDate?.format('YYYY-MM-DD'),
+    start_date: dateRange?.[0]?.format('YYYY-MM-DD'),
+    end_date: dateRange?.[1]?.format('YYYY-MM-DD'),
     source_branch: selectedBranch,
     workflow_name: workflowFilter,
   })
 
   useEffect(() => {
     window.localStorage.setItem(NIGHTLY_CONFIG_PREFERENCES_KEY, JSON.stringify({
-      selectedDate: selectedDate?.format('YYYY-MM-DD') ?? null,
+      dateFilterMode,
+      dateRange: dateFilterMode === 'custom' && customDateRange
+        ? {
+            start: customDateRange[0]?.format('YYYY-MM-DD') ?? null,
+            end: customDateRange[1]?.format('YYYY-MM-DD') ?? null,
+          }
+        : null,
       selectedBranch,
       workflowFilter: workflowFilter ?? null,
     }))
-  }, [selectedDate, selectedBranch, workflowFilter])
-  // 自动选最新日期
-  useEffect(() => {
-    if (testCases && testCases.length > 0 && !selectedDate) {
-      const dates = [...new Set(testCases.map(tc => tc.report_date as string).filter(Boolean))]
-      dates.sort().reverse()
-      if (dates[0]) setSelectedDate(dayjs(dates[0]))
-    }
-  }, [testCases, selectedDate])
+  }, [customDateRange, dateFilterMode, selectedBranch, workflowFilter])
 
   const createMutation = useCreateNightlyTestCase()
   const updateMutation = useUpdateNightlyTestCase()
@@ -180,12 +211,21 @@ function NightlyTestCaseConfig() {
           <Text type="secondary">管理 Nightly 流水线中的静态用例，过时用例标记而非删除</Text>
         </div>
         <Space>
-          <DatePicker
-            value={selectedDate}
-            onChange={(d) => d && setSelectedDate(d)}
-            allowClear={false}
-            format="YYYY-MM-DD"
-            style={{ width: 140 }}
+          <WorkflowDateFilter
+            mode={dateFilterMode}
+            customDateRange={customDateRange}
+            onModeChange={(value) => {
+              setDateFilterMode(value)
+              if (value !== 'custom') setCustomDateRange(null)
+            }}
+            onRangeChange={(range) => {
+              if (!range) {
+                setCustomDateRange(null)
+                setDateFilterMode('all')
+              } else {
+                setCustomDateRange(range)
+              }
+            }}
           />
           <Select
             value={selectedBranch}

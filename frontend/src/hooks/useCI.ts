@@ -195,6 +195,8 @@ export const useBatchAnalyzeDailyFailures = () => {
  */
 export const useNightlyTestCases = (params?: {
   report_date?: string
+  start_date?: string
+  end_date?: string
   source_branch?: string
   workflow_name?: string
   enabled?: boolean

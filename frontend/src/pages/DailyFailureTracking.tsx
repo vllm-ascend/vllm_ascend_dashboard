@@ -36,11 +36,17 @@ import {
 } from '../hooks/useCI'
 import { formatDuration, renderConclusionTag } from '../utils/ciRenderers'
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
+import {
+  WorkflowDateFilter,
+  getDateRangeForMode,
+  getInitialCustomDateRange,
+  getInitialDateFilterMode,
+  type DateFilterMode,
+} from '../components/WorkflowDateFilter'
 import type { DailyFailureBatchUpdateRequest, DailyFailureJob } from '../services/ci'
 import dayjs, { Dayjs } from 'dayjs'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceDot, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts'
 
-const { RangePicker } = DatePicker
 const { Search } = Input
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -66,6 +72,7 @@ type FailureDetailFilter = {
 }
 
 type DailyFailurePreferences = {
+  dateFilterMode?: DateFilterMode
   dateRange?: { start: string | null; end: string | null } | null
   workflowFilter?: string | null
   statusFilter?: string | null
@@ -242,17 +249,12 @@ const failureTimingColumns: any[] = [
 
 function DailyFailureTracking() {
   const [savedPreferences] = useState(readDailyFailurePreferences)
-  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(() => {
-    const savedRange = savedPreferences.dateRange
-    if (savedRange === null) return null
-    if (savedRange?.start || savedRange?.end) {
-      return [
-        savedRange.start ? dayjs(savedRange.start) : null,
-        savedRange.end ? dayjs(savedRange.end) : null,
-      ]
-    }
-    return [dayjs(), dayjs()]
-  })
+  const initialDateFilterMode = getInitialDateFilterMode(savedPreferences)
+  const [dateFilterMode, setDateFilterMode] = useState<DateFilterMode>(initialDateFilterMode)
+  const [customDateRange, setCustomDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(() => (
+    getInitialCustomDateRange(savedPreferences, initialDateFilterMode)
+  ))
+  const [currentDay, setCurrentDay] = useState(() => dayjs().format('YYYY-MM-DD'))
   const [workflowFilter, setWorkflowFilter] = useState<string | undefined>(() => (
     savedPreferences.workflowFilter === null ? undefined : savedPreferences.workflowFilter ?? 'Nightly-A3'
   ))
@@ -276,11 +278,25 @@ function DailyFailureTracking() {
   const [detailFilter, setDetailFilter] = useState<FailureDetailFilter | null>(null)
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      const nextDay = dayjs().format('YYYY-MM-DD')
+      setCurrentDay((previousDay) => previousDay === nextDay ? previousDay : nextDay)
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const dateRange = useMemo(
+    () => dateFilterMode === 'custom' ? customDateRange : getDateRangeForMode(dateFilterMode, dayjs(currentDay)),
+    [currentDay, customDateRange, dateFilterMode],
+  )
+
+  useEffect(() => {
     window.localStorage.setItem(DAILY_FAILURE_PREFERENCES_KEY, JSON.stringify({
-      dateRange: dateRange
+      dateFilterMode,
+      dateRange: dateFilterMode === 'custom' && customDateRange
         ? {
-            start: dateRange[0]?.format('YYYY-MM-DD') ?? null,
-            end: dateRange[1]?.format('YYYY-MM-DD') ?? null,
+            start: customDateRange[0]?.format('YYYY-MM-DD') ?? null,
+            end: customDateRange[1]?.format('YYYY-MM-DD') ?? null,
           }
         : null,
       workflowFilter: workflowFilter ?? null,
@@ -289,7 +305,7 @@ function DailyFailureTracking() {
       displayMode,
       breakdownDimension,
     } satisfies DailyFailurePreferences))
-  }, [dateRange, workflowFilter, statusFilter, notesSearch, displayMode, breakdownDimension])
+  }, [customDateRange, dateFilterMode, workflowFilter, statusFilter, notesSearch, displayMode, breakdownDimension])
 
   const startDate = dateRange?.[0]?.format('YYYY-MM-DD')
   const endDate = dateRange?.[1]?.format('YYYY-MM-DD')
@@ -470,13 +486,21 @@ function DailyFailureTracking() {
           <Text type="secondary">按天查看失败 Job，追踪处理进展与责任人</Text>
         </div>
         <Space>
-          <RangePicker
-            value={dateRange as any}
-            onChange={(dates) => setDateRange(dates as [Dayjs | null, Dayjs | null] | null)}
-            allowClear
-            placeholder={['开始日期', '结束日期']}
-            format="YYYY-MM-DD"
-            style={{ width: 260 }}
+          <WorkflowDateFilter
+            mode={dateFilterMode}
+            customDateRange={customDateRange}
+            onModeChange={(value) => {
+              setDateFilterMode(value)
+              if (value !== 'custom') setCustomDateRange(null)
+            }}
+            onRangeChange={(range) => {
+              if (!range) {
+                setCustomDateRange(null)
+                setDateFilterMode('all')
+              } else {
+                setCustomDateRange(range)
+              }
+            }}
           />
           <Search
             value={notesSearch}

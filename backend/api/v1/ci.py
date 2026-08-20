@@ -1863,6 +1863,8 @@ async def batch_update_failure_status(
 async def list_nightly_test_cases(
     db: DbSession,
     report_date: str | None = Query(None, description="快照日期 YYYY-MM-DD，默认最新"),
+    start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD（含）"),
+    end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD（含）"),
     source_branch: str | None = Query(None, description="来源分支，默认 main"),
     workflow_name: str | None = Query(None, description="按 workflow 筛选"),
     enabled: bool | None = Query(None, description="按启用状态筛选"),
@@ -1873,8 +1875,25 @@ async def list_nightly_test_cases(
         NightlyTestCase.workflow_name,
         NightlyTestCase.job_name,
     )
+    if report_date and (start_date or end_date):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="report_date 不能与 start_date/end_date 同时使用",
+        )
     if report_date:
         stmt = stmt.where(NightlyTestCase.report_date == report_date)
+    if start_date:
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start_date 格式须为 YYYY-MM-DD")
+        stmt = stmt.where(NightlyTestCase.report_date >= start_date)
+    if end_date:
+        try:
+            datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date 格式须为 YYYY-MM-DD")
+        stmt = stmt.where(NightlyTestCase.report_date <= end_date)
     if source_branch:
         stmt = stmt.where(NightlyTestCase.source_branch == source_branch)
     if workflow_name:
