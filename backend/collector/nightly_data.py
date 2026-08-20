@@ -344,6 +344,13 @@ class NightlyDataCollector:
                 github_job_url=github_url,
             )
             self.db.add(record)
+            # Keep the in-memory indexes in sync with pending inserts.  A
+            # single collection batch can contain the same logical job key
+            # more than once (for example, duplicate GitHub job payloads
+            # from overlapping sync windows).  Without this assignment the
+            # second row is not found until commit, and the database unique
+            # constraint rejects the whole batch.
+            existing_by_key[key] = record
             existing_keys.add(key)
             if job.job_id is not None:
                 existing_by_job_id[job.job_id] = record
