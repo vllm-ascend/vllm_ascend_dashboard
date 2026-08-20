@@ -59,7 +59,9 @@ class ResourceMetricsCollector:
                 logger.warning("Skipping cluster %s: %s", summary.cluster_name, summary.error)
                 continue
             pods = summary.executing_pods or []
-            top_pods = sorted(pods, key=lambda pod: pod.requests.npu, reverse=True)[:5]
+            # PR demand needs every currently executing NPU pod. Keeping only
+            # the five largest pods undercounts PRs with a wider test matrix.
+            resource_pods = sorted(pods, key=lambda pod: pod.requests.npu, reverse=True)
             self.db.add(
                 ResourceNpuMetrics(
                     cluster_id=summary.cluster_id,
@@ -79,7 +81,7 @@ class ResourceMetricsCollector:
                             "pr_url": pod.pr_url,
                             "phase": pod.phase,
                         }
-                        for pod in top_pods
+                        for pod in resource_pods
                     ],
                     collected_at=now,
                 )

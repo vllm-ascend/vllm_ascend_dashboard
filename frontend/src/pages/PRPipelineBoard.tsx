@@ -536,6 +536,28 @@ const ListTab = ({ filters, onFiltersChange, page, pageSize, onPageChange }: Lis
       },
     },
     {
+      title: 'NPU 需求',
+      dataIndex: 'npu_demand',
+      key: 'npu_demand',
+      width: 100,
+      render: (demand: number, record: PullRequestResponse) => (
+        <Tooltip
+          title={(
+            <div>
+              <div>待执行/执行中 NPU 任务：{record.pending_npu_jobs || 0} 个</div>
+              <div>计划资源：{record.planned_npu || 0} 卡</div>
+              <div>当前已分配：{record.allocated_npu || 0} 卡</div>
+              <div>仍需资源：{demand || 0} 卡</div>
+            </div>
+          )}
+        >
+          <Tag color={demand > 0 ? 'orange' : 'default'}>
+            {demand || 0} 卡
+          </Tag>
+        </Tooltip>
+      ),
+    },
+    {
       title: '草稿',
       dataIndex: 'is_draft',
       key: 'is_draft',

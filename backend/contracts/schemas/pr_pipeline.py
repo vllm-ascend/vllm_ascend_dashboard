@@ -44,6 +44,10 @@ class PullRequestResponse(PullRequestBase):
     created_at: datetime
     updated_at: datetime | None = None
     data: dict[str, Any] | None = None
+    planned_npu: float = 0
+    allocated_npu: float = 0
+    npu_demand: float = 0
+    pending_npu_jobs: int = 0
 
     @computed_field
     @property

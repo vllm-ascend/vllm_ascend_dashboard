@@ -32,6 +32,10 @@ export interface PullRequestResponse {
   created_at: string
   updated_at: string | null
   data: any | null
+  planned_npu: number
+  allocated_npu: number
+  npu_demand: number
+  pending_npu_jobs: number
   time_to_first_review_hours: number | null
   time_to_merge_hours: number | null
   time_to_ci_hours: number | null

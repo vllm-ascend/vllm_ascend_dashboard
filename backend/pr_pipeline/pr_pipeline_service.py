@@ -1,9 +1,11 @@
+import json
 import logging
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import case, desc, func, literal_column, select
+from sqlalchemy import and_, case, desc, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Unicode
 
@@ -20,10 +22,22 @@ from contracts.schemas.pr_pipeline import (
     PRPipelineTrendsResponse,
     PullRequestResponse,
 )
-from infrastructure.persistence.models import PullRequest
+from infrastructure.persistence.models import CIJob, CIResult, PullRequest, ResourceNpuMetrics
 from tooling.company_detector import detect_company
 
 logger = logging.getLogger(__name__)
+
+ACTIVE_CI_JOB_STATUSES = {"queued", "in_progress", "pending", "waiting", "requested"}
+PR_CI_EVENTS = {"pull_request", "pull_request_target", "push"}
+NPU_CARD_PATTERNS = (
+    re.compile(r"\b(\d+)\s*cards?\b", re.IGNORECASE),
+    # Match runner labels such as ``linux-aarch64-a3-4``.  The lookahead is
+    # intentional: ``a3-560t`` is a hardware/cluster name, not 560 cards.
+    re.compile(
+        r"(?:^|[-_ ])(?:a2b3|a2|a3|310p|npu-static)[-_ ](\d+)(?=$|[-_ ])",
+        re.IGNORECASE,
+    ),
+)
 
 
 class PRPipelineService:
@@ -122,6 +136,7 @@ class PRPipelineService:
         stmt = select(PullRequest).where(*conditions).order_by(PullRequest.updated_at.desc())
         result = await db.execute(stmt)
         all_prs = result.scalars().all()
+        npu_stats = await self._get_npu_stats(db, all_prs)
 
         stages: dict[str, list[PullRequestResponse]] = {
             "submitted": [], "reviewing": [], "approved": [],
@@ -131,7 +146,7 @@ class PRPipelineService:
 
         for pr in all_prs:
             stage = pr.pipeline_stage or "submitted"
-            resp = PullRequestResponse.model_validate(pr)
+            resp = self._pr_response_with_npu(pr, npu_stats)
             if len(stages.get(stage, [])) < limit_per_stage:
                 stages.setdefault(stage, []).append(resp)
 
@@ -205,7 +220,8 @@ class PRPipelineService:
         result = await db.execute(stmt)
         prs = result.scalars().all()
 
-        items = [PullRequestResponse.model_validate(pr) for pr in prs]
+        npu_stats = await self._get_npu_stats(db, prs)
+        items = [self._pr_response_with_npu(pr, npu_stats) for pr in prs]
 
         return PRPipelineListResponse(
             total=total,
@@ -551,7 +567,187 @@ class PRPipelineService:
         pr = result.scalar_one_or_none()
         if not pr:
             return None
-        return PullRequestResponse.model_validate(pr)
+        npu_stats = await self._get_npu_stats(db, [pr])
+        return self._pr_response_with_npu(pr, npu_stats)
+
+    @staticmethod
+    def _npu_cards_for_job(job: CIJob) -> float:
+        """Extract the requested NPU count from CI job metadata."""
+        candidates: list[str] = []
+        raw_labels = job.runner_labels
+        if raw_labels:
+            try:
+                labels = json.loads(raw_labels) if isinstance(raw_labels, str) else raw_labels
+                if isinstance(labels, list):
+                    candidates.extend(str(label) for label in labels)
+            except (TypeError, ValueError):
+                candidates.append(str(raw_labels))
+        candidates.extend(filter(None, [job.job_name, job.runner_name]))
+
+        for candidate in candidates:
+            for pattern in NPU_CARD_PATTERNS:
+                match = pattern.search(candidate)
+                if match:
+                    return float(match.group(1))
+        return 0.0
+
+    @staticmethod
+    def _job_has_pending_npu(job: CIJob) -> bool:
+        """Return whether a CI job can still hold or request NPU capacity."""
+        conclusion = str(job.conclusion or "").strip().lower()
+        if conclusion:
+            return False
+        status = str(job.status or "").strip().lower()
+        return status in ACTIVE_CI_JOB_STATUSES or status in {"", "unknown", "completed"}
+
+    async def _get_npu_stats(
+        self,
+        db: AsyncSession,
+        prs: list[PullRequest],
+    ) -> dict[int, dict[str, float | int]]:
+        """Return planned, allocated and still-needed NPU cards per PR.
+
+        The latest associated workflow run is the unit of accounting. Only
+        unfinished NPU jobs are planned demand; currently running PR pods are
+        subtracted from that demand.
+        """
+        stats = {
+            int(pr.pr_number): {
+                "planned_npu": 0.0,
+                "allocated_npu": 0.0,
+                "npu_demand": 0.0,
+                "pending_npu_jobs": 0,
+            }
+            for pr in prs
+        }
+        if not stats:
+            return stats
+
+        sha_to_pr_numbers: dict[str, list[int]] = defaultdict(list)
+        explicit_run_by_pr: dict[int, int] = {}
+        for pr in prs:
+            if pr.head_sha:
+                sha_to_pr_numbers[pr.head_sha].append(int(pr.pr_number))
+            if pr.ci_workflow_run_id:
+                explicit_run_by_pr[int(pr.pr_number)] = int(pr.ci_workflow_run_id)
+
+        run_to_pr_numbers: dict[int, list[int]] = defaultdict(list)
+        if sha_to_pr_numbers:
+            run_rows = (
+                await db.execute(
+                    select(CIResult)
+                    .where(CIResult.head_sha.in_(list(sha_to_pr_numbers)))
+                    .order_by(desc(CIResult.created_at), desc(CIResult.started_at))
+                )
+            ).scalars().all()
+            runs_by_sha: dict[str, list[CIResult]] = defaultdict(list)
+            for run in run_rows:
+                if run.head_sha:
+                    runs_by_sha[run.head_sha].append(run)
+
+            for pr in prs:
+                pr_number = int(pr.pr_number)
+                if not pr.head_sha:
+                    continue
+                run_id = explicit_run_by_pr.get(pr_number)
+                if run_id is None:
+                    candidates = runs_by_sha.get(pr.head_sha, [])
+                    preferred = [run for run in candidates if run.event in PR_CI_EVENTS]
+                    selected = preferred or candidates
+                    run_id = selected[0].run_id if selected else None
+                if run_id is not None:
+                    run_to_pr_numbers[int(run_id)].append(pr_number)
+
+        mapped_pr_numbers = {
+            pr_number
+            for values in run_to_pr_numbers.values()
+            for pr_number in values
+        }
+        for pr_number, run_id in explicit_run_by_pr.items():
+            if pr_number in stats and pr_number not in mapped_pr_numbers:
+                run_to_pr_numbers[run_id].append(pr_number)
+
+        if run_to_pr_numbers:
+            job_rows = (
+                await db.execute(
+                    select(CIJob).where(CIJob.run_id.in_(list(run_to_pr_numbers)))
+                )
+            ).scalars().all()
+            for job in job_rows:
+                cards = self._npu_cards_for_job(job)
+                if cards <= 0 or not self._job_has_pending_npu(job):
+                    continue
+                for pr_number in run_to_pr_numbers.get(int(job.run_id), []):
+                    stats[pr_number]["planned_npu"] += cards
+                    stats[pr_number]["pending_npu_jobs"] += 1
+
+        latest_metrics = (
+            select(
+                ResourceNpuMetrics.cluster_id,
+                func.max(ResourceNpuMetrics.collected_at).label("latest_at"),
+            )
+            .group_by(ResourceNpuMetrics.cluster_id)
+            .subquery()
+        )
+        metric_rows = (
+            await db.execute(
+                select(ResourceNpuMetrics).join(
+                    latest_metrics,
+                    and_(
+                        ResourceNpuMetrics.cluster_id == latest_metrics.c.cluster_id,
+                        ResourceNpuMetrics.collected_at == latest_metrics.c.latest_at,
+                    ),
+                )
+            )
+        ).scalars().all()
+
+        seen_pods: set[tuple[int, str, str]] = set()
+        for metric in metric_rows:
+            pods = metric.top_pods_json or []
+            if isinstance(pods, str):
+                try:
+                    pods = json.loads(pods)
+                except (TypeError, ValueError):
+                    pods = []
+            for pod in pods if isinstance(pods, list) else []:
+                if not isinstance(pod, dict) or pod.get("phase") != "Running":
+                    continue
+                try:
+                    pr_number = int(pod.get("pr_number"))
+                except (TypeError, ValueError):
+                    continue
+                if pr_number not in stats:
+                    continue
+                pod_key = (
+                    int(metric.cluster_id),
+                    str(pod.get("namespace") or ""),
+                    str(pod.get("name") or ""),
+                )
+                if pod_key in seen_pods:
+                    continue
+                seen_pods.add(pod_key)
+                try:
+                    stats[pr_number]["allocated_npu"] += float(pod.get("npu") or 0)
+                except (TypeError, ValueError):
+                    continue
+
+        for values in stats.values():
+            values["planned_npu"] = round(values["planned_npu"], 2)
+            values["allocated_npu"] = round(values["allocated_npu"], 2)
+            values["pending_npu_jobs"] = int(values["pending_npu_jobs"])
+            values["npu_demand"] = round(
+                max(values["planned_npu"] - values["allocated_npu"], 0),
+                2,
+            )
+        return stats
+
+    @staticmethod
+    def _pr_response_with_npu(
+        pr: PullRequest,
+        npu_stats: dict[int, dict[str, float | int]],
+    ) -> PullRequestResponse:
+        response = PullRequestResponse.model_validate(pr)
+        return response.model_copy(update=npu_stats.get(int(pr.pr_number), {}))
 
     async def _count_by_state(
         self,
