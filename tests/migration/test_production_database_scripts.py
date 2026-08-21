@@ -43,6 +43,7 @@ def test_production_uses_one_explicit_migration_command():
     assert "database/migrations/migrate.py" in production_entrypoint
     assert "scripts/init_db.py" not in production_entrypoint
     assert "migrate_mysql_schema" in migration
+    assert "migrate_service_permissions" in migration
     assert "migrate_phase_a" in migration
     assert "forbidden in production" in initializer
 
@@ -62,6 +63,17 @@ def test_production_compose_uses_immutable_images_and_service_discovery():
     assert "compose build" not in deploy
     assert "DASHBOARD_MYSQL_CONTAINER" not in backup
     assert "docker exec" not in backup
+
+
+def test_collector_purge_permissions_are_table_scoped():
+    from database.migrations.service_permissions import COLLECTOR_DELETE_TABLES
+
+    assert set(COLLECTOR_DELETE_TABLES) == {
+        "ci_results",
+        "ci_jobs",
+        "job_failure_analysis",
+        "daily_failure_records",
+    }
 
 
 def test_ci_publishes_versioned_images_with_supply_chain_metadata():
