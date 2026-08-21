@@ -2,8 +2,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi.routing import APIRoute
 
-from api.v1.ci import batch_update_failure_status, update_failure_status
+from api.v1.ci import batch_update_failure_status, router, update_failure_status
 from contracts.schemas import DailyFailureBatchUpdateRequest, DailyFailureUpdateRequest
 
 
@@ -34,6 +35,19 @@ def _record(record_id: int, owner: str | None):
         status_updated_at=None,
         github_job_url=None,
     )
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/daily-failures/batch-status", "/daily-failures/batch-analyze"],
+)
+def test_batch_ids_are_declared_as_query_parameters(path: str):
+    route = next(route for route in router.routes if isinstance(route, APIRoute) and route.path == path)
+
+    query_names = {parameter.name for parameter in route.dependant.query_params}
+    body_names = {parameter.name for parameter in route.dependant.body_params}
+    assert "ids" in query_names
+    assert "ids" not in body_names
 
 
 @pytest.mark.asyncio
@@ -90,4 +104,3 @@ async def test_batch_update_can_explicitly_clear_owner():
     )
 
     assert record.owner is None
-

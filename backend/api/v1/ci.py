@@ -1233,9 +1233,9 @@ async def analyze_failed_job(
 
 @router.post("/daily-failures/batch-analyze")
 async def batch_analyze_daily_failures(
-    ids: list[int],
     current_user: CurrentAdminUser,
     db: DbSession,
+    ids: list[int] = Query(..., description="要分析的每日失败记录 ID"),
 ):
     """Queue failure analysis for explicitly selected daily failure rows."""
     if not ids:
@@ -1940,10 +1940,10 @@ async def update_failure_status(
 
 @router.put("/daily-failures/batch-status")
 async def batch_update_failure_status(
-    ids: list[int],
     update: DailyFailureBatchUpdateRequest,
     current_user: CurrentUser,
     db: DbSession,
+    ids: list[int] = Query(..., description="要更新的每日失败记录 ID"),
 ):
     """批量更新失败记录中明确提交的字段。"""
     if not ids:
