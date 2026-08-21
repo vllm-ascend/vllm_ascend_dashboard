@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+import pytest
+
 from collector.ci import CICollector
 
 
@@ -114,3 +118,27 @@ def test_successful_nightly_build_job_is_not_pr_marker() -> None:
     jobs = [{"name": "Build nightly-a3 image", "conclusion": "success", "steps": []}]
 
     assert CICollector._is_pr_nightly_dispatch(run, jobs) is False
+
+
+@pytest.mark.asyncio
+async def test_purge_pr_nightly_dispatch_removes_run_and_derivatives() -> None:
+    class FakeDb:
+        def __init__(self):
+            self.statements = []
+
+        async def execute(self, statement):
+            self.statements.append(statement)
+            return SimpleNamespace(rowcount=1)
+
+    db = FakeDb()
+    collector = CICollector(github_client=None, db_session=db)  # type: ignore[arg-type]
+
+    deleted = await collector._purge_pr_nightly_dispatch(31858609426)
+
+    assert deleted == 4
+    sql = "\n".join(map(str, db.statements))
+    assert "daily_failure_records" in sql
+    assert "job_failure_analysis" in sql
+    assert "ci_jobs" in sql
+    assert "ci_results" in sql
+    assert all(31858609426 in statement.compile().params.values() for statement in db.statements)

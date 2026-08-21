@@ -13,9 +13,10 @@ import logging
 import re
 from datetime import UTC, date, datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from collector.ci import CICollector
 from infrastructure.clients.github_cache import get_github_cache_for_repo
 from infrastructure.core.config import settings
 from infrastructure.persistence.models import (
@@ -159,6 +160,7 @@ class NightlyDataCollector:
         workflow_completed_at: dict[int, datetime | None] = {}
         workflow_attempt: dict[int, int | None] = {}
         workflow_branch: dict[int, str | None] = {}
+        workflow_event: dict[int, str | None] = {}
         run_ids = {job.run_id for job in tracked_jobs if job.run_id is not None}
         if run_ids:
             workflow_result = await self.db.execute(
@@ -167,12 +169,14 @@ class NightlyDataCollector:
                     CIResult.completed_at,
                     CIResult.branch,
                     CIResult.data,
+                    CIResult.event,
                 ).where(CIResult.run_id.in_(run_ids))
             )
-            for run_id, completed_at, branch, run_data in workflow_result.all():
+            for run_id, completed_at, branch, run_data, event in workflow_result.all():
                 workflow_completed_at[run_id] = completed_at
                 workflow_branch[run_id] = branch
                 workflow_attempt[run_id] = extract_run_attempt(run_data)
+                workflow_event[run_id] = event
 
         # A GitHub re-run keeps the same workflow run ID but creates a new set
         # of jobs. Only jobs from the final attempt are valid for the daily
@@ -183,6 +187,26 @@ class NightlyDataCollector:
             for job in tracked_jobs
             if is_current_run_attempt(job.data, workflow_attempt.get(job.run_id))
         ]
+
+        # Older collector versions persisted ``/nightly pr`` dispatches before
+        # the PR-only step detector was introduced.  Re-check persisted step
+        # data here so those runs cannot be re-materialized indefinitely.
+        excluded_run_ids = {
+            job.run_id
+            for job in tracked_jobs
+            if self._is_pr_nightly_job(job, workflow_event.get(job.run_id))
+        }
+        purged_count = 0
+        if excluded_run_ids:
+            purge_result = await self.db.execute(
+                delete(DailyFailureRecord).where(
+                    DailyFailureRecord.run_id.in_(excluded_run_ids)
+                )
+            )
+            purged_count = int(getattr(purge_result, "rowcount", 0) or 0)
+            tracked_jobs = [
+                job for job in tracked_jobs if job.run_id not in excluded_run_ids
+            ]
 
         snapshot_result = await self.db.execute(select(NightlyTestCase))
         snapshots = snapshot_result.scalars().all()
@@ -357,17 +381,40 @@ class NightlyDataCollector:
             existing_by_run_job[(job.run_id, job.workflow_name, job.job_name)] = record
             new_count += 1
 
-        if new_count or corrected_count or category_sync_count:
+        if new_count or corrected_count or category_sync_count or purged_count:
             await self.db.commit()
         logger.info(
             "Daily failure materialization completed: %d new, %d corrected, "
-            "%d categories synced from %d tracked jobs",
+            "%d categories synced, %d stale /nightly rows removed from %d tracked jobs",
             new_count,
             corrected_count,
             category_sync_count,
+            purged_count,
             len(tracked_jobs),
         )
         return new_count
+
+    @staticmethod
+    def _is_pr_nightly_job(job: CIJob, workflow_event: str | None) -> bool:
+        """Identify a persisted test job that executed PR-only Nightly steps."""
+        steps = getattr(job, "steps_data", None)
+        if isinstance(steps, str):
+            try:
+                steps = json.loads(steps)
+            except (TypeError, ValueError):
+                steps = []
+        if not isinstance(steps, list):
+            steps = []
+        return CICollector._is_pr_nightly_dispatch(
+            {"event": workflow_event},
+            [
+                {
+                    "name": job.job_name,
+                    "conclusion": job.conclusion,
+                    "steps": steps,
+                }
+            ],
+        )
 
     @staticmethod
     def _report_date_for_job(

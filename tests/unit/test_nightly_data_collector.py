@@ -18,8 +18,9 @@ def _snapshot(*, report_date: str, branch: str = "main", workflow: str = "Nightl
 
 
 class _FakeResult:
-    def __init__(self, rows):
+    def __init__(self, rows, rowcount=0):
         self.rows = rows
+        self.rowcount = rowcount
 
     def all(self):
         return self.rows
@@ -35,7 +36,10 @@ class _FakeSession:
         self.commit_count = 0
 
     async def execute(self, _statement):
-        return _FakeResult(next(self.responses))
+        response = next(self.responses)
+        if isinstance(response, tuple) and len(response) == 2 and response[0] == "rowcount":
+            return _FakeResult([], rowcount=response[1])
+        return _FakeResult(response)
 
     def add(self, value):
         self.added.append(value)
@@ -218,7 +222,7 @@ def test_populate_daily_failure_records_adds_new_records_to_session():
     db = _FakeSession(
         [
             [job],
-            [(456, now, "main", {"run_attempt": 1})],
+            [(456, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
             [snapshot],
             [],
             [],
@@ -265,7 +269,7 @@ def test_populate_daily_failure_records_deduplicates_pending_records_by_key():
     db = _FakeSession(
         [
             [job, duplicate_job],
-            [(456, now, "main", {"run_attempt": 1})],
+            [(456, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
             [snapshot],
             [],
             [],
@@ -278,3 +282,40 @@ def test_populate_daily_failure_records_deduplicates_pending_records_by_key():
     assert db.commit_count == 1
     assert len(db.added) == 1
     assert db.added[0].job_id == 123
+
+
+def test_populate_daily_failure_records_purges_legacy_pr_nightly_rows():
+    now = datetime.now(UTC).replace(microsecond=0)
+    job = SimpleNamespace(
+        job_id=94951079187,
+        run_id=31858609426,
+        workflow_name="Nightly-A3",
+        job_name="single-node (main, qwen3-30b-acc) / qwen3-30b-acc",
+        conclusion="failure",
+        started_at=now,
+        completed_at=now,
+        duration_seconds=60,
+        hardware="A3",
+        data={"run_attempt": 1, "head_branch": "main"},
+        steps_data=[
+            {
+                "name": "uninstall vlm vllm-ascend and remove code (if pr test)",
+                "conclusion": "success",
+            }
+        ],
+    )
+    db = _FakeSession(
+        [
+            [job],
+            [(31858609426, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
+            ("rowcount", 7),
+            [],
+            [],
+        ]
+    )
+
+    count = asyncio.run(NightlyDataCollector(db).populate_daily_failure_records())
+
+    assert count == 0
+    assert db.commit_count == 1
+    assert db.added == []

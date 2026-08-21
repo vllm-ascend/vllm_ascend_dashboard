@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.clients.github_client import (
@@ -17,7 +17,14 @@ from infrastructure.clients.github_client import (
     GitHubClient,
     GitHubRateLimitError,
 )
-from infrastructure.persistence.models import CIJob, CIResult, NightlyTestCase, WorkflowConfig
+from infrastructure.persistence.models import (
+    CIJob,
+    CIResult,
+    DailyFailureRecord,
+    JobFailureAnalysis,
+    NightlyTestCase,
+    WorkflowConfig,
+)
 from infrastructure.tasks.sync_progress import get_sync_progress, reset_sync_progress
 
 logger = logging.getLogger(__name__)
@@ -120,6 +127,14 @@ class CICollector:
         except Exception as exc:
             # Progress persistence must never stop an otherwise healthy sync.
             logger.warning("Failed to persist CI sync progress: %s", exc)
+
+    async def _purge_pr_nightly_dispatch(self, run_id: int) -> int:
+        """Remove a previously collected ``/nightly pr`` run and its derivatives."""
+        deleted_rows = 0
+        for model in (DailyFailureRecord, JobFailureAnalysis, CIJob, CIResult):
+            result = await self.db.execute(delete(model).where(model.run_id == run_id))
+            deleted_rows += int(getattr(result, "rowcount", 0) or 0)
+        return deleted_rows
 
     async def collect_workflow_runs(
         self,
@@ -379,10 +394,13 @@ class CICollector:
                         )
 
                 if self._is_pr_nightly_dispatch(run, prefetched_jobs):
+                    deleted_rows = await self._purge_pr_nightly_dispatch(run_id)
                     logger.info(
-                        "Skipped /nightly pr workflow dispatch run %s for %s",
+                        "Skipped /nightly pr workflow dispatch run %s for %s; "
+                        "removed %d previously collected rows",
                         run_id,
                         workflow_file,
+                        deleted_rows,
                     )
                     continue
 
