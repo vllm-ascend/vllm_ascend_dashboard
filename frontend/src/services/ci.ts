@@ -251,6 +251,7 @@ export interface DailyFailureListResponse {
 
 export interface DailyFailureUpdateRequest {
   processing_status: string
+  owner?: string | null
   problem_category?: string | null
   related_pr?: string | null
   notes?: string | null
@@ -293,7 +294,7 @@ export const exportDailyFailures = async (
 }
 
 /**
- * 更新失败 Job 的处理状态和备注
+ * 更新失败 Job 的责任人、处理状态和处理信息
  */
 export const updateFailureStatus = async (
   jobDbId: number,

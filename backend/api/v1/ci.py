@@ -1880,7 +1880,7 @@ async def update_failure_status(
     current_user: CurrentUser,
     db: DbSession,
 ):
-    """更新失败记录的处理状态和备注（责任人 + 管理员可操作）"""
+    """更新失败记录的责任人、处理状态和处理信息（责任人 + 管理员可操作）"""
     stmt = select(DailyFailureRecord).where(DailyFailureRecord.id == record_id)
     result = await db.execute(stmt)
     rec = result.scalar_one_or_none()
@@ -1897,6 +1897,8 @@ async def update_failure_status(
             )
 
     rec.processing_status = update.processing_status
+    if "owner" in update.model_fields_set:
+        rec.owner = update.owner.strip() if update.owner and update.owner.strip() else None
     rec.problem_category = update.problem_category
     rec.related_pr = update.related_pr
     rec.notes = update.notes
@@ -1943,7 +1945,7 @@ async def batch_update_failure_status(
     current_user: CurrentUser,
     db: DbSession,
 ):
-    """批量更新失败记录的处理状态"""
+    """批量更新失败记录中明确提交的字段。"""
     if not ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ids 不能为空")
     if len(ids) > 200:
@@ -1969,6 +1971,8 @@ async def batch_update_failure_status(
                 )
         if "processing_status" in update_fields:
             rec.processing_status = update.processing_status
+        if "owner" in update_fields:
+            rec.owner = update.owner.strip() if update.owner and update.owner.strip() else None
         if "problem_category" in update_fields:
             rec.problem_category = update.problem_category
         if "related_pr" in update_fields:

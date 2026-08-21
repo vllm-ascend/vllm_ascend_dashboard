@@ -75,3 +75,17 @@ def test_daily_failure_batch_update_preserves_unset_fields():
 
     assert update.model_fields_set == {"processing_status"}
     assert update.model_dump(exclude_unset=True) == {"processing_status": "处理中"}
+
+
+def test_daily_failure_batch_update_tracks_owner_assignment():
+    update = DailyFailureBatchUpdateRequest(owner="admin")
+
+    assert update.model_fields_set == {"owner"}
+    assert update.model_dump(exclude_unset=True) == {"owner": "admin"}
+
+
+def test_daily_failure_batch_update_tracks_owner_clear():
+    update = DailyFailureBatchUpdateRequest(owner=None)
+
+    assert update.model_fields_set == {"owner"}
+    assert update.model_dump(exclude_unset=True) == {"owner": None}

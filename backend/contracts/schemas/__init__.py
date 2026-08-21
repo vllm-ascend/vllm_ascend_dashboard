@@ -352,6 +352,7 @@ class DailyFailureStats(BaseModel):
 class DailyFailureUpdateRequest(BaseModel):
     """更新处理状态请求"""
     processing_status: str = Field(..., pattern="^(未处理|处理中|已关闭)$")
+    owner: str | None = Field(default=None, max_length=100)
     problem_category: str | None = None
     related_pr: str | None = None
     notes: str | None = None
@@ -366,6 +367,7 @@ class DailyFailureBatchUpdateRequest(BaseModel):
         default=None,
         pattern="^(未处理|处理中|已关闭)$",
     )
+    owner: str | None = Field(default=None, max_length=100)
     problem_category: str | None = None
     related_pr: str | None = None
     notes: str | None = None
