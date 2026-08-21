@@ -28,6 +28,7 @@ import {
   SyncOutlined,
   CloseCircleOutlined,
   CheckSquareOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons'
 import {
   useBatchUpdateFailureStatus,
@@ -43,7 +44,11 @@ import {
   getInitialDateFilterMode,
   type DateFilterMode,
 } from '../components/WorkflowDateFilter'
-import type { DailyFailureBatchUpdateRequest, DailyFailureJob } from '../services/ci'
+import {
+  exportDailyFailures,
+  type DailyFailureBatchUpdateRequest,
+  type DailyFailureJob,
+} from '../services/ci'
 import dayjs, { Dayjs } from 'dayjs'
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceDot, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts'
 
@@ -276,6 +281,7 @@ function DailyFailureTracking() {
     savedPreferences.breakdownDimension === 'owner' ? 'owner' : 'workflow'
   ))
   const [detailFilter, setDetailFilter] = useState<FailureDetailFilter | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -317,6 +323,32 @@ function DailyFailureTracking() {
     processing_status: statusFilter,
     notes_search: notesSearch,
   })
+
+  const handleExport = async () => {
+    setIsExporting(true)
+    try {
+      const blob = await exportDailyFailures({
+        start_date: startDate,
+        end_date: endDate,
+        workflow_name: workflowFilter,
+        processing_status: statusFilter,
+        notes_search: notesSearch,
+      })
+      const objectUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `每日失败追踪_${startDate || '全部'}_${endDate || '全部'}.csv`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(objectUrl)
+      message.success('导出完成')
+    } catch {
+      message.error('导出失败')
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   const updateMutation = useUpdateFailureStatus()
   const batchUpdateMutation = useBatchUpdateFailureStatus()
@@ -527,6 +559,13 @@ function DailyFailureTracking() {
             style={{ width: 160 }}
           />
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>刷新</Button>
+          <Button
+            icon={<DownloadOutlined />}
+            loading={isExporting}
+            onClick={handleExport}
+          >
+            导出 CSV
+          </Button>
           <Segmented
             value={displayMode}
             onChange={(value) => setDisplayMode(value as 'list' | 'analysis')}

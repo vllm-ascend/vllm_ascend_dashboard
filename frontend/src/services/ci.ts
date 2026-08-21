@@ -260,18 +260,35 @@ export interface DailyFailureUpdateRequest {
 
 export type DailyFailureBatchUpdateRequest = Partial<DailyFailureUpdateRequest>
 
-/**
- * 获取每日失败 Job 列表（按天分组）
- * 不传日期范围则返回全部数据
- */
-export const getDailyFailures = async (params?: {
+export interface DailyFailureQueryParams {
   start_date?: string
   end_date?: string
   workflow_name?: string
   processing_status?: string
   notes_search?: string
-}): Promise<DailyFailureListResponse[]> => {
+}
+
+/**
+ * 获取每日失败 Job 列表（按天分组）
+ * 不传日期范围则返回全部数据
+ */
+export const getDailyFailures = async (
+  params?: DailyFailureQueryParams
+): Promise<DailyFailureListResponse[]> => {
   const response = await api.get<DailyFailureListResponse[]>('/ci/daily-failures', { params })
+  return response.data
+}
+
+/**
+ * 按当前筛选条件导出全部每日失败追踪记录。
+ */
+export const exportDailyFailures = async (
+  params?: DailyFailureQueryParams
+): Promise<Blob> => {
+  const response = await api.get<Blob>('/ci/daily-failures/export', {
+    params,
+    responseType: 'blob',
+  })
   return response.data
 }
 

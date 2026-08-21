@@ -2,12 +2,14 @@
 CI 数据 API 路由
 Phase 2: 实现数据采集和展示
 """
+import csv
+import io
 import json
 import logging
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import case, func, or_, select, text
 
 from api.deps import CurrentAdminUser, CurrentSuperAdminUser, CurrentUser, DbSession
@@ -1652,6 +1654,111 @@ async def download_public_analysis_pdf(
 
 # ============ Daily Failure Tracking ============
 
+_DAILY_FAILURE_CONCLUSION_LABELS = {
+    "success": "成功",
+    "failure": "失败",
+    "cancelled": "已取消",
+    "timed_out": "超时",
+    "skipped": "已跳过",
+}
+_BEIJING_TIMEZONE = timezone(timedelta(hours=8))
+
+
+def _daily_failure_query(
+    *,
+    start_date: str | None,
+    end_date: str | None,
+    workflow_name: str | None,
+    processing_status: str | None,
+    notes_search: str | None,
+):
+    """Build the shared filtered query used by the page and CSV export."""
+    stmt = select(DailyFailureRecord)
+    if start_date:
+        try:
+            parsed_start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="start_date 格式须为 YYYY-MM-DD",
+            ) from None
+        stmt = stmt.where(DailyFailureRecord.report_date >= parsed_start_date)
+    if end_date:
+        try:
+            parsed_end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="end_date 格式须为 YYYY-MM-DD",
+            ) from None
+        stmt = stmt.where(DailyFailureRecord.report_date <= parsed_end_date)
+    if workflow_name:
+        stmt = stmt.where(DailyFailureRecord.workflow_name == workflow_name)
+    if processing_status:
+        stmt = stmt.where(DailyFailureRecord.processing_status == processing_status)
+    if notes_search:
+        stmt = stmt.where(DailyFailureRecord.notes.like(f"%{notes_search}%"))
+    return stmt
+
+
+def _format_daily_failure_export_datetime(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    utc_value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    return utc_value.astimezone(_BEIJING_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _safe_daily_failure_csv_cell(value: Any) -> Any:
+    """Prevent spreadsheet formula execution for user-controlled text cells."""
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
+
+
+def _serialize_daily_failures_csv(records: list[DailyFailureRecord]) -> bytes:
+    """Serialize records as an Excel-friendly UTF-8 CSV payload."""
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "日期", "来源分支", "Workflow", "运行结果", "Job", "用例名称",
+        "硬件", "责任人", "模型FO", "测试模型", "部署类型", "问题分类",
+        "关联PR", "处理状态", "备注", "处理时间(北京时间)", "闭环时间(北京时间)",
+        "开始时间(北京时间)", "结束时间(北京时间)", "耗时(秒)", "Run ID", "Job ID", "GitHub链接",
+        "最后更新人", "状态更新时间",
+    ])
+    for record in records:
+        writer.writerow(map(_safe_daily_failure_csv_cell, [
+            str(record.report_date),
+            record.source_branch or "",
+            record.workflow_name,
+            _DAILY_FAILURE_CONCLUSION_LABELS.get(
+                record.conclusion or "", record.conclusion or ""
+            ),
+            record.job_name,
+            record.display_name or "",
+            record.hardware or "",
+            record.owner or "",
+            record.model_fo or "",
+            record.test_model or "",
+            record.deployment_type or "",
+            record.problem_category or "",
+            record.related_pr or "",
+            record.processing_status or "未处理",
+            record.notes or "",
+            _format_daily_failure_export_datetime(record.processing_time),
+            _format_daily_failure_export_datetime(record.closure_time),
+            _format_daily_failure_export_datetime(record.started_at),
+            _format_daily_failure_export_datetime(record.completed_at),
+            record.duration_seconds if record.duration_seconds is not None else "",
+            record.run_id,
+            record.job_id or "",
+            record.github_job_url or "",
+            record.updated_by or "",
+            _format_daily_failure_export_datetime(record.status_updated_at),
+        ]))
+    return ("\ufeff" + output.getvalue()).encode("utf-8")
+
+
 @router.get("/daily-failures", response_model=list[DailyFailureListResponse])
 async def list_daily_failures(
     db: DbSession,
@@ -1662,30 +1769,17 @@ async def list_daily_failures(
     notes_search: str | None = Query(None, description="按备注文本模糊搜索"),
 ):
     """查询每日失败记录（从物化表 daily_failure_records 直查）"""
-    stmt = select(DailyFailureRecord)
-
-    # 日期范围过滤
-    if start_date:
-        try:
-            datetime.strptime(start_date, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="start_date 格式须为 YYYY-MM-DD")
-        stmt = stmt.where(DailyFailureRecord.report_date >= start_date)
-    if end_date:
-        try:
-            datetime.strptime(end_date, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="end_date 格式须为 YYYY-MM-DD")
-        stmt = stmt.where(DailyFailureRecord.report_date <= end_date)
-
-    if workflow_name:
-        stmt = stmt.where(DailyFailureRecord.workflow_name == workflow_name)
-    if processing_status:
-        stmt = stmt.where(DailyFailureRecord.processing_status == processing_status)
-    if notes_search:
-        stmt = stmt.where(DailyFailureRecord.notes.like(f"%{notes_search}%"))
-
-    stmt = stmt.order_by(DailyFailureRecord.report_date.desc())
+    stmt = _daily_failure_query(
+        start_date=start_date,
+        end_date=end_date,
+        workflow_name=workflow_name,
+        processing_status=processing_status,
+        notes_search=notes_search,
+    ).order_by(
+        DailyFailureRecord.report_date.desc(),
+        DailyFailureRecord.workflow_name.asc(),
+        DailyFailureRecord.job_name.asc(),
+    )
     if not start_date and not end_date:
         stmt = stmt.limit(10000)
 
@@ -1742,6 +1836,41 @@ async def list_daily_failures(
         ))
 
     return response
+
+
+@router.get("/daily-failures/export", summary="导出每日失败追踪数据")
+async def export_daily_failures(
+    _current_user: CurrentUser,
+    db: DbSession,
+    start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD（北京时间）"),
+    end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD（北京时间）"),
+    workflow_name: str | None = Query(None, description="按 workflow 名称筛选"),
+    processing_status: str | None = Query(None, description="按处理状态筛选"),
+    notes_search: str | None = Query(None, description="按备注文本模糊搜索"),
+):
+    """按页面当前筛选条件导出全部匹配记录，不受列表默认上限影响。"""
+    stmt = _daily_failure_query(
+        start_date=start_date,
+        end_date=end_date,
+        workflow_name=workflow_name,
+        processing_status=processing_status,
+        notes_search=notes_search,
+    ).order_by(
+        DailyFailureRecord.report_date.desc(),
+        DailyFailureRecord.workflow_name.asc(),
+        DailyFailureRecord.job_name.asc(),
+    )
+    result = await db.execute(stmt)
+    records = list(result.scalars().all())
+    filename = f"daily_failures_{start_date or 'all'}_{end_date or 'all'}.csv"
+    return Response(
+        content=_serialize_daily_failures_csv(records),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Export-Row-Count": str(len(records)),
+        },
+    )
 
 
 @router.put("/daily-failures/{record_id}/status", response_model=DailyFailureJob)
