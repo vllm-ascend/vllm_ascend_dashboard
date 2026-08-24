@@ -51,6 +51,10 @@ class NightlyDataCollector:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        # Job IDs materialized during the most recent sync. The Collector
+        # uses this narrow set to enqueue automatic failure analysis without
+        # replaying the entire historical failure table on every CI sync.
+        self.last_materialized_job_ids: set[int] = set()
 
     def _get_cache(self):
         """Return the bare mirror facade, bootstrapping a clean deployment."""
@@ -137,6 +141,8 @@ class NightlyDataCollector:
         execution results, but it is still an operational state that must be
         retained in DailyFailureTracking for follow-up.
         """
+
+        self.last_materialized_job_ids.clear()
 
         cutoff = datetime.now(UTC) - timedelta(days=14)
 
@@ -378,6 +384,7 @@ class NightlyDataCollector:
             existing_keys.add(key)
             if job.job_id is not None:
                 existing_by_job_id[job.job_id] = record
+                self.last_materialized_job_ids.add(job.job_id)
             existing_by_run_job[(job.run_id, job.workflow_name, job.job_name)] = record
             new_count += 1
 

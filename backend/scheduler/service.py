@@ -223,7 +223,8 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add resource metrics cleanup job: {e}", exc_info=True)
 
-        # 失败分析兜底已移除 — 仅由 CI sync 后触发 _analyze_failed_jobs
+        # 失败分析不在 Scheduler 内执行；Collector 在 CI/Nightly 数据物化后
+        # 将新失败任务作为 durable failure_analysis 任务入队。
 
         # 每日运行报告邮件推送任务 - 默认 8:30 执行（DB 中的时间由 apply_db_config_overrides 覆盖）
         try:
@@ -246,7 +247,7 @@ class DataSyncScheduler:
         except Exception as e:
             logger.error(f"Failed to add daily report job: {e}", exc_info=True)
 
-        # CI 失败分析已移除 — 仅由 _sync_ci_data_job 中 _analyze_failed_jobs 触发
+        # CI 失败分析由 Collector 在 CI 数据物化后异步入队，避免阻塞 Scheduler。
 
         pr_pipeline_interval = getattr(settings, 'PR_PIPELINE_SYNC_INTERVAL_MINUTES', 30)
         try:

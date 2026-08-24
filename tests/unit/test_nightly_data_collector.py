@@ -229,13 +229,15 @@ def test_populate_daily_failure_records_adds_new_records_to_session():
         ]
     )
 
-    count = asyncio.run(NightlyDataCollector(db).populate_daily_failure_records())
+    collector = NightlyDataCollector(db)
+    count = asyncio.run(collector.populate_daily_failure_records())
 
     assert count == 1
     assert db.commit_count == 1
     assert len(db.added) == 1
     assert isinstance(db.added[0], DailyFailureRecord)
     assert db.added[0].job_id == 123
+    assert collector.last_materialized_job_ids == {123}
 
 
 def test_populate_daily_failure_records_deduplicates_pending_records_by_key():

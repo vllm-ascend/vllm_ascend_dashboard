@@ -9,13 +9,15 @@ import asyncio
 import json
 import logging
 
-from sqlalchemy import text
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from collector.ci import CICollector
 from collector.pr_pipeline import PRPipelineCollector
 from infrastructure.clients.github_client import GitHubClient
 from infrastructure.core.config import settings
 from infrastructure.db.base import SessionLocal
+from infrastructure.persistence.models import CIJob, DailyFailureRecord, JobFailureAnalysis
 
 from .worker import CollectorWorker, TaskContext
 
@@ -183,12 +185,19 @@ class CollectorRunner:
                 try:
                     from collector.nightly_data import NightlyDataCollector
 
-                    materialized = await NightlyDataCollector(db).sync()
+                    nightly_data = NightlyDataCollector(db)
+                    materialized = await nightly_data.sync()
+                    auto_analysis = await self._enqueue_auto_failure_analysis(
+                        db,
+                        nightly_data.last_materialized_job_ids,
+                    )
+                    await db.commit()
                     logger.info(
-                        "CI task %d completed: collected=%d nightly=%s",
+                        "CI task %d completed: collected=%d nightly=%s auto_analysis=%s",
                         ctx.task_id,
                         collected,
                         materialized,
+                        auto_analysis,
                     )
                 except Exception:
                     logger.exception(
@@ -205,8 +214,85 @@ class CollectorRunner:
         from collector.nightly_data import NightlyDataCollector
 
         async with SessionLocal() as db:
-            result = await NightlyDataCollector(db).sync()
-        logger.info("Nightly data task %d completed: %s", ctx.task_id, result)
+            nightly_data = NightlyDataCollector(db)
+            result = await nightly_data.sync()
+            auto_analysis = await self._enqueue_auto_failure_analysis(
+                db,
+                nightly_data.last_materialized_job_ids,
+            )
+            await db.commit()
+        logger.info(
+            "Nightly data task %d completed: %s auto_analysis=%s",
+            ctx.task_id,
+            result,
+            auto_analysis,
+        )
+
+    async def _enqueue_auto_failure_analysis(
+        self,
+        db: AsyncSession,
+        job_ids: set[int],
+    ) -> dict[str, int]:
+        """Queue analysis for newly materialized failed Nightly jobs.
+
+        Analysis is deliberately enqueued as a durable Collector task rather
+        than executed inline, so a slow LLM or missing job log cannot extend
+        or fail the CI synchronization task. Completed analyses are reused;
+        active task dedupe prevents duplicate work across Collector nodes.
+        """
+        from infrastructure.tasks.task_manager import TaskManager
+
+        if not job_ids:
+            return {"selected": 0, "queued": 0, "skipped": 0}
+
+        failure_conclusions = ("failure", "timed_out", "startup_failure", "cancelled")
+        records_result = await db.execute(
+            select(DailyFailureRecord.job_id).where(
+                DailyFailureRecord.job_id.in_(job_ids),
+                DailyFailureRecord.conclusion.in_(failure_conclusions),
+            )
+        )
+        selected_job_ids = {int(job_id) for (job_id,) in records_result.all() if job_id is not None}
+        if not selected_job_ids:
+            return {"selected": 0, "queued": 0, "skipped": 0}
+
+        analyses_result = await db.execute(
+            select(JobFailureAnalysis.job_id, JobFailureAnalysis.analysis_status).where(
+                JobFailureAnalysis.job_id.in_(selected_job_ids)
+            )
+        )
+        analysis_status = {
+            int(job_id): str(status or "")
+            for job_id, status in analyses_result.all()
+        }
+        jobs_result = await db.execute(
+            select(CIJob.job_id).where(CIJob.job_id.in_(selected_job_ids))
+        )
+        existing_job_ids = {int(job_id) for (job_id,) in jobs_result.all()}
+
+        queued = 0
+        skipped = 0
+        for job_id in sorted(selected_job_ids):
+            if job_id not in existing_job_ids:
+                skipped += 1
+                continue
+            if analysis_status.get(job_id) in {"completed", "reused", "analyzing"}:
+                skipped += 1
+                continue
+            task_id = await TaskManager.create_task(
+                db,
+                "failure_analysis",
+                {"job_id": job_id, "force": False, "triggered_by": "scheduler"},
+                f"failure_analysis:{job_id}",
+                required_capability="python",
+                priority=20,
+            )
+            if task_id is not None:
+                queued += 1
+            else:
+                skipped += 1
+
+        return {"selected": len(selected_job_ids), "queued": queued, "skipped": skipped}
 
     async def _run_model_sync(self, ctx: TaskContext, task_params: dict):
         """模型报告同步。"""
