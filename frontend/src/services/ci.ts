@@ -393,6 +393,21 @@ export const getNightlyTestCases = async (params?: {
   return response.data
 }
 
+export const exportNightlyTestCases = async (params?: {
+  report_date?: string
+  start_date?: string
+  end_date?: string
+  source_branch?: string
+  workflow_name?: string
+  enabled?: boolean
+}): Promise<Blob> => {
+  const response = await api.get<Blob>('/ci/nightly-test-cases/export', {
+    params,
+    responseType: 'blob',
+  })
+  return response.data
+}
+
 export const createNightlyTestCase = async (data: NightlyTestCaseCreate): Promise<NightlyTestCase> => {
   const response = await api.post<NightlyTestCase>('/ci/nightly-test-cases', data)
   return response.data

@@ -16,6 +16,7 @@ import {
   PlusOutlined,
   EditOutlined,
   ReloadOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons'
 import {
   useNightlyTestCases,
@@ -23,6 +24,7 @@ import {
   useUpdateNightlyTestCase,
 } from '../hooks/useCI'
 import type { NightlyTestCase } from '../services/ci'
+import { exportNightlyTestCases } from '../services/ci'
 import dayjs from 'dayjs'
 import {
   WorkflowDateFilter,
@@ -83,6 +85,7 @@ function NightlyTestCaseConfig() {
   ))
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRecord, setEditingRecord] = useState<NightlyTestCase | null>(null)
+  const [exporting, setExporting] = useState(false)
   const [form] = Form.useForm()
 
   useEffect(() => {
@@ -149,6 +152,33 @@ function NightlyTestCaseConfig() {
       if (error?.response?.data?.detail) {
         message.error(error.response.data.detail)
       }
+    }
+  }
+
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const params = {
+        start_date: dateRange?.[0]?.format('YYYY-MM-DD'),
+        end_date: dateRange?.[1]?.format('YYYY-MM-DD'),
+        source_branch: selectedBranch,
+        workflow_name: workflowFilter,
+      }
+      const blob = await exportNightlyTestCases(params)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      const branch = selectedBranch.replace(/[^\w.-]+/g, '_')
+      link.download = `nightly_test_cases_${branch}_${dayjs().format('YYYYMMDD_HHmmss')}.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      message.success('用例配置 JSON 已导出')
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || '导出用例配置失败')
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -245,6 +275,9 @@ function NightlyTestCaseConfig() {
             options={WORKFLOW_OPTIONS}
             style={{ width: 150 }}
           />
+          <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}>
+            导出 JSON
+          </Button>
           <Button icon={<ReloadOutlined />} onClick={() => refetch()}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新增用例</Button>
         </Space>

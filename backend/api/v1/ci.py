@@ -62,6 +62,37 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_NIGHTLY_TEST_CASE_EXPORT_FIELDS = (
+    "report_date",
+    "source_branch",
+    "workflow_name",
+    "job_name",
+    "display_name",
+    "test_model",
+    "model_fo",
+    "owner",
+    "deployment_type",
+    "notes",
+    "enabled",
+)
+
+
+def _serialize_nightly_test_case_export(record: NightlyTestCase) -> dict[str, Any]:
+    """Return the import-compatible JSON shape for one Nightly case.
+
+    Database identifiers and timestamps are intentionally omitted. The result
+    contains the same mutable fields accepted by ``NightlyTestCaseCreate`` so
+    an exported file can be used as a portable configuration snapshot.
+    """
+    payload: dict[str, Any] = {}
+    for field in _NIGHTLY_TEST_CASE_EXPORT_FIELDS:
+        value = getattr(record, field, None)
+        if field == "report_date" and value is not None and hasattr(value, "isoformat"):
+            value = value.isoformat()
+        payload[field] = value
+    return payload
+
+
 @router.get("/workflows", response_model=list[str])
 async def list_workflows(
     db: DbSession
@@ -2035,6 +2066,76 @@ async def list_nightly_test_cases(
         stmt = stmt.where(NightlyTestCase.enabled == enabled)
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@router.get("/nightly-test-cases/export")
+async def export_nightly_test_cases(
+    current_user: CurrentAdminUser,
+    db: DbSession,
+    report_date: str | None = Query(None, description="快照日期 YYYY-MM-DD"),
+    start_date: str | None = Query(None, description="开始日期 YYYY-MM-DD（含）"),
+    end_date: str | None = Query(None, description="结束日期 YYYY-MM-DD（含）"),
+    source_branch: str | None = Query(None, description="来源分支"),
+    workflow_name: str | None = Query(None, description="按 workflow 筛选"),
+    enabled: bool | None = Query(None, description="按启用状态筛选"),
+):
+    """Download filtered Nightly cases as an import-compatible JSON file."""
+    del current_user  # authorization is enforced by CurrentAdminUser
+
+    stmt = select(NightlyTestCase).order_by(
+        NightlyTestCase.report_date.desc(),
+        NightlyTestCase.workflow_name,
+        NightlyTestCase.job_name,
+    )
+    if report_date and (start_date or end_date):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="report_date 不能与 start_date/end_date 同时使用",
+        )
+    if report_date:
+        try:
+            datetime.strptime(report_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="report_date 格式须为 YYYY-MM-DD",
+            ) from None
+        stmt = stmt.where(NightlyTestCase.report_date == report_date)
+    if start_date:
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="start_date 格式须为 YYYY-MM-DD",
+            ) from None
+        stmt = stmt.where(NightlyTestCase.report_date >= start_date)
+    if end_date:
+        try:
+            datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="end_date 格式须为 YYYY-MM-DD",
+            ) from None
+        stmt = stmt.where(NightlyTestCase.report_date <= end_date)
+    if source_branch:
+        stmt = stmt.where(NightlyTestCase.source_branch == source_branch)
+    if workflow_name:
+        stmt = stmt.where(NightlyTestCase.workflow_name == workflow_name)
+    if enabled is not None:
+        stmt = stmt.where(NightlyTestCase.enabled == enabled)
+
+    result = await db.execute(stmt)
+    records = result.scalars().all()
+    payload = [_serialize_nightly_test_case_export(record) for record in records]
+    content = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    filename = f"nightly_test_cases_{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/nightly-test-cases", response_model=NightlyTestCaseResponse, status_code=status.HTTP_201_CREATED)
