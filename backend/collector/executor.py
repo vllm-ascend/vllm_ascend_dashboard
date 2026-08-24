@@ -24,9 +24,9 @@ from .worker import CollectorWorker, TaskContext
 logger = logging.getLogger(__name__)
 
 # A single Collector can execute three tasks concurrently. Automatic failure
-# analysis is intentionally capped below that capacity so sync work always
-# retains room on a small production host, even if a runtime setting is bad.
-AUTO_FAILURE_ANALYSIS_HARD_LIMIT = 3
+# analysis is intentionally capped at two slots so sync work always retains
+# room on a small production host, even if a runtime setting is bad.
+AUTO_FAILURE_ANALYSIS_HARD_LIMIT = 2
 
 
 class CollectorRunner:
@@ -195,7 +195,7 @@ class CollectorRunner:
                     auto_analysis = await self._enqueue_auto_failure_analysis(
                         db,
                         nightly_data.last_materialized_job_ids,
-                        max_items=int(getattr(settings, "CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC", 1)),
+                        max_items=int(getattr(settings, "CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC", 2)),
                     )
                     await db.commit()
                     logger.info(
@@ -225,7 +225,7 @@ class CollectorRunner:
             auto_analysis = await self._enqueue_auto_failure_analysis(
                 db,
                 nightly_data.last_materialized_job_ids,
-                max_items=int(getattr(settings, "CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC", 1)),
+                max_items=int(getattr(settings, "CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC", 2)),
             )
             await db.commit()
         logger.info(
@@ -239,7 +239,7 @@ class CollectorRunner:
         self,
         db: AsyncSession,
         job_ids: set[int],
-        max_items: int = 1,
+        max_items: int = 2,
     ) -> dict[str, int]:
         """Queue a bounded amount of analysis for failed Nightly jobs.
 
@@ -256,10 +256,39 @@ class CollectorRunner:
 
         max_items = min(AUTO_FAILURE_ANALYSIS_HARD_LIMIT, max(0, int(max_items)))
         if max_items == 0:
-            return {"selected": 0, "queued": 0, "skipped": 0, "limit": 0}
+            return {"selected": 0, "queued": 0, "skipped": 0, "limit": 0, "active": 0}
 
         failure_conclusions = ("failure", "timed_out", "startup_failure", "cancelled")
         new_job_ids = {int(job_id) for job_id in job_ids if job_id is not None}
+
+        # A queued failure-analysis task has no JobFailureAnalysis row until
+        # the Collector starts it. Count and exclude those tasks explicitly;
+        # otherwise every sync would repeatedly select the same queued jobs
+        # and never fill an available slot with the next pending failure.
+        active_tasks_result = await db.execute(
+            text("""
+                SELECT JSON_UNQUOTE(JSON_EXTRACT(task_params, '$.job_id'))
+                FROM collection_tasks
+                WHERE task_type = 'failure_analysis'
+                  AND status IN ('pending', 'running')
+            """)
+        )
+        active_task_rows = active_tasks_result.all()
+        active_job_ids = {
+            int(job_id)
+            for (job_id,) in active_task_rows
+            if job_id is not None and str(job_id).strip().isdigit()
+        }
+        available_slots = max(0, max_items - len(active_task_rows))
+        if available_slots == 0:
+            return {
+                "selected": 0,
+                "queued": 0,
+                "skipped": 0,
+                "limit": max_items,
+                "active": len(active_task_rows),
+            }
+
         first_record_id = func.min(DailyFailureRecord.id)
         candidate_query = (
             select(DailyFailureRecord.job_id)
@@ -274,19 +303,27 @@ class CollectorRunner:
             )
             .group_by(DailyFailureRecord.job_id)
         )
+        if active_job_ids:
+            candidate_query = candidate_query.where(~DailyFailureRecord.job_id.in_(active_job_ids))
         if new_job_ids:
             priority = case((DailyFailureRecord.job_id.in_(new_job_ids), 0), else_=1)
             candidate_query = candidate_query.order_by(priority, first_record_id)
         else:
             candidate_query = candidate_query.order_by(first_record_id)
-        candidate_query = candidate_query.limit(max_items)
+        candidate_query = candidate_query.limit(available_slots)
 
         records_result = await db.execute(candidate_query)
         selected_job_ids = list(dict.fromkeys(
             int(job_id) for (job_id,) in records_result.all() if job_id is not None
-        ))[:max_items]
+        ))[:available_slots]
         if not selected_job_ids:
-            return {"selected": 0, "queued": 0, "skipped": 0, "limit": max_items}
+            return {
+                "selected": 0,
+                "queued": 0,
+                "skipped": 0,
+                "limit": max_items,
+                "active": len(active_task_rows),
+            }
 
         queued = 0
         skipped = 0
@@ -311,6 +348,7 @@ class CollectorRunner:
             "queued": queued,
             "skipped": skipped,
             "limit": max_items,
+            "active": len(active_task_rows),
         }
 
     async def _run_model_sync(self, ctx: TaskContext, task_params: dict):
