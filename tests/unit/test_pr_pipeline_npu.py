@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pr_pipeline.pr_pipeline_service import PRPipelineService
 from infrastructure.persistence.models import CIJob
+from pr_pipeline.pr_pipeline_service import PRPipelineService
 
 
 def make_job(
