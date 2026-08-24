@@ -15,13 +15,9 @@ class _Result:
 
 
 @pytest.mark.asyncio
-async def test_auto_failure_analysis_queues_only_unanalysed_jobs(monkeypatch):
+async def test_auto_failure_analysis_respects_limit(monkeypatch):
     db = AsyncMock()
-    db.execute.side_effect = [
-        _Result([(101,), (102,)]),
-        _Result([(101, "completed"), (102, "failed")]),
-        _Result([(101,), (102,)]),
-    ]
+    db.execute.return_value = _Result([(101,), (102,), (103,)])
     create_task = AsyncMock(return_value=9001)
     monkeypatch.setattr(
         "infrastructure.tasks.task_manager.TaskManager.create_task",
@@ -30,15 +26,29 @@ async def test_auto_failure_analysis_queues_only_unanalysed_jobs(monkeypatch):
 
     result = await CollectorRunner(SimpleNamespace())._enqueue_auto_failure_analysis(
         db,
-        {101, 102},
+        {101, 102, 103},
+        max_items=2,
     )
 
-    assert result == {"selected": 2, "queued": 1, "skipped": 1}
-    create_task.assert_awaited_once_with(
-        db,
-        "failure_analysis",
-        {"job_id": 102, "force": False, "triggered_by": "scheduler"},
-        "failure_analysis:102",
-        required_capability="python",
-        priority=20,
+    assert result == {"selected": 2, "queued": 2, "skipped": 0, "limit": 2}
+    assert create_task.await_count == 2
+    assert [call.args[2]["job_id"] for call in create_task.await_args_list] == [101, 102]
+
+
+@pytest.mark.asyncio
+async def test_auto_failure_analysis_can_be_disabled(monkeypatch):
+    db = AsyncMock()
+    create_task = AsyncMock()
+    monkeypatch.setattr(
+        "infrastructure.tasks.task_manager.TaskManager.create_task",
+        create_task,
     )
+
+    result = await CollectorRunner(SimpleNamespace())._enqueue_auto_failure_analysis(
+        db,
+        {101},
+        max_items=0,
+    )
+
+    assert result == {"selected": 0, "queued": 0, "skipped": 0, "limit": 0}
+    create_task.assert_not_awaited()
