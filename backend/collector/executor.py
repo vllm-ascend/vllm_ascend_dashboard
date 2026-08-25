@@ -249,8 +249,9 @@ class CollectorRunner:
         analysis row are eligible for automatic work. The bounded query is
         ordered with the records materialized by this sync first, then older
         pending records, so records beyond the limit are not lost and drain
-        on subsequent syncs. Manual retries remain available for a failed or
-        cancelled analysis.
+        on subsequent syncs. Automatic work is forced so every newly
+        materialized job gets a real analysis; the cross-job failure
+        fingerprint cache is reserved for explicit non-forced requests.
         """
         from infrastructure.tasks.task_manager import TaskManager
 
@@ -331,7 +332,12 @@ class CollectorRunner:
             task_id = await TaskManager.create_task(
                 db,
                 "failure_analysis",
-                {"job_id": job_id, "force": False, "triggered_by": "scheduler"},
+                # A sync-triggered analysis must call the analyzer for this
+                # concrete GitHub job.  Using force=True intentionally skips
+                # the cross-job failure-fingerprint reuse path; queue-level
+                # dedupe and the max_items/active-slot limits still prevent
+                # duplicate work or unbounded concurrency.
+                {"job_id": job_id, "force": True, "triggered_by": "scheduler"},
                 f"failure_analysis:{job_id}",
                 required_capability="python",
                 # Keep automatic analysis behind collection/sync work. Manual
