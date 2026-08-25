@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 
-from sqlalchemy import case, func, select, text
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from collector.ci import CICollector
@@ -245,8 +245,9 @@ class CollectorRunner:
 
         Analysis is deliberately enqueued as a durable Collector task rather
         than executed inline, so a slow LLM or missing job log cannot extend
-        or fail the CI synchronization task. Only records without an
-        analysis row are eligible for automatic work. The bounded query is
+        or fail the CI synchronization task. Records without an analysis row
+        and legacy ``reused`` records are eligible for automatic work. The
+        bounded query is
         ordered with the records materialized by this sync first, then older
         pending records, so records beyond the limit are not lost and drain
         on subsequent syncs. Automatic work is forced so every newly
@@ -300,7 +301,13 @@ class CollectorRunner:
                 DailyFailureRecord.job_id.isnot(None),
                 # A queued Collector task has no analysis row until it starts;
                 # TaskManager's stable dedupe key makes a repeated scan safe.
-                JobFailureAnalysis.id.is_(None),
+                # ``reused`` rows are legacy cross-job results and must be
+                # re-analyzed once so their report belongs to this concrete
+                # GitHub job instead of another test case.
+                or_(
+                    JobFailureAnalysis.id.is_(None),
+                    JobFailureAnalysis.analysis_status == "reused",
+                ),
             )
             .group_by(DailyFailureRecord.job_id)
         )
@@ -383,8 +390,11 @@ class CollectorRunner:
         from failure_analysis.failure_analysis import FailureAnalysisService
 
         job_id = int(task_params["job_id"])
-        force = bool(task_params.get("force", False))
         triggered_by = str(task_params.get("triggered_by", "manual"))
+        # Scheduler-originated work must never fall back to cross-job
+        # fingerprint reuse, including tasks created by an older Scheduler
+        # version whose stored params still contain force=false.
+        force = bool(task_params.get("force", False)) or triggered_by == "scheduler"
         async with SessionLocal() as db:
             await FailureAnalysisService().analyze_failed_job(
                 job_id=job_id,

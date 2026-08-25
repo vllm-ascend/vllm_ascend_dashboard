@@ -1228,6 +1228,12 @@ async def analyze_failed_job(
         placeholder.agent_steps = 0
         placeholder.evidence_ledger = None
         placeholder.validation_result = None
+        placeholder.reused_analysis_id = None
+        placeholder.report_file_path = None
+        placeholder.pdf_file_path = None
+        placeholder.problem_category = None
+        placeholder.root_cause_summary = None
+        placeholder.improvement_measures_summary = None
     else:
         placeholder = JobFailureAnalysis(
             job_id=job_id,

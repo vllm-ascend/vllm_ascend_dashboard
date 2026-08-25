@@ -250,6 +250,11 @@ class FailureAnalysisService:
         ):
             raise ValueError(f"CIJob {job_id} conclusion is '{job.conclusion}', not a failed/cancelled job")
 
+        # Automatic sync work must analyze this exact Job.  Do not allow a
+        # legacy queued scheduler task (which may still carry force=false) to
+        # reuse a report generated for another Job with a similar failed step.
+        force = bool(force or triggered_by == "scheduler")
+
         existing_stmt = select(JobFailureAnalysis).where(
             JobFailureAnalysis.job_id == job_id
         ).order_by(JobFailureAnalysis.id.desc()).limit(1)
@@ -334,6 +339,15 @@ class FailureAnalysisService:
             analysis.error_message = None
             analysis.failure_fingerprint = fingerprint
             analysis.triggered_by = triggered_by
+            # Clear legacy reused content before the real analysis starts.
+            # Otherwise the UI can keep showing "复用分析" or an old report
+            # while the new Job is analyzing (or after a failed retry).
+            analysis.reused_analysis_id = None
+            analysis.report_file_path = None
+            analysis.pdf_file_path = None
+            analysis.problem_category = None
+            analysis.root_cause_summary = None
+            analysis.improvement_measures_summary = None
         else:
             analysis = JobFailureAnalysis(
                 job_id=job_id,
