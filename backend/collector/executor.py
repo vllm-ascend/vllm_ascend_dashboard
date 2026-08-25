@@ -339,12 +339,11 @@ class CollectorRunner:
             task_id = await TaskManager.create_task(
                 db,
                 "failure_analysis",
-                # A sync-triggered analysis must call the analyzer for this
-                # concrete GitHub job.  Using force=True intentionally skips
-                # the cross-job failure-fingerprint reuse path; queue-level
-                # dedupe and the max_items/active-slot limits still prevent
-                # duplicate work or unbounded concurrency.
-                {"job_id": job_id, "force": True, "triggered_by": "scheduler"},
+                # Scheduler-originated analysis is always a real analysis for
+                # this concrete GitHub job.  The worker derives force from
+                # the origin; keeping no force=false payload here prevents
+                # the obsolete cross-job reuse path from returning.
+                {"job_id": job_id, "triggered_by": "scheduler"},
                 f"failure_analysis:{job_id}",
                 required_capability="python",
                 # Keep automatic analysis behind collection/sync work. Manual
@@ -391,10 +390,9 @@ class CollectorRunner:
 
         job_id = int(task_params["job_id"])
         triggered_by = str(task_params.get("triggered_by", "manual"))
-        # Scheduler-originated work must never fall back to cross-job
-        # fingerprint reuse, including tasks created by an older Scheduler
-        # version whose stored params still contain force=false.
-        force = bool(task_params.get("force", False)) or triggered_by == "scheduler"
+        # Scheduler-originated work is always forced. Manual requests retain
+        # their explicit force option for deliberate reruns.
+        force = triggered_by == "scheduler" or bool(task_params.get("force", False))
         async with SessionLocal() as db:
             await FailureAnalysisService().analyze_failed_job(
                 job_id=job_id,

@@ -36,7 +36,7 @@ async def test_auto_failure_analysis_respects_limit(monkeypatch):
     assert result == {"selected": 2, "queued": 2, "skipped": 0, "limit": 2, "active": 0}
     assert create_task.await_count == 2
     assert [call.args[2]["job_id"] for call in create_task.await_args_list] == [101, 102]
-    assert [call.args[2]["force"] for call in create_task.await_args_list] == [True, True]
+    assert all("force" not in call.args[2] for call in create_task.await_args_list)
     assert [call.args[2]["triggered_by"] for call in create_task.await_args_list] == ["scheduler", "scheduler"]
 
 

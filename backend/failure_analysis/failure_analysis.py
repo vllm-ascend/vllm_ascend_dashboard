@@ -250,9 +250,8 @@ class FailureAnalysisService:
         ):
             raise ValueError(f"CIJob {job_id} conclusion is '{job.conclusion}', not a failed/cancelled job")
 
-        # Automatic sync work must analyze this exact Job.  Do not allow a
-        # legacy queued scheduler task (which may still carry force=false) to
-        # reuse a report generated for another Job with a similar failed step.
+        # Automatic sync work must analyze this exact Job and must not reuse a
+        # report generated for another Job with a similar failed step.
         force = bool(force or triggered_by == "scheduler")
 
         existing_stmt = select(JobFailureAnalysis).where(
@@ -288,7 +287,8 @@ class FailureAnalysisService:
                 return existing
             raise
 
-        # 鎸囩汗澶嶇敤锛堜粎 scheduler 瑙﹀彂锛屾墜鍔?force=true 璺宠繃锛?
+        # Fingerprint reuse is available only to explicit non-forced requests;
+        # scheduler-originated work was normalized to force=True above.
         if not force:
             dedup_stmt = select(JobFailureAnalysis).where(
                 and_(
