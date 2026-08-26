@@ -44,12 +44,18 @@ function WorkflowDetail() {
   const { data: jobs, isLoading: jobsLoading, refetch: refetchJobs } = useJobsByRun(runIdNum)
   const { data: runs, refetch: refetchRuns } = useRuns({ limit: 100 })
   const { data: jobOwners } = useJobOwners()
-  const { data: analysisData } = useFailureAnalysisList({ days_back: 30 })
   const analyzeMutation = useAnalyzeFailedJob()
   const { data: currentUser } = useCurrentUser()
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin'
 
   const currentRun = runs?.find(r => r.run_id === runIdNum)
+  const { data: analysisData } = useFailureAnalysisList(
+    { days_back: 30, workflow_name: currentRun?.workflow_name },
+    true,
+    // Keep this page in sync with both manual and scheduler-triggered
+    // analyses. Scheduler work can be queued before its analysis row exists.
+    { pollIntervalMs: 5000 },
+  )
 
   const ownerMap = new Map<string, { owner: string; display_name?: string | null }>()
   jobOwners?.forEach(owner => {

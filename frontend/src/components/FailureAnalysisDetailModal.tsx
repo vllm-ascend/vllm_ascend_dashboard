@@ -270,7 +270,7 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
             <div style={{ textAlign: 'center', padding: 40 }}>
               <Spin size="large" tip="分析进行中..." />
               <div style={{ marginTop: 16, color: '#8c8c8c' }}>
-                <p>系统正在自动分析中，请稍后刷新查看结果</p>
+                <p>系统正在自动分析中，状态和结果会自动更新</p>
                 <p style={{ fontSize: 12, color: '#b0b0b0' }}>
                   通常需要 5-15 分钟，复杂分析可能更久
                 </p>

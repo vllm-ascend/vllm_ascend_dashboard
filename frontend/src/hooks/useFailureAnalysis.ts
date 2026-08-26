@@ -1,24 +1,40 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as faApi from '../services/failureAnalysis'
 
+type FailureAnalysisListOptions = {
+  /**
+   * Keep a page watching for scheduler-created analysis rows.  A scheduled
+   * task is queued before the analysis row exists, so status-only polling
+   * cannot discover it when the page was already open.
+   */
+  pollIntervalMs?: number
+}
+
 export const useFailureAnalysisList = (params?: {
   problem_category?: string
   analysis_status?: string
   workflow_name?: string
   days_back?: number
-}, enabled = true) => {
+}, enabled = true, options: FailureAnalysisListOptions = {}) => {
+  const pollIntervalMs = options.pollIntervalMs && options.pollIntervalMs > 0
+    ? options.pollIntervalMs
+    : null
+
   return useQuery({
     queryKey: ['failure-analysis-list', params],
     queryFn: () => faApi.listFailureAnalyses(params),
     enabled,
-    refetchInterval: (query) => {
+    // Workflow detail pages also need to discover a scheduler-created row.
+    // Such a row does not exist until the Collector starts the queued task,
+    // so polling only while an existing item is "analyzing" misses it.
+    refetchInterval: pollIntervalMs ?? ((query) => {
       const data = query.state.data as { items?: Array<{ analysis_status?: string }> } | undefined
       // The analysis POST returns immediately while work continues in the
       // backend. Keep the workflow table fresh until every active item exits.
       return data?.items?.some(item => item.analysis_status === 'analyzing')
         ? 5000
         : false
-    },
+    }),
     refetchOnWindowFocus: true,
   })
 }
