@@ -87,6 +87,7 @@ async def get_system_config(
                 "days_back": settings.CI_SYNC_DAYS_BACK,
                 "max_runs_per_workflow": settings.CI_SYNC_MAX_RUNS_PER_WORKFLOW,
                 "force_full_refresh": settings.CI_SYNC_FORCE_FULL_REFRESH,
+                "auto_failure_analysis_enabled": settings.CI_AUTO_FAILURE_ANALYSIS_ENABLED,
             },
             "model_sync_config": {
                 "sync_interval_minutes": settings.MODEL_SYNC_INTERVAL_MINUTES,
@@ -246,6 +247,7 @@ async def update_sync_config(
     ci_sync_days_back: int | None = Query(None),
     ci_sync_max_runs_per_workflow: int | None = Query(None),
     ci_sync_force_full_refresh: bool | None = Query(None),
+    ci_auto_failure_analysis_enabled: bool | None = Query(None),
     model_sync_interval_minutes: int | None = Query(None),
     model_sync_days_back: int | None = Query(None),
     model_sync_runs_limit: int | None = Query(None),
@@ -360,6 +362,13 @@ async def update_sync_config(
         settings.CI_SYNC_FORCE_FULL_REFRESH = ci_sync_force_full_refresh
         runtime_updates['ci_sync_force_full_refresh'] = ci_sync_force_full_refresh
         updates.append(f"全量覆盖刷新：{'开启' if ci_sync_force_full_refresh else '关闭'}")
+
+    if ci_auto_failure_analysis_enabled is not None:
+        settings.CI_AUTO_FAILURE_ANALYSIS_ENABLED = ci_auto_failure_analysis_enabled
+        runtime_updates['ci_auto_failure_analysis_enabled'] = ci_auto_failure_analysis_enabled
+        updates.append(
+            f"同步后自动失败分析：{'开启' if ci_auto_failure_analysis_enabled else '关闭'}"
+        )
 
     if data_retention_days is not None:
         settings.DATA_RETENTION_DAYS = data_retention_days

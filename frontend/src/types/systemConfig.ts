@@ -18,6 +18,7 @@ export interface SystemConfig {
       days_back: number
       max_runs_per_workflow: number
       force_full_refresh: boolean
+      auto_failure_analysis_enabled: boolean
     }
     model_sync_config: {
       sync_interval_minutes: number
@@ -81,6 +82,7 @@ export interface SyncConfigUpdate {
   ci_sync_days_back?: number
   ci_sync_max_runs_per_workflow?: number
   ci_sync_force_full_refresh?: boolean
+  ci_auto_failure_analysis_enabled?: boolean
   model_sync_interval_minutes?: number
   model_sync_days_back?: number
   model_sync_runs_limit?: number

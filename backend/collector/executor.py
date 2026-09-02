@@ -256,6 +256,9 @@ class CollectorRunner:
         """
         from infrastructure.tasks.task_manager import TaskManager
 
+        if not getattr(settings, "CI_AUTO_FAILURE_ANALYSIS_ENABLED", True):
+            return {"selected": 0, "queued": 0, "skipped": 0, "limit": 0, "active": 0}
+
         max_items = min(AUTO_FAILURE_ANALYSIS_HARD_LIMIT, max(0, int(max_items)))
         if max_items == 0:
             return {"selected": 0, "queued": 0, "skipped": 0, "limit": 0, "active": 0}

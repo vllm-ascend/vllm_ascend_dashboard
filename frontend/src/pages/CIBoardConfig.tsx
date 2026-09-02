@@ -260,7 +260,7 @@ function CIBoardConfig() {
 
   const updateSyncMutation = useMutation({
     mutationFn: (data: Record<string, number | boolean>) =>
-      api.put('/system/config/sync', data),
+      api.put('/system/config/sync', null, { params: data }),
     onSuccess: () => {
       message.success('更新成功')
       setIsSyncConfigModalOpen(false)
@@ -303,6 +303,7 @@ function CIBoardConfig() {
       ci_sync_days_back: syncConfig?.sync_config.ci_sync_config.days_back,
       ci_sync_max_runs_per_workflow: syncConfig?.sync_config.ci_sync_config.max_runs_per_workflow,
       ci_sync_force_full_refresh: syncConfig?.sync_config.ci_sync_config.force_full_refresh,
+      ci_auto_failure_analysis_enabled: syncConfig?.sync_config.ci_sync_config.auto_failure_analysis_enabled,
       data_retention_days: syncConfig?.sync_config.data_retention_days,
     })
     setIsSyncConfigModalOpen(true)
@@ -332,6 +333,9 @@ function CIBoardConfig() {
     }
     if (values.ci_sync_force_full_refresh !== undefined && values.ci_sync_force_full_refresh !== null) {
       updateData.ci_sync_force_full_refresh = values.ci_sync_force_full_refresh
+    }
+    if (values.ci_auto_failure_analysis_enabled !== undefined && values.ci_auto_failure_analysis_enabled !== null) {
+      updateData.ci_auto_failure_analysis_enabled = values.ci_auto_failure_analysis_enabled
     }
     if (values.data_retention_days !== undefined && values.data_retention_days !== null) {
       updateData.data_retention_days = values.data_retention_days
@@ -1115,6 +1119,15 @@ function CIBoardConfig() {
               checkedChildren="强制全量覆盖"
               unCheckedChildren="增量刷新"
             />
+          </Form.Item>
+
+          <Form.Item
+            name="ci_auto_failure_analysis_enabled"
+            label="同步后自动失败分析"
+            valuePropName="checked"
+            extra="关闭后，同步仍会采集和展示失败任务，但不会自动排队 AI 分析；手动分析不受影响。"
+          >
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
 
           <Form.Item

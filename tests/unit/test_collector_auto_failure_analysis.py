@@ -60,6 +60,26 @@ async def test_auto_failure_analysis_can_be_disabled(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_auto_failure_analysis_switch_can_be_disabled(monkeypatch):
+    db = AsyncMock()
+    create_task = AsyncMock()
+    monkeypatch.setattr(
+        "infrastructure.tasks.task_manager.TaskManager.create_task",
+        create_task,
+    )
+    monkeypatch.setattr("collector.executor.settings.CI_AUTO_FAILURE_ANALYSIS_ENABLED", False)
+
+    result = await CollectorRunner(SimpleNamespace())._enqueue_auto_failure_analysis(
+        db,
+        {101},
+        max_items=2,
+    )
+
+    assert result == {"selected": 0, "queued": 0, "skipped": 0, "limit": 0, "active": 0}
+    create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_auto_failure_analysis_does_not_fill_active_slots(monkeypatch):
     db = AsyncMock()
     db.execute.return_value = _Result([("101",), ("102",)])

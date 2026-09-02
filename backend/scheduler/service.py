@@ -436,6 +436,7 @@ class DataSyncScheduler:
                     "ci_sync_days_back": "CI_SYNC_DAYS_BACK",
                     "ci_sync_max_runs_per_workflow": "CI_SYNC_MAX_RUNS_PER_WORKFLOW",
                     "ci_sync_force_full_refresh": "CI_SYNC_FORCE_FULL_REFRESH",
+                    "ci_auto_failure_analysis_enabled": "CI_AUTO_FAILURE_ANALYSIS_ENABLED",
                     "ci_auto_failure_analysis_max_per_sync": "CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC",
                     "model_sync_interval_minutes": "MODEL_SYNC_INTERVAL_MINUTES",
                     "model_sync_days_back": "MODEL_SYNC_DAYS_BACK",

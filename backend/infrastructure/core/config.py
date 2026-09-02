@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     # Failure analysis invokes log retrieval and an LLM. Keep automatic
     # fan-out deliberately small on the production collector; deferred
     # records remain queryable and are picked up by a later sync.
+    CI_AUTO_FAILURE_ANALYSIS_ENABLED: bool = True
     CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC: int = 2
     NIGHTLY_DATA_SYNC_INTERVAL_MINUTES: int = 120
     DATA_RETENTION_DAYS: int = 365

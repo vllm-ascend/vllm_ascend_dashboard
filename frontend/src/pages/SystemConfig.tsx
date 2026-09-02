@@ -316,6 +316,9 @@ function SystemConfig() {
     if (values.ci_sync_force_full_refresh !== undefined && values.ci_sync_force_full_refresh !== null) {
       updateData.ci_sync_force_full_refresh = values.ci_sync_force_full_refresh
     }
+    if (values.ci_auto_failure_analysis_enabled !== undefined && values.ci_auto_failure_analysis_enabled !== null) {
+      updateData.ci_auto_failure_analysis_enabled = values.ci_auto_failure_analysis_enabled
+    }
     if (values.data_retention_days !== undefined && values.data_retention_days !== null) {
       updateData.data_retention_days = values.data_retention_days
     }
@@ -1728,6 +1731,7 @@ function SystemConfig() {
         ci_sync_days_back: ciSyncConfig?.sync_config.ci_sync_config.days_back,
         ci_sync_max_runs_per_workflow: ciSyncConfig?.sync_config.ci_sync_config.max_runs_per_workflow,
         ci_sync_force_full_refresh: ciSyncConfig?.sync_config.ci_sync_config.force_full_refresh,
+        ci_auto_failure_analysis_enabled: ciSyncConfig?.sync_config.ci_sync_config.auto_failure_analysis_enabled,
         data_retention_days: ciSyncConfig?.sync_config.data_retention_days,
       })
       setIsSyncConfigModalOpen(true)
@@ -1775,6 +1779,9 @@ function SystemConfig() {
             </Descriptions.Item>
             <Descriptions.Item label="刷新模式">
               {ciSyncConfig?.sync_config.ci_sync_config.force_full_refresh ? '全量覆盖' : '增量刷新'}
+            </Descriptions.Item>
+            <Descriptions.Item label="同步后自动失败分析">
+              {ciSyncConfig?.sync_config.ci_sync_config.auto_failure_analysis_enabled ? '开启' : '关闭'}
             </Descriptions.Item>
             <Descriptions.Item label="数据保留策略">
               {ciSyncConfig?.sync_config.data_retention_days} 天
@@ -2693,6 +2700,15 @@ function SystemConfig() {
             valuePropName="checked"
           >
             <Switch checkedChildren="全量覆盖" unCheckedChildren="增量刷新" />
+          </Form.Item>
+
+          <Form.Item
+            name="ci_auto_failure_analysis_enabled"
+            label="同步后自动失败分析"
+            valuePropName="checked"
+            extra="关闭后，同步仍会采集和展示失败任务，但不会自动排队 AI 分析；手动分析不受影响。"
+          >
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
 
           <Form.Item
