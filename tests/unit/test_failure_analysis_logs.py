@@ -7,6 +7,34 @@ import pytest
 from failure_analysis.failure_analysis import FailureAnalysisService
 
 
+def test_extract_report_summary_unwraps_nested_json_envelope():
+    payload = (
+        '{"result":"{\\"report\\":{\\"problem_category\\":\\"基础设施\\",'
+        '\\"root_cause_summary\\":\\"Runner 断开\\",'
+        '\\"improvement_measures_summary\\":\\"重试并检查 Runner\\"}}"}'
+    )
+
+    assert FailureAnalysisService._extract_report_summary(payload) == {
+        "problem_category": "基础设施",
+        "root_cause_summary": "Runner 断开",
+        "improvement_measures_summary": "重试并检查 Runner",
+    }
+
+
+def test_extract_report_summary_reads_fields_from_malformed_wrapper():
+    payload = (
+        '前置说明 {"problem_category":"其他", '
+        '"root_cause_summary":"证据不足", '
+        '"improvement_measures_summary":"补充日志"'
+    )
+
+    assert FailureAnalysisService._extract_report_summary(payload) == {
+        "problem_category": "其他",
+        "root_cause_summary": "证据不足",
+        "improvement_measures_summary": "补充日志",
+    }
+
+
 def test_extract_job_log_from_run_zip_uses_matching_matrix_job(tmp_path):
     archive_path = tmp_path / "run-logs.zip"
     destination = tmp_path / "logs" / "123.log"

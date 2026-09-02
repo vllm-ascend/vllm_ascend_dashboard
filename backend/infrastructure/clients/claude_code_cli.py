@@ -557,9 +557,11 @@ class ClaudeCodeCLI:
         if output_format == "json":
             try:
                 raw_json = json.loads(stdout)
-                # 尝试提取常见字段
+                # 尝试提取常见字段。不同 CLI/网关版本可能把最终文本放
+                # 在 result、content 或 reasoning_content 中，也可能再包
+                # 一层对象；统一展开后再交给报告解析器。
                 if isinstance(raw_json, dict):
-                    content = raw_json.get("result", raw_json.get("content", stdout))
+                    content = self._content_from_payload(raw_json) or stdout
                     turns = raw_json.get("turns", 0)
                     if "tool_calls" in raw_json:
                         tool_calls = raw_json["tool_calls"]
@@ -576,6 +578,28 @@ class ClaudeCodeCLI:
             exit_code=exit_code,
             stderr=stderr,
         )
+
+    @classmethod
+    def _content_from_payload(cls, payload: object) -> str:
+        """Extract textual output from a CLI/LLM JSON envelope.
+
+        GLM and other reasoning models may expose the answer as
+        ``reasoning_content`` when ``content`` is empty.  The Claude CLI also
+        has emitted nested result/content envelopes across versions.  This
+        helper accepts all of those shapes without serializing dictionaries
+        into text that can never satisfy the failure-report JSON contract.
+        """
+        if isinstance(payload, str):
+            return payload if payload.strip() else ""
+        if isinstance(payload, list):
+            parts = [cls._content_from_payload(item) for item in payload]
+            return "".join(part for part in parts if part)
+        if isinstance(payload, dict):
+            for key in ("result", "content", "reasoning_content", "reasoning", "text"):
+                text = cls._content_from_payload(payload.get(key))
+                if text:
+                    return text
+        return ""
 
 
 async def run_with_fallback(

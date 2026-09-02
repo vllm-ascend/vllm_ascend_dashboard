@@ -51,6 +51,91 @@ def test_no_double_v1():
     assert "/v1/v1/" not in url
 
 
+def test_reasoning_content_fallback_for_non_stream_response():
+    """Reasoning-only upstream responses must remain visible to Claude CLI."""
+    p = _make("https://gateway.example/v1")
+    response = p._openai_resp_to_anthropic(
+        {
+            "id": "chatcmpl-test",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": '{"problem_category":"其他"}',
+                },
+                "finish_reason": "stop",
+            }],
+        },
+        {"messages": []},
+    )
+    assert response["content"] == [{
+        "type": "text",
+        "text": '{"problem_category":"其他"}',
+    }]
+
+
+def test_content_blocks_are_normalized():
+    """OpenAI-compatible block arrays should be converted to text."""
+    p = _make("https://gateway.example/v1")
+    response = p._openai_resp_to_anthropic(
+        {
+            "choices": [{
+                "message": {
+                    "content": [{"type": "text", "text": "part-1"}, "part-2"],
+                },
+                "finish_reason": "stop",
+            }],
+        },
+        {"messages": []},
+    )
+    assert response["content"] == [{"type": "text", "text": "part-1part-2"}]
+
+
+def test_stream_reasoning_content_is_forwarded_and_length_preserved():
+    """Streaming reasoning and truncation metadata must not be discarded."""
+    p = _make("https://gateway.example/v1")
+    state = {
+        "msg_id": "msg-test",
+        "model": "m",
+        "content_index": 0,
+        "tool_use_index": 0,
+        "started": False,
+        "finished": False,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "current_tool_call": None,
+        "pending_tool_calls": {},
+        "sent_text_block_start": False,
+        "sent_tool_blocks": set(),
+    }
+    events = p._openai_chunk_to_anthropic_events(
+        {
+            "choices": [{
+                "delta": {"content": "", "reasoning_content": "reasoning"},
+                "finish_reason": "length",
+            }],
+        },
+        state,
+    )
+    assert any('"text": "reasoning"' in event for event in events)
+    assert any('"stop_reason": "max_tokens"' in event for event in events)
+
+
+def test_cli_json_envelope_reasoning_content_fallback():
+    """Nested CLI envelopes should expose reasoning-only output to the parser."""
+    from infrastructure.clients.claude_code_cli import ClaudeCodeCLI
+
+    payload = {
+        "result": {
+            "content": "",
+            "reasoning_content": '{"problem_category":"其他"}',
+        }
+    }
+    assert ClaudeCodeCLI._content_from_payload(payload) == (
+        '{"problem_category":"其他"}'
+    )
+
+
 def test_detect_api_error_signatures():
     """failure_analysis 的 API 错误检测应识别上游错误，避免误标 completed。"""
     from failure_analysis.failure_analysis import FailureAnalysisService

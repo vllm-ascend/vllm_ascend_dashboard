@@ -203,7 +203,11 @@ class FormatProxy:
                         "choices": [
                             {
                                 "finish_reason": c.get("finish_reason", ""),
-                                "content": str(c.get("message", {}).get("content", ""))[:3000],
+                                "content": self._text_content(
+                                    c.get("message", {}).get("content")
+                                    or c.get("message", {}).get("reasoning_content")
+                                    or c.get("reasoning_content")
+                                )[:3000],
                             }
                             for c in openai_resp.get("choices", [])
                         ],
@@ -407,6 +411,38 @@ class FormatProxy:
     # Format translation: OpenAI → Anthropic (Response)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _text_content(value: object) -> str:
+        """Normalize OpenAI-compatible text/content values to plain text.
+
+        Reasoning models are not consistent about the shape of ``content``:
+        most return a string, while some gateways return a list of content
+        blocks.  Keeping this normalization in the translation layer prevents
+        the Claude CLI from receiving a Python representation of the response.
+        """
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: list[str] = []
+            for block in value:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict):
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                    elif isinstance(block.get("content"), str):
+                        parts.append(block["content"])
+            return "".join(parts)
+        if isinstance(value, dict):
+            text = value.get("text")
+            if isinstance(text, str):
+                return text
+            content = value.get("content")
+            if isinstance(content, str):
+                return content
+        return ""
+
     def _openai_resp_to_anthropic(self, openai_resp: dict, openai_body: dict) -> dict:
         """非流式 OpenAI 响应 → Anthropic 响应"""
         choice = openai_resp.get("choices", [{}])[0]
@@ -415,8 +451,17 @@ class FormatProxy:
 
         content_blocks = []
 
-        # 文本内容
-        text_content = message.get("content")
+        # 文本内容。推理模型（例如 GLM 系列）在没有可用最终 content
+        # 时可能把完整回答放在 reasoning_content。该字段不能丢掉，
+        # 否则 Claude CLI 会收到只有 tool call 的响应，最终报告无法生成。
+        text_content = self._text_content(message.get("content"))
+        if not text_content.strip():
+            text_content = self._text_content(
+                message.get("reasoning_content")
+                or message.get("reasoning")
+                or choice.get("reasoning_content")
+                or openai_resp.get("reasoning_content")
+            )
         if text_content:
             content_blocks.append({"type": "text", "text": text_content})
 
@@ -435,6 +480,14 @@ class FormatProxy:
                 "input": inp,
             })
 
+        finish_reason = choice.get("finish_reason", "end_turn")
+        if finish_reason == "stop":
+            finish_reason = "end_turn"
+        elif finish_reason == "length":
+            finish_reason = "max_tokens"
+        elif finish_reason == "tool_calls":
+            finish_reason = "tool_use"
+
         # 尝试从最后一个 user message 估算 input_tokens
         input_tokens = usage.get("prompt_tokens", 0)
         if not input_tokens:
@@ -447,7 +500,7 @@ class FormatProxy:
             "role": "assistant",
             "model": self.upstream_model,
             "content": content_blocks,
-            "stop_reason": choice.get("finish_reason", "end_turn"),
+            "stop_reason": finish_reason,
             "stop_sequence": None,
             "usage": {
                 "input_tokens": input_tokens,
@@ -502,8 +555,13 @@ class FormatProxy:
                 },
             }))
 
-        # 文本增量
-        text_delta = delta.get("content", "")
+        # 文本增量。与非流式响应保持一致，兼容推理模型的
+        # reasoning_content 增量字段。
+        text_delta = self._text_content(delta.get("content"))
+        if not text_delta:
+            text_delta = self._text_content(
+                delta.get("reasoning_content") or delta.get("reasoning")
+            )
         if text_delta:
             idx = state["content_index"]
             if not state["sent_text_block_start"]:
@@ -589,8 +647,13 @@ class FormatProxy:
                 }))
 
             mapped_stop = finish_reason
-            if finish_reason in ("stop", "length"):
+            if finish_reason == "stop":
                 mapped_stop = "end_turn"
+            elif finish_reason == "length":
+                # Preserve truncation information.  Mapping length to
+                # end_turn makes an incomplete JSON report look like a normal
+                # completion and prevents callers from retrying it.
+                mapped_stop = "max_tokens"
             elif finish_reason == "tool_calls":
                 mapped_stop = "tool_use"
 

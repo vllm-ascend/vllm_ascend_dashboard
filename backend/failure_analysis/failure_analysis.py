@@ -455,6 +455,19 @@ class FailureAnalysisService:
                 )
 
             parsed = self.parse_llm_response(raw)
+            # Keep the stricter report renderer and the legacy parser in sync.
+            # Some CLI versions return a JSON envelope whose report is nested
+            # or JSON-encoded as a string.  ``parse_llm_response`` intentionally
+            # has broad fallbacks, but it cannot see those normalized fields
+            # unless we copy the validated values extracted above.
+            for key in (
+                "problem_category",
+                "root_cause_summary",
+                "improvement_measures_summary",
+            ):
+                value = report_json.get(key)
+                if isinstance(value, str) and value.strip():
+                    parsed[key] = value.strip()
             if missing_report_fields and runtime == "custom_agent":
                 logger.warning(
                     "Custom agent report is missing summary fields %s; "
@@ -1797,15 +1810,104 @@ class FailureAnalysisService:
 
     @staticmethod
     def _extract_report_summary(text: str) -> dict:
-        """Return the final structured report summary, or an empty mapping."""
+        """Return the final structured report summary, or an empty mapping.
+
+        The Claude CLI normally returns a plain JSON object, but gateways and
+        CLI versions may wrap it in ``result``/``content`` or encode the inner
+        report as a JSON string.  Normalize those shapes here so the renderer
+        does not reject an otherwise complete report merely because of the
+        transport envelope.
+        """
+        required = (
+            "problem_category",
+            "root_cause_summary",
+            "improvement_measures_summary",
+        )
+
+        def find_field(value: object, key: str) -> str:
+            if isinstance(value, dict):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+                for nested in value.values():
+                    found = find_field(nested, key)
+                    if found:
+                        return found
+            elif isinstance(value, list):
+                for nested in value:
+                    found = find_field(nested, key)
+                    if found:
+                        return found
+            return ""
+
+        def inspect(value: object, depth: int = 0) -> dict[str, str]:
+            if depth > 4:
+                return {}
+            if isinstance(value, str):
+                candidate = value.strip()
+                if not candidate or "{" not in candidate:
+                    return {}
+                try:
+                    decoded = json.loads(candidate)
+                except (json.JSONDecodeError, TypeError):
+                    json_text = FailureAnalysisService._extract_json_block(candidate)
+                    if not json_text:
+                        return {}
+                    try:
+                        decoded = json.loads(json_text)
+                    except (json.JSONDecodeError, TypeError):
+                        return {}
+                return inspect(decoded, depth + 1)
+            if isinstance(value, dict):
+                summary = {
+                    key: find_field(value, key)
+                    for key in required
+                }
+                summary = {key: item for key, item in summary.items() if item}
+                if len(summary) == len(required):
+                    return summary
+                for nested in value.values():
+                    found = inspect(nested, depth + 1)
+                    if found:
+                        merged = {**summary, **found}
+                        if len(merged) == len(required):
+                            return merged
+                        summary = merged
+                if summary:
+                    return summary
+            elif isinstance(value, list):
+                for nested in value:
+                    found = inspect(nested, depth + 1)
+                    if found:
+                        return found
+            return {}
+
         json_text = FailureAnalysisService._extract_json_block(text)
-        if not json_text:
-            return {}
-        try:
-            value = json.loads(json_text)
-        except (json.JSONDecodeError, TypeError):
-            return {}
-        return value if isinstance(value, dict) else {}
+        if json_text:
+            try:
+                summary = inspect(json.loads(json_text))
+            except (json.JSONDecodeError, TypeError):
+                summary = {}
+            if summary:
+                return summary
+
+        # Last-resort extraction for a response whose surrounding JSON is
+        # malformed but whose report fields themselves are valid JSON strings.
+        summary: dict[str, str] = {}
+        for key in required:
+            match = re.search(
+                rf'"{re.escape(key)}"\s*:\s*"((?:\\.|[^"\\])*)"',
+                text,
+            )
+            if not match:
+                continue
+            try:
+                value = json.loads(f'"{match.group(1)}"')
+            except (json.JSONDecodeError, TypeError):
+                value = match.group(1)
+            if isinstance(value, str) and value.strip():
+                summary[key] = value.strip()
+        return summary
 
     @staticmethod
     def _deep_search_json(data: dict, key: str, default: str = "") -> str:
