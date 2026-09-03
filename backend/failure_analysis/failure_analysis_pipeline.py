@@ -645,6 +645,7 @@ def investigation_prompt(job_context: str) -> str:
 关键调查要求：
 - 从失败 Job 的完整 job log 和 GitHub steps_data 中标记为 failure/timed_out/startup_failure 的步骤开始，定位失败事实、执行配置、bad commit/SHA、run_id、时间；不要假设失败步骤一定叫 stream log，实际名称可能是 Run Pytest (xxx)、Run Test、Upload/Check 等。
 - 如果主日志已直接证明 Runner、网络、磁盘、镜像/依赖、权限、配置、超时或测试断言问题，记录该直接原因，并将 stop_reason 设为 direct_failure_explained。此时无需建立回归边界、代码假设或 PR，也必须正常结束调查。
+- 精度劣化、性能下降或 benchmark 阈值失败只证明当前测量未达标，不证明基线需要修改。未完成同配置复测、环境排除、因果分析和验收目标确认前，不得建议修改基线、放宽阈值或降低精度要求；证据不足时记录劣化现象和复测方案。
 - 只有代码回归仍是合理解释或直接原因不明确时，才找到上一次同一 workflow/job/config 的成功运行，记录 last-good run_id/time/SHA，并在 bad 与 last-good 之间查看 commit/PR 列表。
 - commit/PR 列表只是调查材料，不要把区间内所有提交都当作候选；没有“日志症状 → 运行入口/配置 → 源码路径 → diff”因果链时，不得关联 PR。
 - 先从失败日志归纳失败机制，再到代码仓追踪“日志症状 → 运行入口/配置 → 可能受影响源码路径 → 区间提交 diff”的因果链。只有这条链能连上时，才把提交提升为候选假设。

@@ -1426,6 +1426,7 @@ class FailureAnalysisService:
         lines.append("  可随时读取 last-good、bad/head 和候选提交；使用结构化 Git 工具，无需 checkout 或修改工作树。区间提交是调查材料，不是必须逐一审查的清单。")
         lines.append("  如果 Matrix/Code Target Ref 与 Workflow Branch 不一致，必须从 job log/历史 job log 中抽取被测代码 SHA；抽不到时不要使用 workflow/main 的 commit diff。")
         lines.append("  只有日志事实、实际运行入口/配置、源码路径和候选提交 diff 能形成因果链时，才能归因到 PR。否则关联 PR 留空，正常报告错误原因、证据缺口和建议动作。")
+        lines.append("  精度/性能阈值失败只证明当前测量未达标，不证明基线应修改。未完成同配置复测、环境排除、因果分析和验收目标确认前，不得建议放宽阈值、降低精度要求或更新基线。")
         lines.append("  每次工具调用都应产生新事实、排除项或明确证据缺口；不要无新增信息地重复搜索。达到直接原因结论、PR 归因标准或证据不足结论后立即输出报告。")
         lines.append("  日志来源是 GitHub Actions 下载到 backend/data 的 job/run 日志和 artifacts；不能登录 runner。")
         lines.append("  生产环境、当前 Job Runner 与本地分析宿主可能不同，不能混淆。")
