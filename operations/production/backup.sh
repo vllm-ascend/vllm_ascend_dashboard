@@ -18,6 +18,8 @@ fi
 RETENTION_DAYS=30
 SILENT=false
 VERIFY_RESTORE=false
+CHECK_LATEST=false
+MAX_BACKUP_AGE_HOURS="${DASHBOARD_FAST_BACKUP_MAX_AGE_HOURS:-24}"
 
 # By default back up the database selected by MYSQL_DATABASE. Additional
 # databases can be supplied explicitly through DASHBOARD_BACKUP_DATABASES.
@@ -29,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --silent) SILENT=true; shift ;;
         --verify-restore) VERIFY_RESTORE=true; shift ;;
+        --check-latest) CHECK_LATEST=true; shift ;;
         --retention) RETENTION_DAYS="${2:?retention days required}"; shift 2 ;;
         --databases) DATABASES="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -38,6 +41,45 @@ done
 log() { $SILENT || echo "[BACKUP] $1"; }
 die() { echo "[ERROR] $1" >&2; exit 1; }
 
+latest_verified_backup() {
+    local latest_meta backup_file expected_checksum actual_checksum
+    local metadata_users metadata_tables now_epoch modified_epoch age_seconds max_age_seconds
+
+    [[ "$MAX_BACKUP_AGE_HOURS" =~ ^[0-9]+$ ]] \
+        || die "DASHBOARD_FAST_BACKUP_MAX_AGE_HOURS must be a non-negative integer"
+    max_age_seconds=$((MAX_BACKUP_AGE_HOURS * 3600))
+
+    now_epoch="$(date +%s)"
+    while IFS= read -r latest_meta; do
+        [[ -n "$latest_meta" && -f "$latest_meta" ]] || continue
+
+        backup_file="${latest_meta%.meta}"
+        [[ -s "$backup_file" ]] || continue
+        grep -q '^restore_verified=true$' "$latest_meta" || continue
+
+        metadata_users="$(awk -F= '$1 == "users" { print $2; exit }' "$latest_meta")"
+        metadata_tables="$(awk -F= '$1 == "tables" { print $2; exit }' "$latest_meta")"
+        [[ "$metadata_users" =~ ^[1-9][0-9]*$ && "$metadata_tables" =~ ^[1-9][0-9]*$ ]] || continue
+
+        modified_epoch="$(stat -c %Y "$latest_meta" 2>/dev/null)" || continue
+        age_seconds=$((now_epoch - modified_epoch))
+        (( age_seconds < 0 )) && age_seconds=0
+        (( age_seconds <= max_age_seconds )) || continue
+
+        expected_checksum="$(awk -F= '$1 == "sha256" { print $2; exit }' "$latest_meta")"
+        [[ "$expected_checksum" =~ ^[[:xdigit:]]{64}$ ]] || continue
+        actual_checksum="$(sha256sum "$backup_file" | awk '{print $1}')"
+        [[ "$actual_checksum" == "$expected_checksum" ]] || continue
+
+        log "reusing verified backup: $backup_file (age=${age_seconds}s users=$metadata_users tables=$metadata_tables)"
+        printf '%s\n' "$backup_file"
+        return 0
+    done < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'vllm_dashboard_*.sql.meta' \
+        -printf '%T@ %p\n' 2>/dev/null | sort -nr | cut -d' ' -f2-)
+
+    die "no recent restore-verified MySQL backup with a valid checksum found in $BACKUP_DIR"
+}
+
 mysql_root_exec() {
     compose exec -T mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "$1"
 }
@@ -45,6 +87,12 @@ compose() {
     DASHBOARD_RUNTIME_ENV_FILE="$ENV_FILE" \
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" --profile full "$@"
 }
+
+if $CHECK_LATEST; then
+    mkdir -p "$BACKUP_DIR"
+    latest_verified_backup
+    exit 0
+fi
 
 command -v docker >/dev/null 2>&1 || die "docker is not installed"
 [[ -f "$COMPOSE_FILE" ]] || die "compose file is missing: $COMPOSE_FILE"

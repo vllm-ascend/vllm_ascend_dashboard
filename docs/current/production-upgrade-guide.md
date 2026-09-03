@@ -16,7 +16,7 @@
 | R-04 | **禁止直接修改数据库表结构**（必须通过迁移脚本） | 数据不一致 |
 | R-05 | **禁止在未验证备份完整性的情况下继续部署** | 备份可能无效 |
 | R-06 | **禁止部署后不验证用户数和服务状态** | 问题无法及时发现 |
-| R-07 | **禁止绕过 `deploy_prod.sh` 脚本直接 `git pull && systemctl restart`** | 无备份无验证无回滚 |
+| R-07 | **禁止绕过 `deploy.sh` 脚本直接 `git pull && docker compose restart`** | 无备份无验证无回滚 |
 
 ---
 
@@ -28,43 +28,26 @@
 bash operations/production/deploy.sh
 ```
 
-该脚本自动执行以下 8 个步骤，任何一步失败都会中止或自动回滚：
+该脚本自动执行以下 9 个步骤，任何一步失败都会中止或自动回滚：
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Step 1  备份数据库                              │
-│    └─ 失败 → 中止部署                            │
+│  Step 1  创建并验证 MySQL 备份                    │
+│    └─ --fast 仅检查最近的已验证备份                │
 │                                                  │
-│  Step 2  验证备份                                │
-│    ├─ 完整性校验（PRAGMA integrity_check）        │
-│    ├─ 用户数 > 0                                 │
-│    └─ 失败 → 中止部署                            │
+│  Step 2  记录用户/表数、Git commit 和镜像          │
+│    └─ 失败 → 中止部署                              │
 │                                                  │
-│  Step 3  记录部署前状态                           │
-│    ├─ 用户数、数据表数                            │
-│    ├─ Git commit                                 │
-│    └─ 用户列表（打印确认）                        │
+│  Step 3  拉取 upstream/main（可 --no-pull）        │
+│  Step 4  拉取不可变镜像（可 --no-pull）             │
+│  Step 5  执行 MySQL migration（--fast 跳过）        │
+│  Step 6  更新 Docker Compose 服务                  │
+│    └─ --fast 只更新 backend/frontend/scheduler/collector │
 │                                                  │
-│  Step 4  拉取最新代码                             │
-│    └─ 失败 → 中止部署                            │
-│                                                  │
-│  Step 5  更新后端依赖（uv sync）                   │
-│    └─ 失败 → 中止部署                            │
-│                                                  │
-│  Step 6  数据库迁移                               │
-│    ├─ 使用 operations/production/migrate.sh（不创建或重置用户） │
-│    └─ 迁移后用户数减少 → 自动回滚                  │
-│                                                  │
-│  Step 7  重启服务                                 │
-│    ├─ systemctl restart dashboard-backend        │
-│    └─ 30秒内未响应 → 自动回滚                      │
-│                                                  │
-│  Step 8  部署后验证                               │
-│    ├─ 服务状态 running                            │
-│    ├─ 用户数 >= 部署前（减少 → 自动回滚）           │
-│    ├─ API 健康检查                                │
-│    ├─ 登录功能验证                                │
-│    └─ 用户列表确认（打印所有用户）                  │
+│  Step 7  健康检查                                  │
+│  Step 8  admin 登录、用户数和表数校验              │
+│    └─ 失败 → 自动回滚                              │
+│  Step 9  输出部署状态和备份路径                    │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -77,9 +60,32 @@ bash operations/production/deploy.sh
 # 不拉取代码，仅重新部署当前版本
 bash operations/production/deploy.sh --no-pull
 
+# 快速代码部署：复用最近一次已验证备份，不重新导出数据库，
+# 跳过迁移，仅重启 backend/frontend/scheduler/collector
+bash operations/production/deploy.sh --fast --no-pull
+
+# 快速部署并拉取 upstream/main 和新镜像
+bash operations/production/deploy.sh --fast
+
 # 一键回滚到最近一次备份
 bash operations/production/deploy.sh --rollback
 ```
+
+### 快速部署的边界
+
+`--fast` 不是无备份部署。脚本会执行 `backup.sh --check-latest`，要求备份目录中存在
+最近 `DASHBOARD_FAST_BACKUP_MAX_AGE_HOURS`（默认 24 小时）内的已恢复验证备份，并重新校验
+备份文件的 SHA-256、用户数和表数。这样可以避免每次代码发布都执行耗时的全量 `mysqldump`。
+
+快速模式只适用于应用代码或镜像变更：
+
+- 跳过 MySQL migration；拉取代码时检测到 `database/`、持久化模型或迁移脚本变化会拒绝继续。
+- 不重启 MySQL、LiteLLM，只更新四个业务容器。
+- 失败回滚只恢复上一版应用镜像，不恢复数据库，避免用旧备份覆盖当天数据。
+- 需要数据库结构变更、配置数据迁移或重要版本升级时，必须使用标准模式，让脚本创建并验证新备份。
+
+若镜像已经在生产机上构建完成，使用 `--fast --no-pull` 可同时跳过远程镜像拉取；否则使用
+`--fast`，脚本会正常拉取不可变镜像标签。
 
 ---
 
@@ -94,13 +100,16 @@ bash operations/production/backup.sh
 # 静默备份（cron 定时任务用）
 bash operations/production/backup.sh --silent
 
+# 仅检查最近一次已验证备份（快速部署会自动执行）
+bash operations/production/backup.sh --check-latest
+
 # 自定义保留天数（默认 30 天）
 bash operations/production/backup.sh --retention 7
 ```
 
 备份脚本执行以下操作：
 1. 使用 `mysqldump --single-transaction` 在线安全备份（不锁库）
-2. 完整性校验（`PRAGMA integrity_check`）
+2. 使用 `--verify-restore` 时，将备份恢复到隔离数据库并校验用户数、表数及 SHA-256
 3. 统计用户数、数据表数
 4. 自动清理超过保留期的旧备份
 5. 输出备份文件路径
@@ -134,7 +143,7 @@ tail -50 /var/log/dashboard_backup.log
 
 ### 自动回滚
 
-`deploy_prod.sh` 在以下情况会自动回滚：
+`deploy.sh` 在以下情况会自动回滚：
 - 数据库迁移后用户数减少
 - 服务重启后 30 秒内未响应
 - 部署后验证用户数少于部署前

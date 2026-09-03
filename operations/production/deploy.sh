@@ -13,15 +13,23 @@ MAX_WAIT=120
 DO_PULL=true
 DRY_RUN=false
 FORCE_ROLLBACK=false
+FAST=false
+FAST_BACKUP_MAX_AGE_HOURS="${DASHBOARD_FAST_BACKUP_MAX_AGE_HOURS:-24}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-pull) DO_PULL=false; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         --rollback) FORCE_ROLLBACK=true; shift ;;
+        --fast) FAST=true; shift ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+if $FAST && $FORCE_ROLLBACK; then
+    echo "[ERROR] --fast cannot be combined with --rollback" >&2
+    exit 2
+fi
 
 step() { echo; echo "=== $1 ==="; }
 ok() { echo "[OK] $1"; }
@@ -69,6 +77,12 @@ service_image() {
     [[ -n "$container" ]] || return 1
     docker inspect --format '{{.Config.Image}}' "$container"
 }
+service_is_healthy() {
+    local container
+    container="$(service_container "$1")"
+    [[ -n "$container" ]] || return 1
+    [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null)" == "healthy" ]]
+}
 mysql_root() {
     compose exec -T mysql sh -c \
         'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" -N -e "$1"' sh "$1"
@@ -106,13 +120,24 @@ rollback() {
     local backup_file="$1"
     step "ROLLBACK"
     compose stop scheduler collector backend frontend || true
-    restore_database "$backup_file"
-    DASHBOARD_BACKEND_IMAGE="$PRE_BACKEND_IMAGE" \
-    DASHBOARD_FRONTEND_IMAGE="$PRE_FRONTEND_IMAGE" \
-    DASHBOARD_LITELLM_IMAGE="$PRE_LITELLM_IMAGE" \
-        compose up -d mysql litellm backend frontend scheduler collector
+    if $FAST; then
+        warn "fast rollback: database was not changed and will not be restored"
+        DASHBOARD_BACKEND_IMAGE="$PRE_BACKEND_IMAGE" \
+        DASHBOARD_FRONTEND_IMAGE="$PRE_FRONTEND_IMAGE" \
+            compose up -d backend frontend scheduler collector
+    else
+        restore_database "$backup_file"
+        DASHBOARD_BACKEND_IMAGE="$PRE_BACKEND_IMAGE" \
+        DASHBOARD_FRONTEND_IMAGE="$PRE_FRONTEND_IMAGE" \
+        DASHBOARD_LITELLM_IMAGE="$PRE_LITELLM_IMAGE" \
+            compose up -d mysql litellm backend frontend scheduler collector
+    fi
     wait_for_health || die "rollback completed but services are unhealthy"
-    ok "rollback restored database and previous images; users=$(get_user_count)"
+    if $FAST; then
+        ok "rollback restored previous application images; database left untouched"
+    else
+        ok "rollback restored database and previous images; users=$(get_user_count)"
+    fi
 }
 
 command -v docker >/dev/null 2>&1 || die "docker is not installed"
@@ -144,7 +169,14 @@ if ! $DRY_RUN; then
 fi
 
 step "1/9 Backup and restore verification"
-backup_output="$(bash "$SCRIPT_DIR/backup.sh" --verify-restore 2>&1)" || die "backup failed: $backup_output"
+if $FAST; then
+    backup_output="$(DASHBOARD_FAST_BACKUP_MAX_AGE_HOURS="$FAST_BACKUP_MAX_AGE_HOURS" \
+        bash "$SCRIPT_DIR/backup.sh" --check-latest 2>&1)" \
+        || die "fast backup precondition failed: $backup_output"
+    warn "fast mode: no new dump created; using the latest verified backup"
+else
+    backup_output="$(bash "$SCRIPT_DIR/backup.sh" --verify-restore 2>&1)" || die "backup failed: $backup_output"
+fi
 backup_file="$(echo "$backup_output" | tail -1)"
 [[ -s "$backup_file" && -s "$backup_file.meta" ]] || die "verified backup artifacts are missing"
 grep -q '^restore_verified=true$' "$backup_file.meta" || die "backup restore verification did not pass"
@@ -153,11 +185,16 @@ ok "verified backup: $backup_file"
 step "2/9 Record pre-deployment state"
 pre_users="$(get_user_count)"
 pre_tables="$(get_table_count)"
+pre_git_full="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
 pre_git="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
 PRE_BACKEND_IMAGE="$(service_image backend)" || die "backend image cannot be determined"
 PRE_FRONTEND_IMAGE="$(service_image frontend)" || die "frontend image cannot be determined"
 PRE_LITELLM_IMAGE="$(service_image litellm)" || die "LiteLLM image cannot be determined"
 (( pre_users > 0 && pre_tables > 0 )) || die "invalid pre-deployment database state"
+if $FAST; then
+    service_is_healthy mysql || die "fast mode requires a healthy MySQL container"
+    service_is_healthy litellm || die "fast mode requires a healthy LiteLLM container"
+fi
 ok "commit=$pre_git users=$pre_users tables=$pre_tables"
 get_user_list | sed 's/^/  /'
 
@@ -169,6 +206,9 @@ fi
 if $DO_PULL && [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain)" ]]; then
     die "production checkout has local changes; archive and clear them before pulling upstream/main"
 fi
+if $FAST && ! $DO_PULL && [[ -n "$(git -C "$PROJECT_ROOT" status --porcelain)" ]]; then
+    die "fast mode requires a clean production checkout when --no-pull is used"
+fi
 
 step "3/9 Update source"
 if $DO_PULL; then
@@ -176,29 +216,56 @@ if $DO_PULL; then
 else
     warn "source pull skipped"
 fi
+new_git_full="$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
 new_git="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
+if $FAST && [[ "$pre_git_full" != "$new_git_full" ]]; then
+    database_changes="$(git -C "$PROJECT_ROOT" diff --name-only "$pre_git_full" "$new_git_full" -- \
+        database/ backend/infrastructure/persistence/ operations/production/migrate.sh)"
+    if [[ -n "$database_changes" ]]; then
+        echo "[ERROR] fast mode detected database-related changes; rerun without --fast:" >&2
+        echo "$database_changes" >&2
+        exit 1
+    fi
+fi
 ok "$pre_git -> $new_git"
 
 step "4/9 Pull immutable release images"
-compose pull backend frontend litellm || die "image pull failed; running services were not changed"
+if $DO_PULL; then
+    if $FAST; then
+        compose pull backend frontend || die "application image pull failed; running services were not changed"
+    else
+        compose pull backend frontend litellm || die "image pull failed; running services were not changed"
+    fi
+else
+    warn "image pull skipped (--no-pull); using images already available on the host"
+fi
 
 step "5/9 Run explicit MySQL migration"
-if ! bash "$MIGRATE_SCRIPT"; then
-    warn "migration failed; restoring verified database backup"
-    restore_database "$backup_file"
-    die "migration failed and database was restored"
-fi
+if $FAST; then
+    warn "fast mode: database migrations skipped (use the standard mode for schema changes)"
+else
+    if ! bash "$MIGRATE_SCRIPT"; then
+        warn "migration failed; restoring verified database backup"
+        restore_database "$backup_file"
+        die "migration failed and database was restored"
+    fi
 
-post_migration_users="$(get_user_count)"
-post_migration_tables="$(get_table_count)"
-if (( post_migration_users < pre_users || post_migration_tables < pre_tables )); then
-    restore_database "$backup_file"
-    die "database counts decreased during migration; backup restored"
+    post_migration_users="$(get_user_count)"
+    post_migration_tables="$(get_table_count)"
+    if (( post_migration_users < pre_users || post_migration_tables < pre_tables )); then
+        restore_database "$backup_file"
+        die "database counts decreased during migration; backup restored"
+    fi
+    ok "migration verified: users=$post_migration_users tables=$post_migration_tables"
 fi
-ok "migration verified: users=$post_migration_users tables=$post_migration_tables"
 
 step "6/9 Start updated containers"
-if ! compose up -d mysql litellm backend frontend scheduler collector; then
+if $FAST; then
+    start_services=(backend frontend scheduler collector)
+else
+    start_services=(mysql litellm backend frontend scheduler collector)
+fi
+if ! compose up -d "${start_services[@]}"; then
     rollback "$backup_file"
     die "container startup failed; rollback completed"
 fi
@@ -229,4 +296,8 @@ get_user_list | sed 's/^/  /'
 
 step "9/9 Complete"
 ok "deployment complete: $pre_git -> $new_git"
-ok "verified backup retained at: $backup_file"
+if $FAST; then
+    ok "fast code-only deployment; verified backup retained at: $backup_file"
+else
+    ok "verified backup retained at: $backup_file"
+fi

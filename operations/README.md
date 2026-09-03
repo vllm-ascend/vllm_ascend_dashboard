@@ -14,6 +14,13 @@ the LiteLLM/MySQL config files must live outside the Git checkout; the paths
 are supplied through `DASHBOARD_RUNTIME_ENV_FILE`,
 `DASHBOARD_LITELLM_CONFIG_FILE`, and `DASHBOARD_MYSQL_CONFIG_FILE`.
 
+For an application-only release where no schema or data migration is needed,
+use `bash operations/production/deploy.sh --fast --no-pull` when the new images
+are already present on the host. Fast mode reuses a recent restore-verified
+backup, skips migrations, leaves MySQL/LiteLLM running, and rolls back only
+application images. Use the standard command for schema changes or major
+upgrades; it creates and verifies a fresh backup.
+
 The database volume names are explicit and external. The deployment refuses
 to create a missing volume, because doing so could start the service against
 an empty database. A one-time configuration migration should be performed
