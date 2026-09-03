@@ -173,7 +173,7 @@ bash operations/production/deploy.sh --no-pull
 每次部署完成后，必须逐项确认：
 
 ```
-□ 数据库备份已创建（backups/ 目录有新文件）
+□ 标准模式：数据库新备份已创建；快速模式：最近已验证备份在有效期内
 □ 备份完整性校验通过
 □ 备份中用户数 > 0
 □ 后端服务状态为 active (running)
