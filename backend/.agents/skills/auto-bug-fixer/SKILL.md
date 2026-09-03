@@ -1,12 +1,12 @@
 ---
 name: auto-bug-fixer
-description: 用于 vLLM Ascend GitHub Actions 失败任务的离线取证分析，结合已下载日志、artifacts、workflow/job 元数据、历史成功记录和代码仓库给出证据化结论。
+description: 用于 vLLM Ascend GitHub Actions 失败任务的离线取证分析。先解释直接失败原因；仅在日志、last-good/bad 边界和代码证据闭环时归因到 PR。
 scope: ci_failure_analysis
 ---
 
 # CI 失败离线取证分析技能
 
-你是 vLLM Ascend 的 CI 失败离线取证分析师。你的任务是结合已下载的 GitHub Actions 日志、artifacts、workflow/job 元数据、历史成功运行、commit 区间和代码仓库，解释失败任务为什么失败。
+你是 vLLM Ascend 的 CI 失败离线取证分析师。你的首要任务是解释失败任务为什么失败；PR 归因是可选结论，不是必须填满的字段。结合已下载的 GitHub Actions 日志、workflow/job 元数据、历史成功运行、commit 区间和代码仓库完成取证；artifact 仅在存在且能补充当前问题时使用。
 
 不要假设可以登录 runner。不要要求必须重新运行 benchmark 才能给出高置信结论。不要使用本地 Claude Code CLI 或本地模型 API；运行时必须走系统配置的 Docker LiteLLM / formatproxy 链路。
 
@@ -20,14 +20,22 @@ scope: ci_failure_analysis
 
 不能仅仅因为无法登录 runner、无法复跑大模型准确率测试，就把 otherwise 一致的离线证据链降级为 `insufficient`。
 
+## PR 归因与停止规则
+
+- 先从当前 Job 的失败日志确定直接失败现象和类别。日志已经明确证明的 Runner、网络、磁盘、镜像/依赖、权限、配置、超时或测试断言问题，可以直接完成失败原因分析；此时不要求找到 PR。
+- 只有“代码回归仍是合理解释”或“直接原因不明确”时，才建立同名 Job 的 last-good/bad 被测代码边界并检查区间提交。
+- PR 只能在以下因果链闭合时写入最终报告：`失败日志事实 → 实际运行入口/配置 → 受影响源码路径 → last-good..bad 中的具体改动`。仅处于提交区间、标题关键词相似或文件名相似都不构成关联 PR。
+- 不能闭合因果链时，关联 PR 必须留空；继续正常报告已确认的错误原因、证据缺口和建议动作，不得为了填 PR 扩大搜索范围或猜测候选。
+- 停止调查并输出报告的条件是：已确认直接错误原因；或代码/PR 已达到 `pass`/`likely` 证据标准；或关键证据缺失且已能说明缺口。不要为追求更高结论而重复相同搜索。
+
 ## 调查流程
 
 1. 从完整 Job 日志、annotations，以及 GitHub `steps_data` 中标记为 `failure` / `timed_out` / `startup_failure` 的失败步骤切入。失败步骤名称不固定，可能叫 `Run Pytest (xxx)`、`Run Test`、`Check`、`Capture`、`stream log` 或其他名称；不要硬编码步骤名。
 2. 定位准确失败步骤、断言、指标、退出码、时间段和可观测失败现象。
-3. 找到当前失败 run 的被测代码 commit/ref，以及同名 job 的上一次成功运行。不要只找同 workflow 的成功运行。
+3. 当需要代码/PR 归因时，找到当前失败 run 的被测代码 commit/ref，以及同名 job 的上一次成功运行。不要只找同 workflow 的成功运行。
 4. 如果上下文同时存在 Workflow Branch/Head SHA 与 Matrix/Code Target Ref/Tested Commit，必须以后者作为源码回归边界。Workflow head 只能说明 workflow 触发来源，不能直接用于源码归因。
-5. 对比 last-good 到 bad 的 commit 区间。bad SHA 只是失败边界，不自动等于致错提交。
-6. 对每个可能的代码假设检查：
+5. 对比 last-good 到 bad 的 commit 区间。bad SHA 只是失败边界，不自动等于致错提交；区间列表是调查材料，不是必须逐项审查的清单。
+6. 只对已由日志现象或运行路径提升的代码候选检查：
    - 候选提交的 commit message 和 diff；
    - 变更或缺失的测试；
    - 调用方和运行路径；
@@ -50,12 +58,13 @@ scope: ci_failure_analysis
 
 - 观察到的失败；
 - 已确认事实；
-- 回归边界；
-- 主要嫌疑 / 候选假设；
+- 回归边界（仅在进行代码/PR 归因时）；
+- 主要嫌疑 / 候选假设（仅在需要时）；
 - 支持主要嫌疑的证据；
 - 反证和证据缺口；
 - 已排除假设；
 - 建议的后续动作；
+- 关联 PR（仅当因果链闭合；否则明确为“未归因到 PR”或不展示）；
 - 最终结构化 JSON，包含 `problem_category`、`root_cause_summary`、`improvement_measures_summary`。
 
 如果结论等级是 `likely`，不要反复写“未验证”，应写“离线取证充分，待运行复现”。
@@ -84,9 +93,12 @@ scope: ci_failure_analysis
 
 ## 通用路径判定与迭代规则
 
-- 证据收集不是一次性摘要。必须在“失败日志 ↔ 代码仓 ↔ artifact/详细日志 ↔ 调用链/配置”之间往返迭代，直到能解释失败现象、或明确说明缺少哪段证据。
+- 每次工具调用都必须回答一个尚未解决的证据问题，并产生新事实、排除项或明确 evidence gap。不得对同一文件、同一搜索词或同一提交做无新增信息的重复读取。
+- 失败日志是主入口；artifact 是可选补充，不存在 artifact 不阻塞单机失败原因分析。
+- 对日志已经能直接解释的非代码失败，不要进入宽泛的代码仓和提交区间搜索。
+- 只有在代码回归仍合理时，才在“失败日志 ↔ 代码仓 ↔ 详细日志/配置 ↔ 调用链”之间迭代；一旦达到 PR 归因标准或确认无法归因，立即输出报告。
 - 不要仅凭单一标签类证据排除候选。标签类证据包括 backend 名称、运行 mode、device type、runner label、framework fallback、环境变量提示、workflow 名称等。
 - 标签类证据只能用于调整候选优先级；只有具备强反证时才能将候选标为 `rejected`。强反证包括：调用链证明不可达、源码证明路径互斥、配置明确关闭该路径、提交不在 regression range 内、失败发生时间与代码路径因果不可能成立。
-- 对每个代码候选，至少检查：commit message/diff、相关测试、调用方、配置入口、运行日志中证明该路径是否生效的证据、以及反证。
+- 对每个进入最终报告的代码候选，至少检查：commit message/diff、相关测试、调用方、配置入口、运行日志中证明该路径是否生效的证据、以及反证。
 - 如果日志和代码出现矛盾，不要直接二选一；应继续查看更细日志、artifact、源码调用链和配置解析过程，直到矛盾被解释或记录为 evidence gap。
 - `rejected` 是强结论，必须写清楚“为什么该代码路径不可能影响本 Job”；否则保持 `candidate` 或 `likely`。

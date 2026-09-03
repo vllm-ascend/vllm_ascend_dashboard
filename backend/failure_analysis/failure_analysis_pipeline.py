@@ -585,11 +585,23 @@ def programmatic_validate(
         if required_candidates is not None
         else ledger.get("required_regression_candidates", []) or []
     )
-    if not boundary.get("last_good_sha") or not boundary.get("bad_sha"):
+    # A primary Job log can conclusively identify a non-code failure (for
+    # example disk exhaustion, an unavailable runner, or a failed container
+    # initialization). That result is valuable on its own; do not force the
+    # agent to invent a code regression boundary or PR merely to pass schema
+    # validation. The investigator must state this explicit stop reason.
+    direct_failure_explained = (
+        str(ledger.get("stop_reason", "")).strip().lower()
+        == "direct_failure_explained"
+    )
+    if (
+        not direct_failure_explained
+        and (not boundary.get("last_good_sha") or not boundary.get("bad_sha"))
+    ):
         findings.append({"severity": "error", "code": "missing_regression_boundary", "message": "last-good and bad SHA are required"})
     if not ledger.get("failure_facts"):
         findings.append({"severity": "error", "code": "missing_failure_facts", "message": "no primary log facts recorded"})
-    if not ledger.get("hypotheses"):
+    if not direct_failure_explained and not ledger.get("hypotheses"):
         findings.append({"severity": "error", "code": "missing_hypotheses", "message": "no code hypotheses recorded"})
 
     for hypothesis in ledger.get("hypotheses", []):
@@ -632,8 +644,9 @@ def investigation_prompt(job_context: str) -> str:
 
 关键调查要求：
 - 从失败 Job 的完整 job log 和 GitHub steps_data 中标记为 failure/timed_out/startup_failure 的步骤开始，定位失败事实、执行配置、bad commit/SHA、run_id、时间；不要假设失败步骤一定叫 stream log，实际名称可能是 Run Pytest (xxx)、Run Test、Upload/Check 等。
-- 找到上一次同一 workflow/job/config 的成功运行，记录 last-good run_id/time/SHA。
-- 在 bad 与 last-good 之间查看 commit/PR 列表，但不要把区间内所有提交都当作候选；commit/PR 列表只是调查材料。
+- 如果主日志已直接证明 Runner、网络、磁盘、镜像/依赖、权限、配置、超时或测试断言问题，记录该直接原因，并将 stop_reason 设为 direct_failure_explained。此时无需建立回归边界、代码假设或 PR，也必须正常结束调查。
+- 只有代码回归仍是合理解释或直接原因不明确时，才找到上一次同一 workflow/job/config 的成功运行，记录 last-good run_id/time/SHA，并在 bad 与 last-good 之间查看 commit/PR 列表。
+- commit/PR 列表只是调查材料，不要把区间内所有提交都当作候选；没有“日志症状 → 运行入口/配置 → 源码路径 → diff”因果链时，不得关联 PR。
 - 先从失败日志归纳失败机制，再到代码仓追踪“日志症状 → 运行入口/配置 → 可能受影响源码路径 → 区间提交 diff”的因果链。只有这条链能连上时，才把提交提升为候选假设。
 - 对每个被提升的候选，必须在日志、artifact 详细日志和代码仓之间来回验证：看 diff、看调用链、看配置是否启用、看日志是否出现相关路径。
 - 若要把候选标记为 rejected，必须在 code_refs / contradicting_evidence / runtime_path_evidence 中写出可审计的源码调用链证明：从本 Job 实际入口/配置选择到候选修改函数为什么不可达，或哪个配置分支与候选路径互斥。单一运行时标签（backend、mode、device、runner、framework、TORCH_SDPA、FIA、ACL 等）只能作为线索，不能单独排除代码假设。

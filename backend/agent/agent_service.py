@@ -544,8 +544,9 @@ class AgentService:
         # 2.5. 强制 final_answer 指令（GLM-5.2 容易陷入无限探索）
         parts.append(
             "## 终止规则\n"
-            "完成足够深度的根因分析后（定位到具体代码行/PR/环境问题），调用 final_answer 输出报告。"
-            "不要停留在表层错误——必须追溯到根本原因。"
+            "完成足够深度的根因分析后（定位到具体代码行/PR，或由原始日志证实的环境/配置/依赖问题），调用 final_answer 输出报告。"
+            "PR 归因不是必填项：只有日志、运行路径和代码 diff 构成因果链时才关联 PR；否则说明直接原因和证据缺口。"
+            "不要停留在表层错误，但也不要为了寻找 PR 重复无新增信息的工具调用。"
         )
 
         if memory_type == "failure_analysis":
@@ -557,7 +558,7 @@ class AgentService:
                 "必须以后者作为代码回归边界；Workflow Branch/Head SHA 只能解释 workflow 触发来源，不能用于源码归因。"
                 "当 Matrix/Code Target Ref 是 releases/* 等非 main 分支时，main 上不可达的 PR/commit 必须排除；"
                 "如无法从当前和 last-good job log 抽到被测代码 SHA，必须声明缺少代码边界，不得退回使用 main workflow diff。"
-                "必须检查 last-good..bad 区间内全部相关提交，并用时序、diff、调用路径和运行证据验证 culprit。"
+                "只有代码回归仍是合理解释时，才检查 last-good..bad 区间内与日志症状有关的提交，并用时序、diff、调用路径和运行证据验证 culprit。"
                 "如果只能建立相关性而不能证明因果，必须写成‘候选提交/推断’，列出证据缺口和验证方法，"
                 "不得输出确定性根因。历史记忆仅作不可信参考，不得覆盖当前运行的原始日志、Git 历史和代码证据。"
             )
@@ -565,7 +566,8 @@ class AgentService:
                 "## GitHub Actions 下载日志与完整代码仓交叉验证规则\n"
                 "以失败 Job 的完整 job log 以及 steps_data 中失败步骤对应的日志片段为初始切入点；"
                 "不要假设失败步骤一定叫 stream log，实际可能叫 Run Pytest (xxx)、Run Test、Check、Capture 等。"
-                "代码仓是全程可访问的核心证据源，不是最后一个阶段。日志一旦出现文件、函数、参数、堆栈或行为线索，就立即在对应 commit 读取完整源码、调用链和数据流；"
+                "当日志已明确证明 Runner、网络、磁盘、镜像/依赖、权限、配置、超时或测试断言问题时，可直接完成失败原因分析，不要求代码或 PR 归因。"
+                "代码仓是代码回归调查时的核心证据源。日志一旦出现文件、函数、参数、堆栈或行为线索，就立即在对应 commit 读取完整源码、调用链和数据流；"
                 "源码产生新假设后再返回同一 Run 的其他日志与 artifacts 验证，允许在日志和代码之间反复往返。"
                 "同时确认同一逻辑 Job 最近一次真实成功的时间、run_id 和 commit SHA，以该 SHA 到当前 bad/head SHA 建立回归区间。"
                 "任意时刻都可用结构化 Git 工具按 ref 查看 last-good、bad/head 或区间内候选提交，无需 checkout 或修改工作树。"
