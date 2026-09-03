@@ -67,6 +67,9 @@ REPORT_SUMMARY_PLACEHOLDERS = {
     "解析成功但摘要缺失",
     "解析成功但措施缺失",
     "分析失败，请查看完整报告",
+    "根因摘要",
+    "改进措施摘要",
+    "改进建议",
 }
 
 CATEGORY_KEYWORDS = {
@@ -484,6 +487,18 @@ class FailureAnalysisService:
                 raise RuntimeError(f"LLM API error: {api_err}")
 
             report_json = self._extract_report_summary(raw)
+            # Keep the original CLI envelope as a second parsing source. The
+            # selected textual result can be only one sibling of a reasoning
+            # response; fields present in the envelope must not be discarded
+            # just because another sibling was selected for ``raw``.
+            raw_envelope = getattr(llm_result, "raw_json", None)
+            if raw_envelope:
+                envelope_summary = self._extract_report_summary(
+                    json.dumps(raw_envelope, ensure_ascii=False)
+                )
+                for key, value in envelope_summary.items():
+                    if not self._is_usable_report_summary_value(report_json.get(key)):
+                        report_json[key] = value
             parsed = self.parse_llm_response(raw)
             # Keep the stricter report renderer and the legacy parser in sync.
             # Some CLI versions return a JSON envelope whose report is nested
@@ -496,11 +511,9 @@ class FailureAnalysisService:
                     parsed[key] = value.strip()
 
             # A few Claude CLI/gateway versions return a perfectly readable
-            # Markdown report but omit the final JSON envelope.  Let the
-            # legacy parser recover explicit ``根因``/``改进措施`` sections
-            # before declaring the renderer output invalid.  This keeps the
-            # structured contract strict for empty/error responses without
-            # turning a format-only mismatch into a failed analysis.
+            # Markdown report but omit the final JSON envelope. Let the
+            # parser recover explicit ``根因``/``改进措施`` sections before
+            # deciding whether the renderer output is genuinely unusable.
             for key in REPORT_SUMMARY_FIELDS:
                 if (
                     not self._is_usable_report_summary_value(report_json.get(key))
@@ -530,32 +543,51 @@ class FailureAnalysisService:
                     or "补充失败日志、运行环境和关联变更证据后重新分析"
                 )
             elif missing_report_fields:
-                if self._has_recoverable_report_text(parsed):
-                    logger.warning(
-                        "Report renderer omitted summary fields %s; "
-                        "using recovered Markdown summaries",
-                        missing_report_fields,
-                    )
-                    if not self._is_usable_report_summary_value(
-                        parsed.get("problem_category")
-                    ):
-                        parsed["problem_category"] = "其他"
-                    if not self._is_usable_report_summary_value(
-                        parsed.get("root_cause_summary")
-                    ):
-                        parsed["root_cause_summary"] = (
-                            "候选（证据不足）：模型未返回结构化根因摘要，请查看完整报告"
-                        )
-                    if not self._is_usable_report_summary_value(
-                        parsed.get("improvement_measures_summary")
-                    ):
-                        parsed["improvement_measures_summary"] = (
-                            "补充失败证据并重新生成结构化报告"
-                        )
-                else:
+                if not raw.strip():
                     raise RuntimeError(
-                        "Report renderer returned an incomplete report; missing JSON fields: "
+                        "Report renderer returned an empty report; missing JSON fields: "
                         + ", ".join(missing_report_fields)
+                    )
+
+                # Do not turn an arbitrary CLI message (for example a shell
+                # diagnostic or a truncated transport error) into a completed
+                # analysis. A safe fallback is allowed only after at least one
+                # report field or a Markdown report heading was recovered.
+                has_report_signal = any(
+                    self._is_usable_report_summary_value(report_json.get(key))
+                    for key in REPORT_SUMMARY_FIELDS
+                ) or bool(self._extract_markdown_report_summary(raw))
+                if not has_report_signal:
+                    raise RuntimeError(
+                        "Report renderer returned an unstructured report; missing JSON fields: "
+                        + ", ".join(missing_report_fields)
+                    )
+
+                # A non-empty CLI response is still useful evidence even when
+                # the model stopped before the JSON footer. Persist the report
+                # as completed with explicit, uncertainty-preserving values so
+                # the UI does not show a false renderer failure. Markdown
+                # headings and aliases are recovered above; these final values
+                # are only a deterministic last resort.
+                logger.warning(
+                    "Report renderer omitted summary fields %s; preserving the "
+                    "report with safe fallback summaries",
+                    missing_report_fields,
+                )
+                for key, fallback in {
+                    "problem_category": "其他",
+                    "root_cause_summary": (
+                        "候选（证据不足）：模型未返回结构化根因摘要，请查看详细报告"
+                    ),
+                    "improvement_measures_summary": (
+                        "补充失败证据并重新生成结构化报告"
+                    ),
+                }.items():
+                    candidate = report_json.get(key) or parsed.get(key)
+                    parsed[key] = (
+                        candidate.strip()
+                        if self._is_usable_report_summary_value(candidate)
+                        else fallback
                     )
             if runtime == "custom_agent" and (
                 (analysis.validation_result or {}).get("verdict") not in {"pass", "likely"}
@@ -1847,38 +1879,111 @@ class FailureAnalysisService:
         return None
 
     @staticmethod
-    def _extract_json_block(text: str) -> str | None:
-        """Extract a JSON code block or the last complete JSON object."""
-        # 1. ```json ... ``` 浠ｇ爜鍧?
-        m = re.search(r'```json\s*\n?(.*?)```', text, re.DOTALL)
-        if m:
-            candidate = m.group(1).strip()
-            if candidate.startswith('{'):
-                return candidate
-        # 2. Decode every object and prefer the last complete report-summary
-        # object. Reverse brace matching used to return a nested child object.
+    def _extract_json_candidates(text: str) -> list[str]:
+        """Return every complete JSON object found in a model response.
+
+        Gateways commonly wrap the final answer several times (for example
+        ``result -> content -> report``). Looking at only the last object can
+        lose fields when one sibling contains the category and another sibling
+        contains the textual summaries, so the report extractor merges all
+        candidates below.
+        """
+        candidates: list[str] = []
+        for match in re.finditer(
+            r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL | re.IGNORECASE
+        ):
+            candidate = match.group(1).strip()
+            if candidate.startswith("{") and candidate not in candidates:
+                candidates.append(candidate)
+
         decoder = json.JSONDecoder()
-        objects: list[tuple[str, dict]] = []
         for start, char in enumerate(text):
             if char != "{":
                 continue
             try:
-                value, consumed = decoder.raw_decode(text[start:])
+                _value, consumed = decoder.raw_decode(text[start:])
             except json.JSONDecodeError:
                 continue
-            if isinstance(value, dict):
-                objects.append((text[start:start + consumed], value))
+            candidate = text[start:start + consumed]
+            if candidate not in candidates:
+                candidates.append(candidate)
+        return candidates
+
+    @staticmethod
+    def _extract_json_block(text: str) -> str | None:
+        """Extract a JSON code block or the last complete JSON object."""
+        candidates = FailureAnalysisService._extract_json_candidates(text)
         required = {
             "problem_category",
             "root_cause_summary",
             "improvement_measures_summary",
         }
-        for raw_object, value in reversed(objects):
-            if required.issubset(value):
-                return raw_object
-        if objects:
-            return objects[-1][0]
-        return None
+        for candidate in reversed(candidates):
+            try:
+                value = json.loads(candidate)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(value, dict) and required.issubset(value):
+                return candidate
+        return candidates[-1] if candidates else None
+
+    @staticmethod
+    def _extract_markdown_report_summary(text: str) -> dict[str, str]:
+        """Recover summaries from common Markdown headings and table rows.
+
+        Some reasoning models provide a complete human-readable report but
+        omit the final JSON envelope. Treating that response as an analysis
+        failure is avoidable: the headings are an explicit, auditable source
+        for the same three fields.
+        """
+        labels = {
+            "problem_category": r"问题分类|分类|Problem Category|Category",
+            "root_cause_summary": (
+                r"根因摘要|根因分析|失败原因|原因分析|根因|Root Cause|Cause"
+            ),
+            "improvement_measures_summary": (
+                r"改进措施摘要|改进措施|改进建议|改善措施|后续措施|"
+                r"Improvement Measures|Recommendations|Next Steps"
+            ),
+        }
+
+        def clean(value: str) -> str:
+            value = re.sub(r"\s+", " ", value).strip(" \t|：:")
+            return value.strip("` ")
+
+        def from_table(pattern: str) -> str:
+            match = re.search(
+                rf"(?im)^\s*\|\s*(?:{pattern})\s*\|\s*([^|\r\n]+)",
+                text,
+            )
+            return clean(match.group(1)) if match else ""
+
+        def from_heading(pattern: str) -> str:
+            heading = re.compile(
+                rf"(?im)^\s*(?:#{{1,6}}\s*)?(?:\*\*)?(?:{pattern})"
+                rf"(?:\*\*)?\s*(?::|：)?\s*(.*)$"
+            )
+            for match in heading.finditer(text):
+                value = clean(match.group(1))
+                if value and not value.startswith("{"):
+                    return value
+                for line in text[match.end():].splitlines():
+                    candidate = clean(line)
+                    if not candidate:
+                        continue
+                    if re.match(r"^(?:#{1,6}\s+|\|\s*)", candidate):
+                        break
+                    if candidate.startswith("```"):
+                        break
+                    return candidate.lstrip("-* ")
+            return ""
+
+        summary: dict[str, str] = {}
+        for key, pattern in labels.items():
+            value = from_table(pattern) or from_heading(pattern)
+            if value:
+                summary[key] = value
+        return summary
 
     @staticmethod
     def _extract_report_summary(text: str) -> dict:
@@ -1959,18 +2064,24 @@ class FailureAnalysisService:
                         return found
             return {}
 
-        json_text = FailureAnalysisService._extract_json_block(text)
-        if json_text:
+        # Inspect every complete object instead of only the last one. A
+        # gateway can put the category in one object and the summaries in a
+        # sibling/nested object; merging prevents that valid response from
+        # being rejected as incomplete.
+        summary: dict[str, str] = {}
+        for json_text in FailureAnalysisService._extract_json_candidates(text):
             try:
-                summary = inspect(json.loads(json_text))
+                found = inspect(json.loads(json_text))
             except (json.JSONDecodeError, TypeError):
-                summary = {}
-            if summary:
-                return summary
+                found = {}
+            for key, value in found.items():
+                if value and key not in summary:
+                    summary[key] = value
+            if len(summary) == len(required):
+                break
 
         # Last-resort extraction for a response whose surrounding JSON is
         # malformed but whose report fields themselves are valid JSON strings.
-        summary: dict[str, str] = {}
         for key in required:
             aliases = "|".join(re.escape(alias) for alias in REPORT_SUMMARY_ALIASES[key])
             match = re.search(
@@ -1984,7 +2095,18 @@ class FailureAnalysisService:
             except (json.JSONDecodeError, TypeError):
                 value = match.group(1)
             if isinstance(value, str) and value.strip():
-                summary[key] = value.strip()
+                if key not in summary:
+                    summary[key] = value.strip()
+
+        # Finally recover the same fields from a readable Markdown report.
+        # This is deliberately after JSON so an explicit structured value wins
+        # over a prose heading, while still handling models that stop before
+        # emitting the requested JSON footer.
+        for key, value in FailureAnalysisService._extract_markdown_report_summary(text).items():
+            if key not in summary or not FailureAnalysisService._is_usable_report_summary_value(
+                summary[key]
+            ):
+                summary[key] = value
         return summary
 
     @staticmethod

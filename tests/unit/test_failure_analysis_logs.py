@@ -5,6 +5,7 @@ from zipfile import ZipFile
 import pytest
 
 from failure_analysis.failure_analysis import FailureAnalysisService
+from infrastructure.clients.claude_code_cli import ClaudeCodeCLI
 
 
 def test_extract_report_summary_unwraps_nested_json_envelope():
@@ -46,6 +47,45 @@ def test_extract_report_summary_accepts_gateway_aliases_and_list_values():
         "root_cause_summary": "Runner 断开",
         "improvement_measures_summary": "重试任务；检查 Runner",
     }
+
+
+def test_extract_report_summary_merges_sibling_json_objects():
+    payload = (
+        '{"result":{"problem_category":"基础设施"},'
+        '"content":{"root_cause_summary":"Runner 断开",'
+        '"improvement_measures_summary":"重试并检查 Runner"}}'
+    )
+
+    assert FailureAnalysisService._extract_report_summary(payload) == {
+        "problem_category": "基础设施",
+        "root_cause_summary": "Runner 断开",
+        "improvement_measures_summary": "重试并检查 Runner",
+    }
+
+
+def test_extract_report_summary_recovers_markdown_headings_without_json_footer():
+    payload = """## 失败原因
+Runner 在初始化阶段断开，日志显示连接被远端关闭。
+
+## 改进建议
+检查 Runner 网络和启动依赖后重新执行。
+"""
+
+    assert FailureAnalysisService._extract_report_summary(payload) == {
+        "root_cause_summary": "Runner 在初始化阶段断开，日志显示连接被远端关闭。",
+        "improvement_measures_summary": "检查 Runner 网络和启动依赖后重新执行。",
+    }
+
+
+def test_cli_prefers_nested_answer_with_more_report_fields():
+    payload = {
+        "result": '{"problem_category":"基础设施"}',
+        "content": '{"problem_category":"基础设施",'
+        '"root_cause_summary":"Runner 断开",'
+        '"improvement_measures_summary":"重试并检查 Runner"}',
+    }
+
+    assert ClaudeCodeCLI._content_from_payload(payload) == payload["content"]
 
 
 def test_legacy_parser_recovery_is_usable_for_missing_renderer_fields():

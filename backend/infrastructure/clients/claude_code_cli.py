@@ -589,17 +589,61 @@ class ClaudeCodeCLI:
         helper accepts all of those shapes without serializing dictionaries
         into text that can never satisfy the failure-report JSON contract.
         """
+        # A reasoning gateway may return a short ``result`` summary while the
+        # actual final answer (including the required report JSON) is nested
+        # under ``content`` or ``reasoning_content``.  Returning the first
+        # non-empty value silently discarded that answer and made the report
+        # renderer see only ``problem_category``.  Collect all textual
+        # candidates and prefer the one that contains the most report fields;
+        # preserve the CLI's result-first order as the tie-breaker for normal
+        # responses.
+        candidates = cls._content_candidates(payload)
+        if not candidates:
+            return ""
+
+        report_markers = (
+            "problem_category",
+            "root_cause_summary",
+            "improvement_measures_summary",
+            "问题分类",
+            "根因摘要",
+            "改进措施摘要",
+        )
+
+        def score(item: tuple[int, str]) -> tuple[int, int, int]:
+            index, text = item
+            normalized = text.strip()
+            field_count = sum(marker in normalized for marker in report_markers)
+            structured = int("{" in normalized and "}" in normalized)
+            return field_count, structured, -index
+
+        return max(enumerate(candidates), key=score)[1]
+
+    @classmethod
+    def _content_candidates(cls, payload: object) -> list[str]:
+        """Collect textual answer candidates from nested CLI payloads."""
         if isinstance(payload, str):
-            return payload if payload.strip() else ""
+            return [payload] if payload.strip() else []
         if isinstance(payload, list):
-            parts = [cls._content_from_payload(item) for item in payload]
-            return "".join(part for part in parts if part)
-        if isinstance(payload, dict):
-            for key in ("result", "content", "reasoning_content", "reasoning", "text"):
-                text = cls._content_from_payload(payload.get(key))
-                if text:
-                    return text
-        return ""
+            candidates: list[str] = []
+            for item in payload:
+                candidates.extend(cls._content_candidates(item))
+            return candidates
+        if not isinstance(payload, dict):
+            return []
+
+        candidates = []
+        # Keep the established priority, while still inspecting every answer
+        # field before falling back to unrelated metadata.
+        answer_keys = ("result", "content", "reasoning_content", "reasoning", "text")
+        for key in answer_keys:
+            candidates.extend(cls._content_candidates(payload.get(key)))
+        if candidates:
+            return candidates
+
+        for value in payload.values():
+            candidates.extend(cls._content_candidates(value))
+        return candidates
 
 
 async def run_with_fallback(
