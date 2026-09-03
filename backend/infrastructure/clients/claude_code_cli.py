@@ -313,6 +313,16 @@ class ClaudeCodeCLI:
                     tool_calls=partial_result.tool_calls if partial_result and partial_result.tool_calls else None,
                     raw_json=partial_result.raw_json if partial_result else None,
                 )
+                envelope_error = self._error_from_payload(
+                    partial_result.raw_json if partial_result else None
+                )
+                if envelope_error:
+                    # ``--output-format json`` returns an error envelope when
+                    # the agent exhausts its tool budget. It is not partial
+                    # report content, even though the JSON itself is non-empty.
+                    # Returning it used to make the report renderer complain
+                    # about missing fields and hid the real failure reason.
+                    raise ClaudeCLINotAvailable(envelope_error)
                 # 如果能解析出非空内容，返回部分结果而不是抛异常
                 if partial_result and partial_result.content and len(partial_result.content.strip()) > 100:
                     logger.warning(
@@ -562,7 +572,7 @@ class ClaudeCodeCLI:
                 # 一层对象；统一展开后再交给报告解析器。
                 if isinstance(raw_json, dict):
                     content = self._content_from_payload(raw_json) or stdout
-                    turns = raw_json.get("turns", 0)
+                    turns = raw_json.get("turns", raw_json.get("num_turns", 0))
                     if "tool_calls" in raw_json:
                         tool_calls = raw_json["tool_calls"]
             except json.JSONDecodeError:
@@ -578,6 +588,35 @@ class ClaudeCodeCLI:
             exit_code=exit_code,
             stderr=stderr,
         )
+
+    @staticmethod
+    def _error_from_payload(payload: object) -> str:
+        """Return a safe, user-actionable CLI error from a JSON envelope.
+
+        Claude Code uses a non-zero process exit and a JSON object such as
+        ``{\"is_error\": true, \"subtype\": \"error_max_turns\"}`` when it
+        reaches its tool-call limit. That object contains no final answer and
+        must never be treated as a report merely because it has non-zero text
+        length.
+        """
+        if not isinstance(payload, dict) or not payload.get("is_error"):
+            return ""
+
+        subtype = str(payload.get("subtype") or "")
+        terminal_reason = str(payload.get("terminal_reason") or "")
+        num_turns = payload.get("num_turns") or payload.get("turns")
+        if subtype == "error_max_turns" or terminal_reason == "max_turns":
+            turn_suffix = f"（已执行 {num_turns} 轮）" if num_turns else ""
+            return (
+                "Claude Code CLI 在生成最终报告前达到最大分析轮次"
+                f"{turn_suffix}；请缩小分析范围或提高轮次上限后重试"
+            )
+
+        # Avoid exposing a provider error body, which can contain request
+        # details. The typed envelope is enough to distinguish it from an
+        # incomplete report in the UI and application log.
+        label = subtype or terminal_reason or "unknown"
+        return f"Claude Code CLI 返回执行错误（{label}），未生成最终分析报告"
 
     @classmethod
     def _content_from_payload(cls, payload: object) -> str:

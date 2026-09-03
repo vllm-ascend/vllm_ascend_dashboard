@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zipfile import ZipFile
@@ -86,6 +87,27 @@ def test_cli_prefers_nested_answer_with_more_report_fields():
     }
 
     assert ClaudeCodeCLI._content_from_payload(payload) == payload["content"]
+
+
+def test_cli_max_turns_envelope_is_not_treated_as_partial_report():
+    payload = {
+        "type": "result",
+        "subtype": "error_max_turns",
+        "is_error": True,
+        "terminal_reason": "max_turns",
+        "num_turns": 101,
+    }
+    cli = ClaudeCodeCLI()
+
+    result = cli._parse_output(
+        json.dumps(payload), "", 1.0, "json", "glm-5.3", exit_code=1
+    )
+
+    assert result.turns == 101
+    assert ClaudeCodeCLI._error_from_payload(result.raw_json) == (
+        "Claude Code CLI 在生成最终报告前达到最大分析轮次"
+        "（已执行 101 轮）；请缩小分析范围或提高轮次上限后重试"
+    )
 
 
 def test_legacy_parser_recovery_is_usable_for_missing_renderer_fields():
