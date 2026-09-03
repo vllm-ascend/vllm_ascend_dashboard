@@ -35,6 +35,30 @@ def test_extract_report_summary_reads_fields_from_malformed_wrapper():
     }
 
 
+def test_extract_report_summary_accepts_gateway_aliases_and_list_values():
+    payload = (
+        '{"report":{"category":"基础设施", "root_cause":"Runner 断开", '
+        '"recommendations":["重试任务", "检查 Runner"]}}'
+    )
+
+    assert FailureAnalysisService._extract_report_summary(payload) == {
+        "problem_category": "基础设施",
+        "root_cause_summary": "Runner 断开",
+        "improvement_measures_summary": "重试任务；检查 Runner",
+    }
+
+
+def test_legacy_parser_recovery_is_usable_for_missing_renderer_fields():
+    parsed = FailureAnalysisService.parse_llm_response(
+        '{"root_cause_summary":"Runner 断开",'
+        '"improvement_measures_summary":"重试并检查 Runner"}'
+    )
+
+    assert parsed["root_cause_summary"] == "Runner 断开"
+    assert parsed["improvement_measures_summary"] == "重试并检查 Runner"
+    assert FailureAnalysisService._has_recoverable_report_text(parsed) is True
+
+
 def test_extract_job_log_from_run_zip_uses_matching_matrix_job(tmp_path):
     archive_path = tmp_path / "run-logs.zip"
     destination = tmp_path / "logs" / "123.log"

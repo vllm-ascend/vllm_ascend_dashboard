@@ -25,6 +25,50 @@ _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 VALID_CATEGORIES = {"基础设施", "测试用例", "开发代码", "其他"}
 
+# The report prompt uses these canonical keys.  Gateways and model adapters
+# occasionally rename them (for example ``root_cause`` or ``根因摘要``), so
+# normalization must happen before the result is persisted.
+REPORT_SUMMARY_ALIASES = {
+    "problem_category": (
+        "problem_category",
+        "problemCategory",
+        "category",
+        "issue_category",
+        "问题分类",
+        "分类",
+    ),
+    "root_cause_summary": (
+        "root_cause_summary",
+        "rootCauseSummary",
+        "root_cause",
+        "rootCause",
+        "cause",
+        "根因摘要",
+        "根因",
+    ),
+    "improvement_measures_summary": (
+        "improvement_measures_summary",
+        "improvementMeasuresSummary",
+        "improvement_measures",
+        "improvements",
+        "recommendations",
+        "改进措施摘要",
+        "改进措施",
+        "改进建议",
+    ),
+}
+
+REPORT_SUMMARY_FIELDS = tuple(REPORT_SUMMARY_ALIASES)
+
+# ``parse_llm_response`` has intentionally broad legacy fallbacks.  These
+# sentinel values mean that it could not recover a real summary and must not
+# be treated as a successful report merely because the value is non-empty.
+REPORT_SUMMARY_PLACEHOLDERS = {
+    "解析成功但摘要缺失",
+    "解析成功但措施缺失",
+    "分析失败，请查看完整报告",
+}
+
 CATEGORY_KEYWORDS = {
     "基础设施": ["runner", "environment", "install", "setup", "driver", "pip",
                  "network", "disk", "memory", "npu", "docker", "依赖", "环境"],
@@ -440,34 +484,34 @@ class FailureAnalysisService:
                 raise RuntimeError(f"LLM API error: {api_err}")
 
             report_json = self._extract_report_summary(raw)
-            missing_report_fields = [
-                key for key in (
-                    "problem_category",
-                    "root_cause_summary",
-                    "improvement_measures_summary",
-                )
-                if not isinstance(report_json.get(key), str) or not report_json[key].strip()
-            ]
-            if missing_report_fields and runtime != "custom_agent":
-                raise RuntimeError(
-                    "Report renderer returned an incomplete report; missing JSON fields: "
-                    + ", ".join(missing_report_fields)
-                )
-
             parsed = self.parse_llm_response(raw)
             # Keep the stricter report renderer and the legacy parser in sync.
             # Some CLI versions return a JSON envelope whose report is nested
             # or JSON-encoded as a string.  ``parse_llm_response`` intentionally
             # has broad fallbacks, but it cannot see those normalized fields
             # unless we copy the validated values extracted above.
-            for key in (
-                "problem_category",
-                "root_cause_summary",
-                "improvement_measures_summary",
-            ):
+            for key in REPORT_SUMMARY_FIELDS:
                 value = report_json.get(key)
-                if isinstance(value, str) and value.strip():
+                if self._is_usable_report_summary_value(value):
                     parsed[key] = value.strip()
+
+            # A few Claude CLI/gateway versions return a perfectly readable
+            # Markdown report but omit the final JSON envelope.  Let the
+            # legacy parser recover explicit ``根因``/``改进措施`` sections
+            # before declaring the renderer output invalid.  This keeps the
+            # structured contract strict for empty/error responses without
+            # turning a format-only mismatch into a failed analysis.
+            for key in REPORT_SUMMARY_FIELDS:
+                if (
+                    not self._is_usable_report_summary_value(report_json.get(key))
+                    and self._is_usable_report_summary_value(parsed.get(key))
+                ):
+                    report_json[key] = parsed[key].strip()
+
+            missing_report_fields = [
+                key for key in REPORT_SUMMARY_FIELDS
+                if not self._is_usable_report_summary_value(report_json.get(key))
+            ]
             if missing_report_fields and runtime == "custom_agent":
                 logger.warning(
                     "Custom agent report is missing summary fields %s; "
@@ -485,6 +529,34 @@ class FailureAnalysisService:
                     report_json.get("improvement_measures_summary")
                     or "补充失败日志、运行环境和关联变更证据后重新分析"
                 )
+            elif missing_report_fields:
+                if self._has_recoverable_report_text(parsed):
+                    logger.warning(
+                        "Report renderer omitted summary fields %s; "
+                        "using recovered Markdown summaries",
+                        missing_report_fields,
+                    )
+                    if not self._is_usable_report_summary_value(
+                        parsed.get("problem_category")
+                    ):
+                        parsed["problem_category"] = "其他"
+                    if not self._is_usable_report_summary_value(
+                        parsed.get("root_cause_summary")
+                    ):
+                        parsed["root_cause_summary"] = (
+                            "候选（证据不足）：模型未返回结构化根因摘要，请查看完整报告"
+                        )
+                    if not self._is_usable_report_summary_value(
+                        parsed.get("improvement_measures_summary")
+                    ):
+                        parsed["improvement_measures_summary"] = (
+                            "补充失败证据并重新生成结构化报告"
+                        )
+                else:
+                    raise RuntimeError(
+                        "Report renderer returned an incomplete report; missing JSON fields: "
+                        + ", ".join(missing_report_fields)
+                    )
             if runtime == "custom_agent" and (
                 (analysis.validation_result or {}).get("verdict") not in {"pass", "likely"}
                 and not any(
@@ -1818,17 +1890,25 @@ class FailureAnalysisService:
         does not reject an otherwise complete report merely because of the
         transport envelope.
         """
-        required = (
-            "problem_category",
-            "root_cause_summary",
-            "improvement_measures_summary",
-        )
+        required = REPORT_SUMMARY_FIELDS
+
+        def coerce_field(value: object) -> str:
+            """Convert common model representations into a short text value."""
+            if isinstance(value, str):
+                return value.strip()
+            if isinstance(value, (int, float, bool)):
+                return str(value)
+            if isinstance(value, list):
+                parts = [coerce_field(item) for item in value]
+                return "；".join(part for part in parts if part)
+            return ""
 
         def find_field(value: object, key: str) -> str:
             if isinstance(value, dict):
-                candidate = value.get(key)
-                if isinstance(candidate, str) and candidate.strip():
-                    return candidate.strip()
+                for alias in REPORT_SUMMARY_ALIASES[key]:
+                    candidate = coerce_field(value.get(alias))
+                    if candidate:
+                        return candidate
                 for nested in value.values():
                     found = find_field(nested, key)
                     if found:
@@ -1859,10 +1939,7 @@ class FailureAnalysisService:
                         return {}
                 return inspect(decoded, depth + 1)
             if isinstance(value, dict):
-                summary = {
-                    key: find_field(value, key)
-                    for key in required
-                }
+                summary = {key: find_field(value, key) for key in required}
                 summary = {key: item for key, item in summary.items() if item}
                 if len(summary) == len(required):
                     return summary
@@ -1895,8 +1972,9 @@ class FailureAnalysisService:
         # malformed but whose report fields themselves are valid JSON strings.
         summary: dict[str, str] = {}
         for key in required:
+            aliases = "|".join(re.escape(alias) for alias in REPORT_SUMMARY_ALIASES[key])
             match = re.search(
-                rf'"{re.escape(key)}"\s*:\s*"((?:\\.|[^"\\])*)"',
+                rf'"(?:{aliases})"\s*:\s*"((?:\\.|[^"\\])*)"',
                 text,
             )
             if not match:
@@ -1908,6 +1986,33 @@ class FailureAnalysisService:
             if isinstance(value, str) and value.strip():
                 summary[key] = value.strip()
         return summary
+
+    @staticmethod
+    def _is_usable_report_summary_value(value: object) -> bool:
+        """Return whether a parsed summary contains real model output.
+
+        The legacy parser intentionally returns placeholders so older reports
+        can still be displayed.  Those placeholders are not evidence that the
+        renderer produced a complete report and therefore cannot satisfy the
+        structured-output gate by themselves.
+        """
+        if not isinstance(value, str):
+            return False
+        normalized = value.strip()
+        if not normalized or normalized in REPORT_SUMMARY_PLACEHOLDERS:
+            return False
+        # The generic category is a safe fallback, but it is not enough to
+        # prove that a report was generated when both textual summaries are
+        # missing.
+        return True
+
+    @classmethod
+    def _has_recoverable_report_text(cls, parsed: dict) -> bool:
+        """Whether legacy parsing recovered at least one useful summary."""
+        return any(
+            cls._is_usable_report_summary_value(parsed.get(key))
+            for key in ("root_cause_summary", "improvement_measures_summary")
+        )
 
     @staticmethod
     def _deep_search_json(data: dict, key: str, default: str = "") -> str:
