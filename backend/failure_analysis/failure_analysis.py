@@ -2236,15 +2236,29 @@ class FailureAnalysisService:
         # JSON 鍧楃己澶辨椂锛屼粠鎶ュ憡姝ｆ枃鎻愬彇鎽樿
         if not cause:
             # 灏濊瘯鍖归厤涓枃鏍煎紡锛?*鏍瑰洜鎽樿**锛歺xx 鎴?鏍瑰洜: xxx
-            cause_match = re.search(r'(?:\*\*)?鏍瑰洜(?:鎽樿)?(?:\*\*)?\s*[:锛歖\s*(.+?)(?:\n|$)', raw)
+            cause_match = re.search(
+                r"(?:\*\*)?(?:根因|根因摘要)(?:\*\*)?\s*[:：]\s*(.+?)(?:\n|$)",
+                raw,
+            )
             if not cause_match:
-                cause_match = re.search(r'(?:\*\*)?Root Cause(?:\*\*)?\s*[:锛歖\s*(.+?)(?:\n|$)', raw)
+                cause_match = re.search(
+                    r"(?:\*\*)?Root Cause(?:\*\*)?\s*[:：]\s*(.+?)(?:\n|$)",
+                    raw,
+                    flags=re.IGNORECASE,
+                )
             if cause_match:
                 cause = cause_match.group(1).strip()[:200]
         if not measures:
-            measures_match = re.search(r'(?:\*\*)?鏀硅繘(?:寤鸿|鎺柦)(?:鎽樿)?(?:\*\*)?\s*[:锛歖\s*(.+?)(?:\n|$)', raw)
+            measures_match = re.search(
+                r"(?:\*\*)?(?:改进建议|改进措施|改进措施摘要)(?:\*\*)?\s*[:：]\s*(.+?)(?:\n|$)",
+                raw,
+            )
             if not measures_match:
-                measures_match = re.search(r'(?:\*\*)?鏀硅繘鎺柦(?:\*\*)?\s*[:锛歖\s*(.+?)(?:\n|$)', raw)
+                measures_match = re.search(
+                    r"(?:\*\*)?Improvement Measures(?:\*\*)?\s*[:：]\s*(.+?)(?:\n|$)",
+                    raw,
+                    flags=re.IGNORECASE,
+                )
             if measures_match:
                 measures = measures_match.group(1).strip()[:200]
 

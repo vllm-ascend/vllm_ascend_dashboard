@@ -121,6 +121,20 @@ def test_legacy_parser_recovery_is_usable_for_missing_renderer_fields():
     assert FailureAnalysisService._has_recoverable_report_text(parsed) is True
 
 
+def test_legacy_parser_recovers_markdown_without_invalid_regex():
+    """A non-JSON Markdown report must not fail during its final fallback."""
+    parsed = FailureAnalysisService.parse_llm_response(
+        """问题分类：基础设施
+**根因摘要**：Runner 初始化时网络连接被远端关闭。
+**改进措施**：检查 Runner 网络和启动依赖后重试。
+"""
+    )
+
+    assert parsed["problem_category"] == "基础设施"
+    assert parsed["root_cause_summary"] == "Runner 初始化时网络连接被远端关闭。"
+    assert parsed["improvement_measures_summary"] == "检查 Runner 网络和启动依赖后重试。"
+
+
 def test_extract_job_log_from_run_zip_uses_matching_matrix_job(tmp_path):
     archive_path = tmp_path / "run-logs.zip"
     destination = tmp_path / "logs" / "123.log"
