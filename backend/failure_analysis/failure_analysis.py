@@ -428,10 +428,11 @@ class FailureAnalysisService:
                 db,
                 max_turns=max_turns_val,
                 timeout_seconds=timeout_val,
-                # The evidence pipeline must receive primary failure facts directly.
-                # A tool path alone allowed some investigations to finish without
-                # opening an otherwise valid downloaded Job log.
+                # The structured in-process pipeline has no native filesystem
+                # agent, so it still receives the primary evidence inline. The
+                # Claude CLI instead reads the same local files on demand.
                 inline_logs=runtime == "custom_agent",
+                preload_evidence=runtime == "custom_agent",
             )
 
             provider_config = {
@@ -1187,22 +1188,26 @@ class FailureAnalysisService:
                 logger.error(f"Batch analysis failed for job {job.job_id}: {e}")
         return results
 
-    async def _build_job_context(self, job: CIJob, db: AsyncSession, max_turns: int = 80, timeout_seconds: int = 1800, inline_logs: bool = False) -> str:
+    async def _build_job_context(
+        self,
+        job: CIJob,
+        db: AsyncSession,
+        max_turns: int = 80,
+        timeout_seconds: int = 1800,
+        inline_logs: bool = False,
+        preload_evidence: bool | None = None,
+    ) -> str:
+        # Preserve the in-process callers' existing inline-evidence behavior;
+        # only the Claude CLI explicitly opts into lazy evidence loading.
+        if preload_evidence is None:
+            preload_evidence = inline_logs
         timeout_seconds // 60
         lines = []
         if inline_logs:
             lines.append("请分析以下 CI 失败，直接基于已内联的数据输出分析报告。")
         else:
-            lines.append("请使用 auto-bug-fixer 技能分析以下 CI 失败。")
-        lines.append("")
-        lines.append("以下数据已预加载，请直接基于这些数据分析，无需 curl 拉取：")
-        lines.append("- Annotations（下方）")
-        lines.append("- Steps summary（下方）")
-        lines.append("- 历史运行对比（下方）")
-        lines.append("- Commit diff（下方）")
-        lines.append("- CI Job 原始日志（下方，已截取关键部分）")
-        lines.append("")
-        lines.append("如需更多数据（多节点日志、artifacts 等），优先使用已下载到 backend/data 的文件和代码仓缓存进行分析。")
+            lines.append("请分析以下 CI 失败。先读取本地索引中的最小必要证据，再决定是否继续调查。")
+            lines.append("不要在开始时加载完整日志、历史运行或提交区间；它们都在本地，仅在当前证据不足时按需读取。")
         lines.append("")
         lines.append("## CI Job 失败信息\n")
         lines.append(f"- **Workflow**: {job.workflow_name}")
@@ -1312,34 +1317,40 @@ class FailureAnalysisService:
         except (json.JSONDecodeError, TypeError):
             lines.append("- **Steps Data**: (unparseable)")
 
-        annotations = await self._fetch_job_annotations(job.job_id, db)
-        if annotations:
-            lines.append("\n### GitHub Actions Annotations (鍏抽敭閿欒淇℃伅):\n")
-            for ann in annotations:
-                level = ann.get("annotation_level", "notice")
-                title = ann.get("title", "")
-                message = ann.get("message", "")
-                ann.get("path", "")
-                if title:
-                    lines.append(f"  - [{level}] **{title}**: {message}")
-                else:
-                    lines.append(f"  - [{level}] {message}")
+        # The custom evidence pipeline needs these facts in its input.  The
+        # Claude CLI has native local tools and must fetch evidence only when
+        # the current failure facts justify it; eagerly injecting all of this
+        # data made every tool turn replay a growing prompt.
+        if preload_evidence:
+            annotations = await self._fetch_job_annotations(job.job_id, db)
+            if annotations:
+                lines.append("\n### GitHub Actions Annotations:\n")
+                for ann in annotations:
+                    level = ann.get("annotation_level", "notice")
+                    title = ann.get("title", "")
+                    message = ann.get("message", "")
+                    if title:
+                        lines.append(f"  - [{level}] **{title}**: {message}")
+                    else:
+                        lines.append(f"  - [{level}] {message}")
 
-        historical_comparison = await self._fetch_historical_run_comparison(job, db)
-        if historical_comparison:
-            lines.append(historical_comparison)
+            historical_comparison = await self._fetch_historical_run_comparison(job, db)
+            if historical_comparison:
+                lines.append(historical_comparison)
 
-        commit_diff = await self._fetch_commit_diff(
-            job,
-            db,
-            matrix_target_ref=matrix_target_ref,
-            tested_branch=tested_branch,
-            tested_commit=tested_commit,
-            workflow_branch=ci_result.branch if ci_result else None,
-            failure_context=self._extract_failure_context_for_candidate_ranking(logs.get("job_log")),
-        )
-        if commit_diff:
-            lines.append(commit_diff)
+            commit_diff = await self._fetch_commit_diff(
+                job,
+                db,
+                matrix_target_ref=matrix_target_ref,
+                tested_branch=tested_branch,
+                tested_commit=tested_commit,
+                workflow_branch=ci_result.branch if ci_result else None,
+                failure_context=self._extract_failure_context_for_candidate_ranking(
+                    logs.get("job_log")
+                ),
+            )
+            if commit_diff:
+                lines.append(commit_diff)
 
         # 纭繚鏈湴 Git 浠撳簱宸?clone
         from infrastructure.clients.github_cache import (
@@ -1405,7 +1416,13 @@ class FailureAnalysisService:
                 lines.append(f"- Artifacts：`{logs['artifacts_dir']}`，需要时列目录并读取关键文件")
             if logs["jobs_list"]:
                 lines.append(f"- Run 全部 job 列表：`{logs['jobs_list']}`，用于定位多节点/worker job 日志")
-        lines.append("- Annotations、Steps、历史对比、Commit Diff：下方已预加载")
+        if preload_evidence:
+            lines.append("- Annotations、Steps、历史对比、Commit Diff：下方已预加载")
+        else:
+            lines.append(
+                "- Annotations、历史运行和回归区间没有预加载。只有失败日志无法解释"
+                "或需要证明代码回归时，才读取对应的本地文件/仓库信息。"
+            )
         lines.append("")
         if source_warning:
             lines.append(f"- **源码证据限制**：{source_warning}")
@@ -1427,7 +1444,7 @@ class FailureAnalysisService:
         lines.append("  如果 Matrix/Code Target Ref 与 Workflow Branch 不一致，必须从 job log/历史 job log 中抽取被测代码 SHA；抽不到时不要使用 workflow/main 的 commit diff。")
         lines.append("  只有日志事实、实际运行入口/配置、源码路径和候选提交 diff 能形成因果链时，才能归因到 PR。否则关联 PR 留空，正常报告错误原因、证据缺口和建议动作。")
         lines.append("  精度/性能阈值失败只证明当前测量未达标，不证明基线应修改。未完成同配置复测、环境排除、因果分析和验收目标确认前，不得建议放宽阈值、降低精度要求或更新基线。")
-        lines.append("  每次工具调用都应产生新事实、排除项或明确证据缺口；不要无新增信息地重复搜索。达到直接原因结论、PR 归因标准或证据不足结论后立即输出报告。")
+        lines.append("  每次工具调用都应产生新事实、排除项或明确证据缺口；工具输出只保留必要的行号和短摘要，不要把整段日志重复带入后续推理。达到直接原因结论、PR 归因标准或证据不足结论后立即输出报告。")
         lines.append("  日志来源是 GitHub Actions 下载到 backend/data 的 job/run 日志和 artifacts；不能登录 runner。")
         lines.append("  生产环境、当前 Job Runner 与本地分析宿主可能不同，不能混淆。")
         lines.append("")

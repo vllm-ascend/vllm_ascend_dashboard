@@ -6,6 +6,7 @@ from zipfile import ZipFile
 import pytest
 
 from failure_analysis.failure_analysis import FailureAnalysisService
+from infrastructure.clients import github_cache
 from infrastructure.clients.claude_code_cli import ClaudeCodeCLI
 
 
@@ -133,6 +134,55 @@ def test_legacy_parser_recovers_markdown_without_invalid_regex():
     assert parsed["problem_category"] == "基础设施"
     assert parsed["root_cause_summary"] == "Runner 初始化时网络连接被远端关闭。"
     assert parsed["improvement_measures_summary"] == "检查 Runner 网络和启动依赖后重试。"
+
+
+@pytest.mark.asyncio
+async def test_claude_cli_context_uses_local_evidence_on_demand(monkeypatch):
+    """CLI analyses must not eagerly replay logs, history, and diffs."""
+    service = FailureAnalysisService()
+    service._get_ci_result = AsyncMock(return_value=None)
+    service._download_all_logs = AsyncMock(
+        return_value={
+            "job_log": None,
+            "run_log_zip": None,
+            "artifacts_dir": None,
+            "jobs_list": None,
+        }
+    )
+    service._fetch_job_annotations = AsyncMock(side_effect=AssertionError("must not preload"))
+    service._fetch_historical_run_comparison = AsyncMock(
+        side_effect=AssertionError("must not preload")
+    )
+    service._fetch_commit_diff = AsyncMock(side_effect=AssertionError("must not preload"))
+    monkeypatch.setattr(
+        github_cache,
+        "ensure_analysis_repos_ready",
+        lambda *, update: {"vllm_ascend": "/cache/ascend", "vllm": "/cache/vllm"},
+    )
+
+    context = await service._build_job_context(
+        SimpleNamespace(
+            job_id=123,
+            run_id=456,
+            workflow_name="Nightly-A3",
+            job_name="single-node (main, qwen)",
+            hardware="A3",
+            runner_name="runner-1",
+            runner_labels="[]",
+            conclusion="failure",
+            duration_seconds=10,
+            started_at=None,
+            completed_at=None,
+            steps_data="[]",
+        ),
+        db=object(),
+    )
+
+    assert "没有预加载" in context
+    assert "先读取本地索引中的最小必要证据" in context
+    service._fetch_job_annotations.assert_not_awaited()
+    service._fetch_historical_run_comparison.assert_not_awaited()
+    service._fetch_commit_diff.assert_not_awaited()
 
 
 def test_extract_job_log_from_run_zip_uses_matching_matrix_job(tmp_path):
