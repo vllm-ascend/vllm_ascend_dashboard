@@ -250,3 +250,17 @@ export const useDeleteNightlyTestCase = () => {
     },
   })
 }
+
+/**
+ * 获取 Nightly 用例执行甘特图数据
+ *
+ * 仅在 runNumber > 0 时发起请求；切换 hardware 会重新查询。
+ */
+export const useNightlyGantt = (runNumber: number | null, hardware: string = 'a3') => {
+  return useQuery({
+    queryKey: ['nightly-gantt', runNumber, hardware],
+    queryFn: () => runNumber ? ciApi.getNightlyGantt(runNumber, hardware) : Promise.resolve(null),
+    enabled: !!runNumber && runNumber > 0,
+    staleTime: 5 * 60 * 1000,
+  })
+}

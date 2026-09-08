@@ -29,6 +29,7 @@ from contracts.schemas import (
     FailureAnalysisKnowledgeGraphResponse,
     FailureAnalysisListResponse,
     FailureAnalysisResponse,
+    NightlyGanttResponse,
     NightlyTestCaseCreate,
     NightlyTestCaseResponse,
     NightlyTestCaseUpdate,
@@ -1955,6 +1956,66 @@ async def batch_update_failure_status(
 
     await db.commit()
     return {"message": f"已更新 {len(records)} 条记录", "count": len(records)}
+
+
+# ============ Nightly Gantt ============
+
+_NIGHTLY_GANTT_CACHE: dict[tuple[int, str], tuple[float, dict]] = {}
+_NIGHTLY_GANTT_CACHE_TTL = 600  # 10 分钟，降低 GitHub API 配额消耗
+
+
+@router.get("/nightly-gantt/{run_number}", response_model=NightlyGanttResponse)
+async def get_nightly_gantt(
+    run_number: int,
+    db: DbSession,
+    hardware: str = Query("a3", description="硬件类型：a2 或 a3，默认 a3"),
+):
+    """获取 nightly 测试用例执行甘特图数据
+
+    按 run_number 定位 workflow run（优先查数据库 CIResult，未命中回退 GitHub API 翻页），
+    拉取该 run 的全部 jobs，过滤基础设施 Job 并按 Multi-node/Double-node/Single-node 分类，
+    返回北京时间起止时间、耗时、状态等结构化数据，供前端渲染甘特图。
+
+    数据来源：GitHub Actions API（vllm-project/vllm-ascend 仓库的 nightly workflow）。
+    结果按 (run_number, hardware) 缓存 10 分钟，降低 GitHub API 配额消耗。
+    """
+    from infrastructure.clients.github_client import GitHubClient
+    from nightly_gantt.nightly_gantt_service import NightlyGanttService
+
+    cache_key = (run_number, hardware)
+    now_ts = datetime.now(UTC).timestamp()
+    cached = _NIGHTLY_GANTT_CACHE.get(cache_key)
+    if cached is not None and (now_ts - cached[0]) < _NIGHTLY_GANTT_CACHE_TTL:
+        return cached[1]
+
+    if not settings.GITHUB_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="GITHUB_TOKEN not configured",
+        )
+
+    client = GitHubClient(
+        token=settings.GITHUB_TOKEN,
+        owner=settings.GITHUB_OWNER,
+        repo=settings.GITHUB_REPO,
+    )
+    svc = NightlyGanttService(db=db, github_client=client)
+    try:
+        data = await svc.get_gantt_data(run_number=run_number, hardware=hardware)
+        _NIGHTLY_GANTT_CACHE[cache_key] = (now_ts, data)
+        return data
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from None
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from None
+    except Exception as e:
+        logger.error(f"Failed to build nightly gantt for run #{run_number}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to build nightly gantt: {str(e)}",
+        ) from None
+    finally:
+        await client.close()
 
 
 # ============ Nightly Test Case CRUD ============

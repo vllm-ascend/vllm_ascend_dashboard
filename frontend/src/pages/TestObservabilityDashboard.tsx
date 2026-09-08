@@ -4,16 +4,17 @@ import {
 } from 'antd'
 import {
   BugOutlined, CheckCircleOutlined, WarningOutlined, ClockCircleOutlined,
-  SyncOutlined, DashboardOutlined, BarChartOutlined, TeamOutlined, ApartmentOutlined, EditOutlined,
-  CodeOutlined, PercentageOutlined, TableOutlined, ExclamationCircleOutlined,
+  SyncOutlined, DashboardOutlined, EditOutlined,
+  PercentageOutlined, TableOutlined, ExclamationCircleOutlined, FieldTimeOutlined,
 } from '@ant-design/icons'
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts'
 import { useTestOverview, useTestCases, useFlakyCases, useFailureBreakdown, useOwnerMatrix, useModuleHealth, useTriggerSync, useTestSuites, useFilterOptions, useUpdateCase, useTriggerCoverageSync } from '../hooks/useTestBoard'
 import { useCurrentUser } from '../hooks/useCurrentUser'
-import type { TestCaseItem, FlakyCaseDetail, FailureBreakdown, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
+import type { TestCaseItem, FlakyCaseDetail, OwnerMatrixItem, ModuleHealthItem, TestSuiteItem } from '../services/testBoard'
 import TestCaseFeatureMatrixTab from '../components/TestCaseFeatureMatrixTab'
 import UTCoverageTab from '../components/coverage/UTCoverageTab'
 import E2ECoverageTab from '../components/coverage/E2ECoverageTab'
+import NightlyGanttTab from '../components/NightlyGanttTab'
 import './TestObservabilityDashboard.css'
 
 const { Text, Title } = Typography
@@ -376,7 +377,7 @@ function TestObservabilityDashboard() {
       width: 200,
       render: (results: string[]) => (
         <Space size={2}>
-          {results.slice(0, 10).map((r, i) => getResultTag(r))}
+          {results.slice(0, 10).map((r) => getResultTag(r))}
         </Space>
       ),
     },
@@ -790,6 +791,11 @@ function TestObservabilityDashboard() {
             key: 'e2e-coverage',
             label: <Space><PercentageOutlined /><span>E2E 覆盖率</span></Space>,
             children: <E2ECoverageTab />,
+          },
+          {
+            key: 'nightly_gantt',
+            label: <Space><FieldTimeOutlined /><span>执行甘特图</span></Space>,
+            children: <NightlyGanttTab />,
           },
         ]}
       />

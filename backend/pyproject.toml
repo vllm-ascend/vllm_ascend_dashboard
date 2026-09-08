@@ -69,6 +69,7 @@ packages = [
     "infrastructure",
     "log_center",
     "model_sync",
+    "nightly_gantt",
     "pr_pipeline",
     "project_dashboard",
     "resource_dashboard",

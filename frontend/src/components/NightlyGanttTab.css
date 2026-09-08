@@ -1,0 +1,176 @@
+/* Nightly 执行甘特图 Tab 样式 — 复刻 nightly_report.py 的 HTML 输出风格 */
+.nightly-gantt-page {
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #1a1a2e;
+}
+
+.nightly-gantt-page h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.nightly-gantt-page .sub {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 20px;
+}
+
+.nightly-gantt-page .kpi {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.nightly-gantt-page .kpi-item {
+  background: #fff;
+  border: 1px solid #e2e6ed;
+  border-radius: 8px;
+  padding: 10px 16px;
+  min-width: 110px;
+}
+
+.nightly-gantt-page .kpi-item .label {
+  font-size: 10px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+.nightly-gantt-page .kpi-item .val {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0e7c6b;
+  margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nightly-gantt-page .kpi-item .val.ok { color: #059669; }
+.nightly-gantt-page .kpi-item .val.err { color: #dc2626; }
+.nightly-gantt-page .kpi-item .detail {
+  font-size: 10px;
+  color: #999;
+  margin-top: 1px;
+}
+
+/* Gantt */
+.nightly-gantt-page .gantt-wrap {
+  background: #fff;
+  border: 1px solid #e2e6ed;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 28px;
+  overflow-x: auto;
+}
+
+.nightly-gantt-page .gantt { min-width: 900px; }
+
+.nightly-gantt-page .gantt-header {
+  display: flex;
+  height: 20px;
+  border-bottom: 1px solid #e2e6ed;
+  margin-bottom: 2px;
+}
+
+.nightly-gantt-page .gantt-hour {
+  flex: 1;
+  text-align: center;
+  font-size: 10px;
+  color: #999;
+  line-height: 20px;
+  border-left: 1px solid #f0f2f5;
+  font-family: monospace;
+}
+
+.nightly-gantt-page .gantt-hour:first-child { border-left: none; }
+
+.nightly-gantt-page .gantt-phase {
+  font-size: 11px;
+  font-weight: 600;
+  color: #333;
+  padding: 5px 0 2px;
+  margin-top: 3px;
+  border-top: 1px solid #f0f2f5;
+}
+
+.nightly-gantt-page .gantt-phase:first-of-type {
+  border-top: none;
+  margin-top: 0;
+}
+
+.nightly-gantt-page .gantt-row {
+  display: flex;
+  align-items: center;
+  height: 15px;
+  margin-bottom: 1px;
+}
+
+.nightly-gantt-page .gantt-label {
+  width: 220px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #555;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 6px;
+}
+
+.nightly-gantt-page .gantt-track {
+  flex: 1;
+  position: relative;
+  height: 11px;
+  background: #fafbfc;
+  border-radius: 1px;
+}
+
+.nightly-gantt-page .gantt-bar {
+  position: absolute;
+  height: 9px;
+  border-radius: 2px;
+  top: 1px;
+  min-width: 2px;
+  cursor: default;
+  transition: opacity .15s;
+}
+
+.nightly-gantt-page .gantt-bar:hover {
+  opacity: 1 !important;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .15);
+}
+
+.nightly-gantt-page .gantt-bar.ok { background: #059669; opacity: .75; }
+.nightly-gantt-page .gantt-bar.err { background: #dc2626; opacity: .8; }
+
+/* Phase section headers */
+.nightly-gantt-page h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nightly-gantt-page h2 .badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 3px;
+}
+
+.nightly-gantt-page .b-multi { background: #e6f5f2; color: #0e7c6b; }
+.nightly-gantt-page .b-double { background: #dbeafe; color: #2563eb; }
+.nightly-gantt-page .b-single { background: #ede9fe; color: #7c3aed; }
+
+.nightly-gantt-page .note {
+  font-size: 11px;
+  color: #888;
+  margin-top: 16px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #e2e6ed;
+  border-radius: 8px;
+  border-left: 3px solid #0e7c6b;
+}

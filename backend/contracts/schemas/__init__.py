@@ -1058,6 +1058,12 @@ from .logs import (
     LogSourceInfo,
     LogSourcesResponse,
 )
+from .nightly_gantt import (
+    NightlyGanttItem,
+    NightlyGanttKpi,
+    NightlyGanttResponse,
+    NightlyGanttRunMeta,
+)
 from .pr_pipeline import (
     PRPipelineContributor,
     PRPipelineHistoricalSyncRequest,

@@ -428,3 +428,63 @@ export const updateNightlyTestCase = async (id: number, data: NightlyTestCaseUpd
 export const deleteNightlyTestCase = async (id: number): Promise<void> => {
   await api.delete(`/ci/nightly-test-cases/${id}`)
 }
+
+// ============ Nightly Gantt ============
+
+export interface NightlyGanttItem {
+  phase: string
+  name: string
+  raw_name: string
+  start_bj: string
+  end_bj: string
+  start_ms: number
+  end_ms: number
+  duration: string
+  duration_seconds: number
+  status: 'ok' | 'err'
+  conclusion: string | null
+  job_id: number | null
+  job_url: string | null
+}
+
+export interface NightlyGanttKpi {
+  total: number
+  ok: number
+  err: number
+  ok_rate: number
+  err_rate: number
+  span_ms: number
+  phase_counts: Record<string, number>
+}
+
+export interface NightlyGanttRunMeta {
+  status: string | null
+  conclusion: string | null
+  started_at: string | null
+  completed_at: string | null
+  duration_seconds: number | null
+  html_url: string | null
+}
+
+export interface NightlyGanttResponse {
+  run_number: number
+  run_id: number
+  hardware: string
+  workflow_file: string
+  workflow_display: string
+  run_meta: NightlyGanttRunMeta
+  kpi: NightlyGanttKpi
+  rows: NightlyGanttItem[]
+  phases: Record<string, NightlyGanttItem[]>
+}
+
+export const getNightlyGantt = async (
+  runNumber: number,
+  hardware: string = 'a3',
+): Promise<NightlyGanttResponse> => {
+  const response = await api.get<NightlyGanttResponse>(
+    `/ci/nightly-gantt/${runNumber}`,
+    { params: { hardware } },
+  )
+  return response.data
+}
