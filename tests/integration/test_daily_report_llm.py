@@ -159,10 +159,13 @@ def _make_mock_session(execute_results: list):
 
 
 def _patch_scheduler_job(mock_session, mock_send=None):
-    """Return a contextmanager that patches all dependencies of _send_daily_report_job."""
-    mock_engine = MagicMock()
-    mock_engine.dispose = AsyncMock()
+    """Return a contextmanager that patches all dependencies of _send_daily_report_job.
 
+    SessionLocal is imported at module load (scheduler.service:16), so patching
+    create_async_engine/sessionmaker is too late — the engine already exists and
+    the job would hit a real MySQL connection (leaking across event loops).
+    Patch SessionLocal directly so the job uses the mock session instead.
+    """
     mock_cm = AsyncMock()
     mock_cm.__aenter__.return_value = mock_session
     mock_cm.__aexit__.return_value = None
@@ -170,8 +173,7 @@ def _patch_scheduler_job(mock_session, mock_send=None):
 
     patches = [
         patch("scheduler.service.settings"),
-        patch("sqlalchemy.ext.asyncio.create_async_engine", return_value=mock_engine),
-        patch("sqlalchemy.orm.sessionmaker", return_value=mock_session_factory),
+        patch("scheduler.service.SessionLocal", new=mock_session_factory),
     ]
     if mock_send is not None:
         patches.append(

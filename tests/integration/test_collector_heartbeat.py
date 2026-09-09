@@ -38,7 +38,7 @@ async def test_collector_publishes_and_stops_its_heartbeat() -> None:
     assert bool(row.running) is True
     assert row.active_tasks == 0
     assert row.pid is not None
-    assert set(json.loads(row.capabilities)) == {"python", "network"}
+    assert set(json.loads(row.capabilities)) == {"python", "network", f"node:{node_id}"}
     assert row.updated_at is not None
 
     await worker._write_heartbeat(running=False)
