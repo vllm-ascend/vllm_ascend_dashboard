@@ -435,13 +435,16 @@ export interface NightlyGanttItem {
   phase: string
   name: string
   raw_name: string
+  created_bj: string
   start_bj: string
   end_bj: string
+  created_ms: number
   start_ms: number
   end_ms: number
+  queued_ms: number
   duration: string
   duration_seconds: number
-  status: 'ok' | 'err'
+  status: 'ok' | 'err' | 'cancelled'
   conclusion: string | null
   job_id: number | null
   job_url: string | null
@@ -451,8 +454,10 @@ export interface NightlyGanttKpi {
   total: number
   ok: number
   err: number
+  cancelled: number
   ok_rate: number
   err_rate: number
+  cancel_rate: number
   span_ms: number
   phase_counts: Record<string, number>
 }

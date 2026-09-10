@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { Card, Col, Empty, InputNumber, Row, Select, Space, Statistic, Table, Tooltip, message, Button } from 'antd'
+import { useMemo, useRef, useState } from 'react'
+import { Card, Col, Empty, InputNumber, Row, Select, Space, Statistic, Table, Tooltip, Button, message } from 'antd'
 import { DownloadOutlined, FieldTimeOutlined, SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useNightlyGantt, useRuns } from '../hooks/useCI'
@@ -17,24 +17,33 @@ const HARDWARE_TO_WORKFLOW: Record<string, string> = {
   a3: 'Nightly-A3',
   a2: 'Nightly-A2',
 }
+const STATUS_META: Record<string, { color: string; text: string }> = {
+  ok: { color: '#059669', text: '成功' },
+  err: { color: '#dc2626', text: '失败' },
+  cancelled: { color: '#d97706', text: '取消' },
+}
 
 const tableColumns: ColumnsType<NightlyGanttItem> = [
   { title: '用例名称', dataIndex: 'name', key: 'name', ellipsis: true },
-  { title: '开始', dataIndex: 'start_bj', key: 'start_bj', width: 100, render: (v: string) => <span style={{ fontFamily: 'monospace' }}>{v}</span> },
-  { title: '结束', dataIndex: 'end_bj', key: 'end_bj', width: 100, render: (v: string) => <span style={{ fontFamily: 'monospace' }}>{v}</span> },
+  { title: '创建', dataIndex: 'created_bj', key: 'created_bj', width: 90, render: (v: string) => <span style={{ fontFamily: 'monospace' }}>{v}</span> },
+  { title: '开始', dataIndex: 'start_bj', key: 'start_bj', width: 90, render: (v: string) => <span style={{ fontFamily: 'monospace' }}>{v}</span> },
+  { title: '结束', dataIndex: 'end_bj', key: 'end_bj', width: 90, render: (v: string) => <span style={{ fontFamily: 'monospace' }}>{v}</span> },
+  {
+    title: '排队', dataIndex: 'queued_ms', key: 'queued_ms', width: 80, align: 'right',
+    render: (v: number) => <span style={{ fontFamily: 'monospace', color: '#9ca0b3' }}>{fmtSpan(v)}</span>,
+  },
   {
     title: '耗时', dataIndex: 'duration', key: 'duration', width: 90, align: 'right',
     render: (v: string, r: NightlyGanttItem) => (
-      <span style={{ fontFamily: 'monospace', color: r.status === 'ok' ? '#059669' : '#dc2626', fontWeight: 600 }}>{v}</span>
+      <span style={{ fontFamily: 'monospace', color: STATUS_META[r.status]?.color ?? '#999', fontWeight: 600 }}>{v}</span>
     ),
   },
   {
     title: '状态', dataIndex: 'status', key: 'status', width: 70, align: 'center',
-    render: (v: string) => (
-      <span style={{ color: v === 'ok' ? '#059669' : '#dc2626', fontWeight: 600 }}>
-        {v === 'ok' ? '成功' : '失败'}
-      </span>
-    ),
+    render: (v: string) => {
+      const m = STATUS_META[v] || { color: '#999', text: v }
+      return <span style={{ color: m.color, fontWeight: 600 }}>{m.text}</span>
+    },
   },
 ]
 
@@ -44,19 +53,18 @@ interface GanttViewProps {
 }
 
 function GanttView({ rows, phases }: GanttViewProps) {
+  const tipRef = useRef<HTMLDivElement>(null)
+
   const { gStart, gHours, gTotal } = useMemo(() => {
-    if (!rows.length) {
-      return { gStart: 0, gHours: 0, gTotal: 0 }
-    }
-    const allStart = Math.min(...rows.map((r) => r.start_ms))
+    if (!rows.length) return { gStart: 0, gHours: 0, gTotal: 0 }
+    const allCreated = Math.min(...rows.map((r) => r.created_ms))
     const allEnd = Math.max(...rows.map((r) => r.end_ms))
-    const gStartCalc = Math.floor(allStart / HOUR) * HOUR
+    const gStartCalc = Math.floor(allCreated / HOUR) * HOUR
     const gEndCalc = Math.ceil(allEnd / HOUR) * HOUR
-    const gTotalCalc = gEndCalc - gStartCalc
     return {
       gStart: gStartCalc,
-      gHours: Math.round(gTotalCalc / HOUR),
-      gTotal: gTotalCalc,
+      gHours: Math.round((gEndCalc - gStartCalc) / HOUR),
+      gTotal: gEndCalc - gStartCalc,
     }
   }, [rows])
 
@@ -66,44 +74,114 @@ function GanttView({ rows, phases }: GanttViewProps) {
 
   const hours: number[] = []
   for (let i = 0; i < gHours; i++) hours.push(gStart + i * HOUR)
+  const pct = (ms: number) => (gTotal > 0 ? ((ms - gStart) / gTotal) * 100 : 0)
+
+  const moveTip = (e: React.MouseEvent) => {
+    const el = tipRef.current
+    if (!el) return
+    let x = e.clientX + 14
+    let y = e.clientY + 14
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+    if (x + w > window.innerWidth - 8) x = e.clientX - w - 14
+    if (y + h > window.innerHeight - 8) y = e.clientY - h - 14
+    el.style.left = `${x}px`
+    el.style.top = `${y}px`
+  }
+  const showTip = (e: React.MouseEvent, r: NightlyGanttItem) => {
+    const el = tipRef.current
+    if (!el) return
+    const m = STATUS_META[r.status] || { color: '#999', text: r.status }
+    el.innerHTML =
+      `<div class="tt-name">${r.name}</div>` +
+      `<div class="tt-row"><span class="tt-label">状态</span><span class="tt-status ${r.status}">${m.text}</span></div>` +
+      `<div class="tt-row"><span class="tt-label">创建</span><span class="tt-val">${fmtTime(r.created_ms)}</span></div>` +
+      `<div class="tt-row"><span class="tt-label">开始</span><span class="tt-val">${fmtTime(r.start_ms)}</span></div>` +
+      `<div class="tt-row"><span class="tt-label">结束</span><span class="tt-val">${fmtTime(r.end_ms)}</span></div>` +
+      `<div class="tt-row"><span class="tt-label">排队</span><span class="tt-val">${fmtSpan(r.queued_ms)}</span></div>` +
+      `<div class="tt-row"><span class="tt-label">执行</span><span class="tt-val">${r.duration}</span></div>`
+    el.style.display = 'block'
+    moveTip(e)
+  }
+  const hideTip = () => {
+    const el = tipRef.current
+    if (el) el.style.display = 'none'
+  }
 
   return (
     <div className="gantt-wrap">
+      <div className="gantt-tooltip" ref={tipRef} style={{ display: 'none' }} />
       <div className="gantt">
-        <div className="gantt-header">
-          {hours.map((ms) => (
-            <div key={ms} className="gantt-hour">{fmtHour(ms)}</div>
-          ))}
-        </div>
         {PHASE_ORDER.map((phase) => {
           const items = phases[phase] || []
           if (!items.length) return null
+          const okN = items.filter((r) => r.status === 'ok').length
+          const errN = items.filter((r) => r.status === 'err').length
+          const canN = items.filter((r) => r.status === 'cancelled').length
           return (
-            <div key={phase}>
-              <div className="gantt-phase">{phase}</div>
-              {items.map((r) => {
-                const left = gTotal > 0 ? ((r.start_ms - gStart) / gTotal) * 100 : 0
-                const width = gTotal > 0 ? Math.max(((r.end_ms - r.start_ms) / gTotal) * 100, 0.3) : 0.3
-                const tip = `${r.name}\n${fmtTime(r.start_ms)} -> ${fmtTime(r.end_ms)}\n${r.duration}\n${r.status === 'ok' ? '成功' : '失败'}`
-                return (
-                  <div className="gantt-row" key={`${r.phase}-${r.job_id ?? r.name}`}>
-                    <Tooltip title={r.name}>
-                      <div className="gantt-label">{r.name}</div>
-                    </Tooltip>
-                    <div className="gantt-track">
-                      <Tooltip title={tip}>
-                        <div
-                          className={`gantt-bar ${r.status}`}
-                          style={{ left: `${left.toFixed(2)}%`, width: `${width.toFixed(2)}%` }}
-                        />
-                      </Tooltip>
-                    </div>
+            <div className="gantt-section" key={phase}>
+              <div className="gantt-phase">
+                <span className={`badge ${PHASE_BADGE[phase]}`}>{phase}</span>
+                <span className="gantt-phase-count">
+                  {items.length} jobs · {okN} ok / {errN} fail{canN ? ` / ${canN} cancel` : ''}
+                </span>
+              </div>
+              <div className="gantt-chart-area">
+                <div className="gantt-axis">
+                  <div className="gantt-axis-spacer" />
+                  <div className="gantt-axis-bar">
+                    {hours.map((ms) => (
+                      <div className="gantt-hour-label" key={ms} style={{ left: `${pct(ms).toFixed(2)}%` }}>
+                        {fmtHour(ms)}
+                      </div>
+                    ))}
                   </div>
-                )
-              })}
+                </div>
+                {items.map((r) => {
+                  const waitLeft = pct(r.created_ms)
+                  const waitWidth = Math.max(pct(r.start_ms) - waitLeft, r.queued_ms > 0 ? 0.3 : 0)
+                  const runLeft = pct(r.start_ms)
+                  const runWidth = Math.max(pct(r.end_ms) - runLeft, 0.3)
+                  return (
+                    <div className="gantt-row" key={`${r.phase}-${r.job_id ?? r.name}`}>
+                      <Tooltip title={r.name}>
+                        <div className="gantt-label">{r.name}</div>
+                      </Tooltip>
+                      <div className="gantt-track">
+                        {hours.map((ms) => (
+                          <div className="gantt-grid" key={ms} style={{ left: `${pct(ms).toFixed(2)}%` }} />
+                        ))}
+                        {r.queued_ms > 0 && (
+                          <div
+                            className={`gantt-bar wait ${r.status}`}
+                            style={{ left: `${waitLeft.toFixed(2)}%`, width: `${waitWidth.toFixed(2)}%` }}
+                            onMouseEnter={(e) => showTip(e, r)}
+                            onMouseMove={moveTip}
+                            onMouseLeave={hideTip}
+                          />
+                        )}
+                        <div
+                          className={`gantt-bar run ${r.status}`}
+                          style={{ left: `${runLeft.toFixed(2)}%`, width: `${runWidth.toFixed(2)}%` }}
+                          onMouseEnter={(e) => showTip(e, r)}
+                          onMouseMove={moveTip}
+                          onMouseLeave={hideTip}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )
         })}
+      </div>
+      <div className="gantt-legend">
+        <span className="lg-item"><span className="lg-sw ok" />成功</span>
+        <span className="lg-item"><span className="lg-sw err" />失败</span>
+        <span className="lg-item"><span className="lg-sw cancelled" />取消</span>
+        <span className="lg-item"><span className="lg-sw wait" />排队等待</span>
+        <span className="lg-note">悬停条形查看详情 · 北京时间 (UTC+8)</span>
       </div>
     </div>
   )
@@ -144,9 +222,7 @@ function NightlyGanttTab() {
     if (!kpi) return null
     return (
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={4}>
-          <Card><Statistic title="用例总数" value={kpi.total} /></Card>
-        </Col>
+        <Col span={4}><Card><Statistic title="用例总数" value={kpi.total} /></Card></Col>
         <Col span={4}>
           <Card><Statistic title="成功" value={kpi.ok} valueStyle={{ color: '#059669' }} suffix={kpi.total ? `(${Math.round(kpi.ok_rate * 100)}%)` : ''} /></Card>
         </Col>
@@ -154,9 +230,12 @@ function NightlyGanttTab() {
           <Card><Statistic title="失败" value={kpi.err} valueStyle={{ color: '#dc2626' }} suffix={kpi.total ? `(${Math.round(kpi.err_rate * 100)}%)` : ''} /></Card>
         </Col>
         <Col span={4}>
+          <Card><Statistic title="取消" value={kpi.cancelled} valueStyle={{ color: '#d97706' }} suffix={kpi.total ? `(${Math.round(kpi.cancel_rate * 100)}%)` : ''} /></Card>
+        </Col>
+        <Col span={4}>
           <Card><Statistic title="时间跨度" value={kpi.span_ms ? fmtSpan(kpi.span_ms) : '—'} /></Card>
         </Col>
-        <Col span={8}>
+        <Col span={4}>
           <Card title="阶段分布" size="small">
             <Space size={8} wrap>
               {PHASE_ORDER.map((p) => (
@@ -252,12 +331,12 @@ function NightlyGanttTab() {
                   columns={tableColumns}
                   pagination={false}
                   size="small"
-                  scroll={{ x: 480 }}
+                  scroll={{ x: 560 }}
                 />
               </div>
             )
           })}
-          <div className="note">仅包含测试用例，不含基础设施 Job。所有时间已转换为北京时间 (UTC+8)。数据来源：GitHub Actions API。</div>
+          <div className="note">仅包含测试用例，不含基础设施 Job。条形分两段：斜纹=排队等待(created→started)，实色=执行(started→completed)。所有时间已转换为北京时间 (UTC+8)。数据来源：GitHub Actions API。</div>
         </>
       )}
     </div>
