@@ -12,13 +12,16 @@ class NightlyGanttItem(BaseModel):
     phase: str = Field(..., description="阶段：Multi-node / Double-node / Single-node")
     name: str = Field(..., description="用例展示名（从 job 名称提取）")
     raw_name: str = Field(..., description="原始 job 名称")
+    created_bj: str = Field(..., description="创建时间（北京时间 HH:MM:SS）")
     start_bj: str = Field(..., description="开始时间（北京时间 HH:MM:SS）")
     end_bj: str = Field(..., description="结束时间（北京时间 HH:MM:SS）")
-    start_ms: int = Field(..., description="开始时间 UTC 毫秒戳（甘特图定位用）")
+    created_ms: int = Field(..., description="创建时间 UTC 毫秒戳（排队段起点）")
+    start_ms: int = Field(..., description="开始时间 UTC 毫秒戳（排队段终点 / 执行段起点）")
     end_ms: int = Field(..., description="结束时间 UTC 毫秒戳")
+    queued_ms: int = Field(..., description="排队等待时长毫秒（started - created）")
     duration: str = Field(..., description="人类可读耗时，如 1h23m")
-    duration_seconds: int = Field(..., description="耗时秒数")
-    status: str = Field(..., description="状态：ok / err")
+    duration_seconds: int = Field(..., description="执行耗时秒数（end - started）")
+    status: str = Field(..., description="状态：ok / err / cancelled")
     conclusion: str | None = Field(None, description="GitHub job conclusion")
     job_id: int | None = Field(None, description="GitHub job ID")
     job_url: str | None = Field(None, description="GitHub job 详情页 URL")
@@ -29,8 +32,10 @@ class NightlyGanttKpi(BaseModel):
     total: int
     ok: int
     err: int
+    cancelled: int = Field(..., description="cancelled 用例数")
     ok_rate: float = Field(..., description="成功率 0-1")
     err_rate: float = Field(..., description="失败率 0-1")
+    cancel_rate: float = Field(..., description="取消率 0-1")
     span_ms: int = Field(..., description="时间跨度毫秒")
     phase_counts: dict[str, int] = Field(..., description="各阶段用例数")
 

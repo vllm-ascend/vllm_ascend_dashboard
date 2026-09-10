@@ -131,15 +131,17 @@ def test_format_duration_hours():
 
 def _make_job(
     name: str,
+    created_at: str = "2026-03-23T07:55:00Z",
     started_at: str = "2026-03-23T08:00:00Z",
     completed_at: str = "2026-03-23T08:30:00Z",
     conclusion: str = "success",
     job_id: int = 100,
     run_id: int = 999,
 ) -> dict:
-    """构造 GitHub API job dict。"""
+    """构造 GitHub API job dict。created_at 早于 started_at 以构造排队段。"""
     return {
         "name": name,
+        "created_at": created_at,
         "started_at": started_at,
         "completed_at": completed_at,
         "conclusion": conclusion,
@@ -195,7 +197,7 @@ def test_build_rows_status_ok_and_err():
     by_name = {r["name"]: r for r in rows}
     assert by_name["Pass-Case"]["status"] == "ok"
     assert by_name["Fail-Case"]["status"] == "err"
-    assert by_name["Cancel-Case"]["status"] == "err"
+    assert by_name["Cancel-Case"]["status"] == "cancelled"
 
 
 def test_build_rows_sorts_by_phase_then_start():
@@ -226,18 +228,23 @@ def test_build_rows_beijing_time_conversion():
     """UTC ISO 字符串应正确转换为北京时间 HH:MM:SS 与 UTC 毫秒戳。"""
     jobs = [
         _make_job("single-node (main, Time-Check, c.yaml)",
+                  created_at="2026-03-22T23:55:00Z",  # UTC 23:55 前一日 = 北京 07:55
                   started_at="2026-03-23T00:00:00Z",  # UTC 00:00 = 北京 08:00
                   completed_at="2026-03-23T01:00:00Z",  # UTC 01:00 = 北京 09:00
                   job_id=1),
     ]
     rows = NightlyGanttService._build_rows(jobs)
     r = rows[0]
+    assert r["created_bj"] == "07:55:00"
     assert r["start_bj"] == "08:00:00"
     assert r["end_bj"] == "09:00:00"
     assert r["duration"] == "1h0m"
     assert r["duration_seconds"] == 3600
     # start_ms/end_ms 为 UTC 毫秒戳，且 end_ms - start_ms == 3600*1000
     assert r["end_ms"] - r["start_ms"] == 3600 * 1000
+    # queued_ms = started - created = 5 分钟
+    assert r["queued_ms"] == 5 * 60 * 1000
+    assert r["start_ms"] - r["created_ms"] == r["queued_ms"]
 
 
 def test_build_rows_constructs_job_url():

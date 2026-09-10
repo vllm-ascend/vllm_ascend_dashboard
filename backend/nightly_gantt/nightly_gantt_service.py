@@ -162,10 +162,12 @@ class NightlyGanttService:
         # 4. 统计 KPI
         total = len(rows)
         ok_count = sum(1 for r in rows if r["status"] == "ok")
-        err_count = total - ok_count
+        cancelled_count = sum(1 for r in rows if r["status"] == "cancelled")
+        err_count = total - ok_count - cancelled_count
         span_ms = 0
         if rows:
-            span_ms = max(r["end_ms"] for r in rows) - min(r["start_ms"] for r in rows)
+            starts = [r.get("created_ms", r["start_ms"]) for r in rows]
+            span_ms = max(r["end_ms"] for r in rows) - min(starts)
 
         phases: dict[str, list[dict[str, Any]]] = {"Multi-node": [], "Double-node": [], "Single-node": []}
         for r in rows:
@@ -182,8 +184,10 @@ class NightlyGanttService:
                 "total": total,
                 "ok": ok_count,
                 "err": err_count,
+                "cancelled": cancelled_count,
                 "ok_rate": round(ok_count / total, 4) if total else 0.0,
                 "err_rate": round(err_count / total, 4) if total else 0.0,
+                "cancel_rate": round(cancelled_count / total, 4) if total else 0.0,
                 "span_ms": span_ms,
                 "phase_counts": {p: len(items) for p, items in phases.items()},
             },
@@ -281,18 +285,35 @@ class NightlyGanttService:
             bj_end = utc_end.astimezone(BJ_TZ)
             duration = utc_end - utc_start
 
+            # created 用于画"排队等待"段（created -> started）
+            created = job.get("created_at") or started
+            utc_created = _parse_iso(created)
+            bj_created = utc_created.astimezone(BJ_TZ)
+            queued_ms = max(0, int((utc_start - utc_created).total_seconds() * 1000))
+
+            conclusion = job.get("conclusion")
+            if conclusion == "success":
+                status = "ok"
+            elif conclusion == "cancelled":
+                status = "cancelled"
+            else:
+                status = "err"
+
             rows.append({
                 "phase": phase,
                 "name": extract_display_name(name),
                 "raw_name": name,
+                "created_bj": bj_created.strftime("%H:%M:%S"),
                 "start_bj": bj_start.strftime("%H:%M:%S"),
                 "end_bj": bj_end.strftime("%H:%M:%S"),
+                "created_ms": int(utc_created.timestamp() * 1000),
                 "start_ms": int(utc_start.timestamp() * 1000),
                 "end_ms": int(utc_end.timestamp() * 1000),
+                "queued_ms": queued_ms,
                 "duration": format_duration(duration),
                 "duration_seconds": int(duration.total_seconds()),
-                "status": "ok" if job.get("conclusion") == "success" else "err",
-                "conclusion": job.get("conclusion"),
+                "status": status,
+                "conclusion": conclusion,
                 "job_id": job.get("id"),
                 "job_url": _build_job_url(job.get("id"), job.get("run_id"), owner, repo),
             })
