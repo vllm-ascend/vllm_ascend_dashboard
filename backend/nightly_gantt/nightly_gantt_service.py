@@ -28,6 +28,7 @@ BJ_TZ = timezone(timedelta(hours=8))
 NIGHTLY_WORKFLOWS: dict[str, tuple[str, str]] = {
     "a2": ("schedule_nightly_test_a2.yaml", "Nightly-A2"),
     "a3": ("schedule_nightly_test_a3.yaml", "Nightly-A3"),
+    "a5": ("schedule_nightly_test_a5.yaml", "Nightly-A5"),
 }
 
 # 基础设施 Job 名称关键词（命中即跳过，只保留用例 Job）

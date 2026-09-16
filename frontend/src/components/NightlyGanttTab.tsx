@@ -16,6 +16,7 @@ const PHASE_BADGE: Record<string, string> = {
 const HARDWARE_TO_WORKFLOW: Record<string, string> = {
   a3: 'Nightly-A3',
   a2: 'Nightly-A2',
+  a5: 'Nightly-A5',
 }
 
 const tableColumns: ColumnsType<NightlyGanttItem> = [
@@ -210,6 +211,7 @@ function NightlyGanttTab() {
             options={[
               { label: 'A3', value: 'a3' },
               { label: 'A2', value: 'a2' },
+              { label: 'A5', value: 'a5' },
             ]}
           />
           <Button type="primary" icon={<SearchOutlined />} onClick={onSearch} loading={isFetching}>

@@ -107,6 +107,7 @@ class TestCaseResponse(BaseModel):
                 "Nightly-A2": "schedule_nightly_test_a2.yaml",
                 "Nightly-A3": "schedule_nightly_test_a3.yaml",
                 "Nightly-A3-560T": "schedule_nightly_test_a3.yaml",
+                "Nightly-A5": "schedule_nightly_test_a5.yaml",
                 "E2E-Light": "pr_test_light.yaml",
                 "E2E-Full": "pr_test_full.yaml",
             }
