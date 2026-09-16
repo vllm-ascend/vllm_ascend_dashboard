@@ -276,6 +276,7 @@ export function ReportEditModal({
               >
                 <Select.Option value="A2">A2</Select.Option>
                 <Select.Option value="A3">A3</Select.Option>
+                <Select.Option value="A5">A5</Select.Option>
                 <Select.Option value="310P">310P</Select.Option>
               </Select>
             </Descriptions.Item>

@@ -39,7 +39,13 @@ if not DEFAULT_REPO_PATH:
 CONFIG_PATH = ".github/workflows/configs/nightly_config.yaml"
 
 # hardware → workflow_name 映射
-HARDWARE_WF = {"a2": "Nightly-A2", "a3": "Nightly-A3", "a3-560t": "Nightly-A3", "310p": "Nightly-310P"}
+HARDWARE_WF = {
+    "a2": "Nightly-A2",
+    "a3": "Nightly-A3",
+    "a3-560t": "Nightly-A3",
+    "a5": "Nightly-A5",
+    "310p": "Nightly-310P",
+}
 
 # section → deployment_type 映射
 SECTION_DEPLOY = {
@@ -53,8 +59,8 @@ SECTION_DEPLOY = {
 class TestCaseDef:
     """从 nightly_config.yaml 解析出的用例定义"""
     name: str                # 用例唯一名
-    workflow: str            # Nightly-A2 / Nightly-A3 / Nightly-310P
-    hardware: str            # a2 / a3 / a3-560t / 310p
+    workflow: str            # Nightly-A2 / Nightly-A3 / Nightly-A5 / Nightly-310P
+    hardware: str            # a2 / a3 / a3-560t / a5 / 310p
     section: str             # single_node / multi_node / double_node / multi_card / accuracy
     deployment: str          # single-node / multi-node-N
     model_path: str = ""     # 关联的 YAML config 或测试路径
@@ -143,7 +149,7 @@ class NightlyConfigParser:
         results: list[TestCaseDef] = []
         seen: set[tuple[str, str]] = set()
 
-        for hw_key in ["a2", "a3", "a3-560t", "310p"]:
+        for hw_key in ["a2", "a3", "a3-560t", "a5", "310p"]:
             hw_data = data.get(hw_key)
             if not hw_data:
                 continue

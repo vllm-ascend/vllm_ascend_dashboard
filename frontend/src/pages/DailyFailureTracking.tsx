@@ -87,7 +87,7 @@ type DailyFailurePreferences = {
 }
 
 const DAILY_FAILURE_PREFERENCES_KEY = 'ci-daily-failure-preferences'
-const KNOWN_DAILY_FAILURE_WORKFLOWS = ['Nightly-A2', 'Nightly-A3', 'Nightly-310P']
+const KNOWN_DAILY_FAILURE_WORKFLOWS = ['Nightly-A2', 'Nightly-A3', 'Nightly-A5', 'Nightly-310P']
 
 function readDailyFailurePreferences(): DailyFailurePreferences {
   if (typeof window === 'undefined') return {}
