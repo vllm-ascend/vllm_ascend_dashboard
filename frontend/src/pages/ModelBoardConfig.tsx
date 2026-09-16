@@ -83,6 +83,7 @@ const PD_NODE_TYPES = [
 const HARDWARE_OPTIONS = [
   { value: 'A2', label: 'Atlas A2' },
   { value: 'A3', label: 'Atlas A3' },
+  { value: 'A5', label: 'Atlas A5' },
   { value: '310P', label: 'Ascend 310P' },
 ]
 
@@ -101,6 +102,7 @@ const SCENARIO_LABELS: Record<string, string> = {
 const HARDWARE_LABELS: Record<string, string> = {
   'A2': 'Atlas A2',
   'A3': 'Atlas A3',
+  'A5': 'Atlas A5',
   '310P': 'Ascend 310P',
 }
 
@@ -814,6 +816,7 @@ v0.18.0:
                         <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
                           <li><code>A2</code> - Atlas A2</li>
                           <li><code>A3</code> - Atlas A3</li>
+                          <li><code>A5</code> - Atlas A5</li>
                           <li><code>310P</code> - Ascend 310P</li>
                         </ul>
                       </li>

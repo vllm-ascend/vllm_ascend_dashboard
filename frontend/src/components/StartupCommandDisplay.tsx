@@ -28,6 +28,7 @@ const PD_NODE_LABELS: Record<string, string> = {
 const HARDWARE_LABELS: Record<string, string> = {
   'A2': 'Atlas A2',
   'A3': 'Atlas A3',
+  'A5': 'Atlas A5',
   '310P': 'Ascend 310P',
 }
 
