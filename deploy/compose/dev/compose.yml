@@ -27,9 +27,10 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       STORE_MODEL_IN_DB: "false"
     entrypoint: []
-    command: ["litellm", "--config", "/app/litellm_config.yaml", "--port", "4000"]
+    command: ["/bin/sh", "/app/litellm-entrypoint.sh"]
     volumes:
       - ../../config-templates/litellm_config.yaml:/app/litellm_config.yaml
+      - ../production/litellm-entrypoint.sh:/app/litellm-entrypoint.sh:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost',4000)); s.close()"]
       interval: 10s

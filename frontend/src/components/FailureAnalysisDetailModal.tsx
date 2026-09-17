@@ -44,10 +44,8 @@ export const FailureAnalysisDetailModal: React.FC<FailureAnalysisDetailModalProp
   const currentAnalysis = analysis || existingAnalysis
 
   useEffect(() => {
-    if (existingAnalysis?.id) {
-      setAnalysisId(existingAnalysis.id)
-    }
-  }, [existingAnalysis])
+    setAnalysisId(existingAnalysis?.id || null)
+  }, [jobId, existingAnalysis])
 
   useEffect(() => {
     if (analyzeMutation.isSuccess && analyzeMutation.data) {

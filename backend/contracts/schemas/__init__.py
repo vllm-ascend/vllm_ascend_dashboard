@@ -245,6 +245,10 @@ class CIJobResponse(CIJobBase):
     duration_seconds: int | None = None
     runner_labels: list[str] | None = None
     steps_summary: list[dict] | None = None
+    vllm_ascend_commit: str | None = None
+    vllm_ascend_commit_date: str | None = None
+    vllm_ascend_commit_message: str | None = None
+    version_evidence_status: str | None = None
     created_at: datetime
 
     @computed_field
@@ -740,6 +744,14 @@ class FailureAnalysisResponse(BaseModel):
     share_token: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @field_validator("evidence_ledger", mode="before")
+    @classmethod
+    def normalize_legacy_evidence_ledger(cls, value: Any) -> Any:
+        """Keep list-shaped legacy/demo ledgers readable through the API."""
+        if isinstance(value, list):
+            return {"entries": value}
+        return value
 
 
 class FailureAnalysisListResponse(BaseModel):

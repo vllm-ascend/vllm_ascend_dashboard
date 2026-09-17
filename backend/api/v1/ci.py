@@ -2,10 +2,12 @@
 CI 数据 API 路由
 Phase 2: 实现数据采集和展示
 """
+import asyncio
 import csv
 import io
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -41,6 +43,7 @@ from infrastructure.persistence.models import (
     CIResult,
     DailyFailureRecord,
     JobFailureAnalysis,
+    JobLogSummary,
     JobOwner,
     NightlyTestCase,
     WorkflowConfig,
@@ -51,16 +54,302 @@ from infrastructure.persistence.run_attempts import (
     is_current_run_attempt,
 )
 from tooling.ci_filters import build_workflow_time_filter
+from tooling.ci_version_snapshot import get_version_snapshot, parse_ci_version_snapshot
 from tooling.model_fo_mapping import (
     load_model_fo_mappings,
     lookup_model_fo,
     seed_missing_model_fo_mappings,
     set_model_fo_mapping,
 )
+from tooling.official_ci_scope import build_official_ci_filter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+    return {}
+
+
+def _json_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError):
+            return []
+    return []
+
+
+def _find_metadata_value(payload: Any, aliases: set[str]) -> Any:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in aliases and isinstance(value, (str, int, float, bool)):
+                return value
+        for value in payload.values():
+            found = _find_metadata_value(value, aliases)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = _find_metadata_value(value, aliases)
+            if found is not None:
+                return found
+    return None
+
+
+def _failure_stage(steps: list[Any]) -> dict[str, Any]:
+    valid_steps = [step for step in steps if isinstance(step, dict)]
+    failed_index = next(
+        (index for index, step in enumerate(valid_steps) if step.get("conclusion") in {"failure", "timed_out", "cancelled"}),
+        None,
+    )
+    failed = valid_steps[failed_index] if failed_index is not None else None
+    successful_before = [
+        step for step in valid_steps[:failed_index] if step.get("conclusion") == "success"
+    ] if failed_index is not None else [step for step in valid_steps if step.get("conclusion") == "success"]
+    return {
+        "last_successful_step": successful_before[-1].get("name") if successful_before else None,
+        "first_failed_step": failed.get("name") if failed else None,
+        "direct_error": None,
+        "source": "ci_jobs.steps_data",
+    }
+
+
+async def _fetch_pr_details_bounded(
+    client: Any,
+    owner: str,
+    repo: str,
+    pr_numbers: list[int],
+    max_concurrency: int = 4,
+) -> list[tuple[int, dict[str, Any] | None, str | None]]:
+    """Fetch PR evidence concurrently without flooding the GitHub API."""
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def fetch_one(pr_number: int) -> tuple[int, dict[str, Any] | None, str | None]:
+        async with semaphore:
+            try:
+                detail = await client.get_pr_detail(owner, repo, pr_number)
+                return pr_number, detail, None
+            except Exception as exc:
+                return pr_number, None, str(exc)
+
+    # gather preserves input order, keeping evidence aligned with commit order.
+    return await asyncio.gather(*(fetch_one(number) for number in pr_numbers))
+
+
+def _parse_evidence_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _merged_within_commit_boundary(
+    merged_at: Any,
+    start_commit_date: Any,
+    end_commit_date: Any,
+) -> bool:
+    """Use PR merged_at as a temporal guard on top of GitHub's commit topology."""
+    merged = _parse_evidence_datetime(merged_at)
+    if merged is None:
+        return False
+    start = _parse_evidence_datetime(start_commit_date)
+    end = _parse_evidence_datetime(end_commit_date)
+    return not ((start is not None and merged <= start) or (end is not None and merged > end))
+
+
+def _extract_merged_pr_number(title: str) -> int | None:
+    """The final ``(#123)`` in a squash title identifies the PR being merged."""
+    parenthesized = re.findall(r"\(#(\d+)\)", title)
+    if parenthesized:
+        return int(parenthesized[-1])
+    references = re.findall(r"(?:PR\s*)?#(\d+)", title, flags=re.IGNORECASE)
+    return int(references[-1]) if references else None
+
+
+def _extract_revert_target(
+    message: str,
+    current_pr: int | None,
+    sha_to_pr: dict[str, int],
+) -> tuple[int | None, str | None]:
+    """Return the original PR/SHA referenced by common GitHub revert formats."""
+    sha_match = re.search(r"This reverts commit\s+`?([0-9a-f]{7,40})`?", message, re.I)
+    if not sha_match:
+        sha_match = re.search(r"Merge commit:\s*`?([0-9a-f]{7,40})`?", message, re.I)
+    target_sha = sha_match.group(1) if sha_match else None
+    target_pr = None
+    if target_sha:
+        target_pr = next(
+            (number for sha, number in sha_to_pr.items() if sha.lower().startswith(target_sha.lower())),
+            None,
+        )
+
+    if target_pr is None:
+        for pattern in (r"Original PR:\s*#(\d+)", r"Revert of PR\s*#(\d+)"):
+            match = re.search(pattern, message, re.I)
+            if match:
+                target_pr = int(match.group(1))
+                break
+
+    if target_pr is None and re.search(r"\brevert\b", message.splitlines()[0], re.I):
+        references = [int(value) for value in re.findall(r"#(\d+)", message.splitlines()[0])]
+        target_pr = next((number for number in references if number != current_pr), None)
+    return target_pr, target_sha
+
+
+def _extract_log_error_summary(log_text: str) -> str | None:
+    """Return one compact actionable line from a GitHub Actions log."""
+    ansi_escape = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    candidates: list[tuple[int, str]] = []
+    for raw_line in log_text.splitlines():
+        line = ansi_escape.sub("", raw_line).strip()
+        lowered = line.lower()
+        if not line or any(noise in lowered for noise in (
+            'echo "::error::', "::error::upload failed", "process completed with exit code"
+        )):
+            continue
+        score = 0
+        if any(marker in lowered for marker in (
+            "the following aisbench case failed",
+            "performance verification failed",
+            "accuracy verification failed",
+        )):
+            score = 10
+        elif "traceback" in lowered:
+            score = 5
+        elif "assertionerror" in lowered or "exception" in lowered:
+            score = 4
+        elif "error:" in lowered or "[error]" in lowered:
+            score = 3
+        elif "failed:" in lowered:
+            score = 2
+        if score:
+            candidates.append((score, line))
+    if not candidates:
+        return None
+    best_score = max(item[0] for item in candidates)
+    summary = [line for score, line in candidates if score == best_score][-1]
+    return summary if len(summary) <= 240 else f"{summary[:237]}..."
+
+
+def _build_log_root_cause_context(log_text: str, max_chars: int = 14000) -> str:
+    """Select causal failure neighborhoods while excluding cleanup noise."""
+    lines = log_text.splitlines()
+    # Business-level verdicts emitted by aisbench outrank orchestration
+    # symptoms and generic exceptions and must survive excerpt clipping.
+    verdict_markers = (
+        "the following aisbench case failed",
+        "performance verification failed",
+        "accuracy verification failed",
+        "current output token throughput",
+        "relative to baseline",
+    )
+    noise_markers = (
+        "upload artifact", "upload-artifact", "no files were found with the provided path",
+        "benchmark_results", "cleaning up", "post job cleanup",
+        "process completed with exit code", "##[warning]",
+    )
+    scored_markers = (
+        (30, "the following aisbench case failed"),
+        (30, "performance verification failed"),
+        (30, "accuracy verification failed"),
+        (28, "current output token throughput"),
+        (28, "relative to baseline"),
+        (12, "fail_tag_"), (12, "vector core timeout"),
+        (12, "failed to start"), (11, "runtimeerror"),
+        (10, "traceback"), (10, "assertionerror"),
+        (9, "short test summary"), (9, "fatal"),
+        (8, "pytest exit code"), (8, " failed "),
+        (6, "exception"), (5, "error:"), (5, "[error]"),
+    )
+    ranked_hits: list[tuple[int, int]] = []
+    for index, line in enumerate(lines):
+        lowered = line.lower()
+        if any(marker in lowered for marker in noise_markers):
+            continue
+        score = max((score for score, marker in scored_markers if marker in lowered), default=0)
+        if score:
+            ranked_hits.append((score, index))
+
+    # Apply a quota per verdict type so a burst of performance failures cannot
+    # push a later accuracy failure out of the evidence budget.
+    verdict_indexes = sorted({
+        index
+        for marker in verdict_markers
+        for index in [
+            candidate for candidate, line in enumerate(lines)
+            if marker in line.lower()
+        ][:6]
+    })
+    verdict_selected = set(verdict_indexes)
+    verdict_excerpt = "\n".join(
+        f"{index + 1}: {lines[index][:3000]}" for index in verdict_indexes
+    )
+    verdict_budget = min(8000, max_chars * 2 // 3)
+    if len(verdict_excerpt) > verdict_budget:
+        verdict_excerpt = verdict_excerpt[:verdict_budget] + "\n... [验收失败证据已截断]"
+
+    # Prefer causal signals over generic errors, but preserve their original
+    # chronological order so the model can reconstruct the failure boundary.
+    hit_indexes = sorted(index for _, index in sorted(
+        ranked_hits, key=lambda item: (-item[0], item[1])
+    )[:14])
+    selected: set[int] = set()
+    for index in hit_indexes:
+        selected.update(range(max(0, index - 16), min(len(lines), index + 17)))
+    if not selected:
+        selected.update(range(max(0, len(lines) - 180), len(lines)))
+    general_excerpt = "\n".join(
+        f"{index + 1}: {lines[index]}"
+        for index in sorted(selected - verdict_selected)
+    )
+    prefix = (
+        "=== 高优先级：aisbench 验收失败判定 ===\n" + verdict_excerpt
+        + "\n\n=== 其他异常上下文 ===\n"
+    ) if verdict_excerpt else ""
+    remaining = max_chars - len(prefix)
+    if len(general_excerpt) <= remaining:
+        return prefix + general_excerpt
+    half = max(0, remaining // 2)
+    return (
+        prefix + general_excerpt[:half]
+        + "\n... [中间低优先级证据已省略] ...\n"
+        + general_excerpt[-half:]
+    )
+
+
+def _serialize_job_log_summary(record: JobLogSummary) -> dict[str, Any]:
+    return {
+        "job_id": record.job_id,
+        "run_id": record.run_id,
+        "status": record.status,
+        "summary": record.summary,
+        "log_excerpt": record.log_excerpt,
+        "llm_provider": record.llm_provider,
+        "llm_model": record.llm_model,
+        "generation_time_seconds": record.generation_time_seconds,
+        "error_message": record.error_message,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
 
 
 _NIGHTLY_TEST_CASE_EXPORT_FIELDS = (
@@ -160,24 +449,25 @@ async def get_workflows_latest_results(
 ):
     """获取每个 workflow 最近一次的 job 结果（只返回启用的 workflow）"""
     # 获取启用的 workflow 名称列表
-    enabled_stmt = select(WorkflowConfig.workflow_name, WorkflowConfig.hardware).where(WorkflowConfig.enabled)
+    enabled_stmt = select(WorkflowConfig).where(WorkflowConfig.enabled)
     if workflow_name:
         enabled_stmt = enabled_stmt.where(WorkflowConfig.workflow_name == workflow_name)
     if hardware:
         enabled_stmt = enabled_stmt.where(WorkflowConfig.hardware == hardware)
 
     enabled_result = await db.execute(enabled_stmt)
-    enabled_workflows = enabled_result.all()
+    enabled_workflows = enabled_result.scalars().all()
 
     # 如果没有启用的 workflow，直接返回空列表
     if not enabled_workflows:
         return []
 
     results = []
-    for wf_name, wf_hardware in enabled_workflows:
+    for config in enabled_workflows:
+        wf_name, wf_hardware = config.workflow_name, config.hardware
         # 获取每个 workflow 最近的运行记录（按 completed_at 降序，取最新的）
         stmt = select(CIResult).where(
-            CIResult.workflow_name == wf_name
+            build_official_ci_filter(CIResult, [config])
         ).order_by(
             CIResult.completed_at.desc()
         ).limit(1)
@@ -716,6 +1006,600 @@ async def list_jobs(
         ))
 
     return response
+
+
+@router.get("/runs/{run_id}/version-snapshot")
+async def get_run_version_snapshot(run_id: int, db: DbSession):
+    result = await db.execute(select(CIResult).where(CIResult.run_id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return get_version_snapshot(run.data)
+
+
+@router.post("/runs/{run_id}/version-snapshot/refresh")
+async def refresh_run_version_snapshot(run_id: int, current_user: CurrentAdminUser, db: DbSession):
+    run_result = await db.execute(select(CIResult).where(CIResult.run_id == run_id))
+    run = run_result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    jobs_result = await db.execute(select(CIJob).where(CIJob.run_id == run_id))
+    candidates = []
+    for job in jobs_result.scalars().all():
+        steps = _json_list(job.steps_data)
+        if any("stream logs" in str(step.get("name", "")).lower() for step in steps if isinstance(step, dict)):
+            candidates.append(job)
+    if not candidates:
+        raise HTTPException(status_code=404, detail="No completed Job with a Stream logs step")
+    if not settings.GITHUB_TOKEN:
+        raise HTTPException(status_code=503, detail="GitHub Token is not configured")
+
+    from infrastructure.clients.github_client import GitHubClient
+    async with GitHubClient(
+        token=settings.GITHUB_TOKEN,
+        owner=settings.GITHUB_OWNER,
+        repo=settings.GITHUB_REPO,
+    ) as client:
+        for job in candidates:
+            try:
+                snapshot = parse_ci_version_snapshot(
+                    await client.get_job_logs(job.job_id), source_job_id=job.job_id
+                )
+            except Exception as exc:
+                logger.warning("Version snapshot refresh failed for job %s: %s", job.job_id, exc)
+                continue
+            if snapshot:
+                snapshot["collected_at"] = datetime.now(UTC).isoformat()
+                payload = _json_object(run.data)
+                payload.setdefault("dashboard_evidence", {})["version_snapshot"] = snapshot
+                run.data = json.dumps(payload)
+                await db.commit()
+                return snapshot
+    raise HTTPException(status_code=422, detail="Version information was not found in available Stream logs")
+
+
+@router.get("/job-comparison")
+async def compare_ci_jobs(
+    db: DbSession,
+    start_job_id: int = Query(..., gt=0),
+    end_job_id: int = Query(..., gt=0),
+):
+    """Build a lightweight, evidence-sourced comparison for two Job runs."""
+    jobs_result = await db.execute(
+        select(CIJob).where(CIJob.job_id.in_([start_job_id, end_job_id]))
+    )
+    jobs_by_id = {item.job_id: item for item in jobs_result.scalars().all()}
+    start_job = jobs_by_id.get(start_job_id)
+    end_job = jobs_by_id.get(end_job_id)
+    if not start_job or not end_job:
+        raise HTTPException(status_code=404, detail="Start or End Job not found")
+    if start_job.workflow_name != end_job.workflow_name or start_job.job_name != end_job.job_name:
+        raise HTTPException(status_code=400, detail="Start and End must represent the same Workflow Job")
+    if start_job.started_at and end_job.started_at and start_job.started_at >= end_job.started_at:
+        raise HTTPException(status_code=400, detail="Start must be earlier than End")
+
+    runs_result = await db.execute(
+        select(CIResult).where(CIResult.run_id.in_([start_job.run_id, end_job.run_id]))
+    )
+    runs_by_id = {item.run_id: item for item in runs_result.scalars().all()}
+    start_run = runs_by_id.get(start_job.run_id)
+    end_run = runs_by_id.get(end_job.run_id)
+
+    def snapshot(job: CIJob, run: CIResult | None) -> dict[str, Any]:
+        job_data = _json_object(job.data)
+        run_data = _json_object(run.data) if run else {}
+        version = get_version_snapshot(run_data)
+        metadata = {"job": job_data, "run": run_data, "version_snapshot": version}
+        return {
+            "job_id": job.job_id,
+            "run_id": job.run_id,
+            "started_at": job.started_at,
+            "conclusion": job.conclusion,
+            "duration_seconds": job.duration_seconds,
+            "workflow_head_sha": run.head_sha if run else None,
+            "vllm_ascend_commit": version.get("vllm_ascend_commit"),
+            "vllm_ascend_commit_date": version.get("vllm_ascend_commit_date"),
+            "vllm_ascend_commit_message": version.get("vllm_ascend_commit_message"),
+            "vllm_commit": version.get("vllm_commit"),
+            "vllm_version": version.get("vllm_version"),
+            "version_evidence_status": version.get("status") or "unknown",
+            "branch": run.branch if run else None,
+            "event": run.event if run else None,
+            "hardware": job.hardware,
+            "runner_name": job.runner_name,
+            "runner_labels": _json_list(job.runner_labels),
+            "steps": _json_list(job.steps_data),
+            "metadata": metadata,
+        }
+
+    start = snapshot(start_job, start_run)
+    end = snapshot(end_job, end_run)
+    version_aliases = {
+        "vllm_ascend": {"vllm_ascend_version", "vllm_ascend_commit", "vllm_ascend_sha"},
+        "vLLM": {"vllm_version", "vllm_commit", "vllm_sha"},
+        "torch": {"torch_version"},
+        "torch_npu": {"torch_npu_version"},
+        "CANN": {"cann_version", "ascend_toolkit_version"},
+        "image": {"image", "image_tag", "image_digest", "container_image"},
+    }
+
+    version_differences = []
+    for label, aliases in version_aliases.items():
+        start_value = _find_metadata_value(start["metadata"], aliases)
+        end_value = _find_metadata_value(end["metadata"], aliases)
+        version_differences.append({
+            "field": label,
+            "start": start_value,
+            "end": end_value,
+            "changed": start_value != end_value if start_value is not None and end_value is not None else None,
+            "availability": "available" if start_value is not None and end_value is not None else "unknown",
+            "source": "ci_results.data / ci_jobs.data",
+        })
+
+    config_fields = {
+        "hardware": (start["hardware"], end["hardware"]),
+        "runner": (start["runner_name"], end["runner_name"]),
+        "runner_labels": (start["runner_labels"], end["runner_labels"]),
+        "branch": (start["branch"], end["branch"]),
+        "event": (start["event"], end["event"]),
+    }
+    configuration_differences = [
+        {"field": field, "start": values[0], "end": values[1], "changed": values[0] != values[1], "source": "ci_jobs / ci_results"}
+        for field, values in config_fields.items()
+    ]
+
+    compare_url = None
+    compared_commits: list[dict[str, Any]] = []
+    reverted_prs: list[dict[str, Any]] = []
+    revert_prs: list[dict[str, Any]] = []
+    revert_commits: list[dict[str, Any]] = []
+    time_filtered_pr_count = 0
+    compare_error = None
+    if start.get("vllm_ascend_commit") and end.get("vllm_ascend_commit"):
+        compare_url = (
+            f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/compare/"
+            f"{start['vllm_ascend_commit']}...{end['vllm_ascend_commit']}"
+        )
+        if settings.GITHUB_TOKEN:
+            try:
+                from infrastructure.clients.github_client import GitHubClient
+
+                async with GitHubClient(
+                    token=settings.GITHUB_TOKEN,
+                    owner=settings.GITHUB_OWNER,
+                    repo=settings.GITHUB_REPO,
+                ) as client:
+                    compare = await client.get_compare_commits(
+                        start["vllm_ascend_commit"], end["vllm_ascend_commit"]
+                    )
+                    commits = compare.get("commits", [])
+                    sha_to_pr: dict[str, int] = {}
+                    candidates: dict[int, dict[str, Any]] = {}
+                    for commit in commits:
+                        message = commit.get("commit", {}).get("message", "")
+                        title = message.splitlines()[0] if message else ""
+                        pr_number = _extract_merged_pr_number(title)
+                        if pr_number is None:
+                            continue
+                        sha = commit.get("sha", "")
+                        sha_to_pr[sha] = pr_number
+                        candidates.setdefault(pr_number, {
+                            "number": pr_number,
+                            "sha": sha,
+                            "title": title,
+                            "author": (commit.get("author") or {}).get("login")
+                                or commit.get("commit", {}).get("author", {}).get("name"),
+                            "url": f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/pull/{pr_number}",
+                            "commit_url": commit.get("html_url"),
+                            "matched_files": [],
+                        })
+
+                    for commit in commits:
+                        message = commit.get("commit", {}).get("message", "")
+                        title = message.splitlines()[0] if message else ""
+                        current_pr = _extract_merged_pr_number(title)
+                        target_pr, target_sha = _extract_revert_target(
+                            message, current_pr, sha_to_pr
+                        )
+                        if target_pr is None:
+                            continue
+                        revert_commits.append({
+                            "sha": commit.get("sha"),
+                            "target_sha": target_sha,
+                            "revert_pr": current_pr,
+                            "reverted_pr": target_pr,
+                            "title": title,
+                            "url": commit.get("html_url"),
+                        })
+
+                    detail_results = await _fetch_pr_details_bounded(
+                        client,
+                        settings.GITHUB_OWNER,
+                        settings.GITHUB_REPO,
+                        list(candidates),
+                        max_concurrency=4,
+                    )
+                    detail_errors: list[str] = []
+                    in_window_pr_numbers: set[int] = set()
+                    for pr_number, detail, detail_error in detail_results:
+                        item = candidates[pr_number]
+                        if detail_error or detail is None:
+                            detail_errors.append(f"PR #{pr_number}: {detail_error or 'empty response'}")
+                            continue
+                        item["merged_at"] = detail.get("merged_at")
+                        item["title"] = detail.get("title") or item["title"]
+                        item["author"] = (detail.get("user") or {}).get("login") or item["author"]
+                        # Only merged PRs qualify. Explicitly reverted PRs remain
+                        # visible as evidence but are excluded from the net set.
+                        if not item["merged_at"]:
+                            continue
+                        if _merged_within_commit_boundary(
+                            item["merged_at"],
+                            start.get("vllm_ascend_commit_date"),
+                            end.get("vllm_ascend_commit_date"),
+                        ):
+                            in_window_pr_numbers.add(pr_number)
+                        else:
+                            time_filtered_pr_count += 1
+
+                    cancelled_original_prs: set[int] = set()
+                    cancelled_revert_prs: set[int] = set()
+                    for relation in revert_commits:
+                        original_in_window = relation["reverted_pr"] in in_window_pr_numbers
+                        revert_in_window = relation.get("revert_pr") in in_window_pr_numbers
+                        relation["original_in_window"] = original_in_window
+                        relation["revert_in_window"] = revert_in_window
+                        relation["cancellation_status"] = (
+                            "cancelled" if original_in_window and revert_in_window else "not_cancelled"
+                        )
+                        if original_in_window and revert_in_window:
+                            cancelled_original_prs.add(relation["reverted_pr"])
+                            cancelled_revert_prs.add(relation["revert_pr"])
+
+                    for pr_number, item in candidates.items():
+                        if pr_number not in in_window_pr_numbers:
+                            continue
+                        if pr_number in cancelled_original_prs:
+                            item["net_status"] = "fully_reverted"
+                            reverted_prs.append(item)
+                        elif pr_number in cancelled_revert_prs:
+                            item["net_status"] = "revert_commit"
+                            revert_prs.append(item)
+                        else:
+                            item["net_status"] = "effective"
+                            compared_commits.append(item)
+                    if detail_errors:
+                        compare_error = "；".join(detail_errors)
+            except Exception as exc:
+                logger.warning("Failed to compare selected CI boundary SHAs: %s", exc)
+                compare_error = str(exc)
+        else:
+            compare_error = "GitHub Token 未配置"
+
+    return {
+        "start": {key: value for key, value in start.items() if key not in {"metadata", "steps"}},
+        "end": {key: value for key, value in end.items() if key not in {"metadata", "steps"}},
+        "pr_changes": {
+            "source": "GitHub compare over the actual vllm-ascend commit range",
+            "precision": "commit_range",
+            "compare_url": compare_url,
+            "error": compare_error,
+            "items": compared_commits,
+            "effective_prs": compared_commits,
+            "reverted_prs": reverted_prs,
+            "revert_prs": revert_prs,
+            "revert_commits": revert_commits,
+            "partial": bool(compare_error),
+        },
+        "version_differences": version_differences,
+        "failure_stage_difference": {
+            "start": _failure_stage(start["steps"]),
+            "end": _failure_stage(end["steps"]),
+        },
+        "test_difference": {
+            "status": "unknown",
+            "summary": "当前仅确认两端 Job 名相同；尚无完整 Case/测试集合快照，不能宣称无 Test 差异。",
+            "source": "workflow_name + job_name identity",
+        },
+        "configuration_differences": configuration_differences,
+        "warnings": [
+            "展示 Start/End 实际 vllm-ascend commit 区间内全部可识别的合入 PR。",
+            f"已按 PR merged_at 收拢到版本提交时间窗，排除 {time_filtered_pr_count} 个窗外 PR。",
+            "区间 PR 是变更全集，不等于每个 PR 都是当前故障嫌疑。",
+        ],
+    }
+
+
+@router.get("/jobs/{job_id}/failure-summary")
+async def get_job_failure_summary(
+    job_id: int,
+    db: DbSession,
+):
+    """Fetch a compact failure excerpt lazily for one timeline node."""
+    result = await db.execute(select(CIJob).where(CIJob.job_id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    stage = _failure_stage(_json_list(job.steps_data))
+    fallback = stage["first_failed_step"]
+    if job.conclusion == "success":
+        return {"summary": None, "failed_step": None, "source": "success"}
+    if not settings.GITHUB_TOKEN:
+        return {"summary": fallback, "failed_step": fallback, "source": "steps", "reason": "GitHub Token 未配置"}
+
+    try:
+        from infrastructure.clients.github_client import GitHubClient
+
+        async with GitHubClient(
+            token=settings.GITHUB_TOKEN,
+            owner=settings.GITHUB_OWNER,
+            repo=settings.GITHUB_REPO,
+        ) as client:
+            log_text = await client.get_job_logs(job.job_id)
+        excerpt = _extract_log_error_summary(log_text)
+        return {
+            "summary": excerpt or fallback,
+            "failed_step": fallback,
+            "source": "github_log" if excerpt else "steps",
+            "reason": None if excerpt else "日志中未识别到简短错误行",
+        }
+    except Exception as exc:
+        logger.warning("Failed to fetch log summary for job %s: %s", job_id, exc)
+        return {
+            "summary": fallback,
+            "failed_step": fallback,
+            "source": "steps",
+            "reason": "GitHub 日志不可用或已过期",
+        }
+
+
+@router.get("/jobs/{job_id}/log-root-cause")
+async def get_job_log_root_cause(job_id: int, db: DbSession):
+    """Return the permanently stored lightweight log summary, if generated."""
+    result = await db.execute(select(JobLogSummary).where(JobLogSummary.job_id == job_id))
+    record = result.scalar_one_or_none()
+    return _serialize_job_log_summary(record) if record else None
+
+
+@router.post("/jobs/{job_id}/log-root-cause")
+async def create_job_log_root_cause(
+    job_id: int,
+    current_user: CurrentAdminUser,
+    db: DbSession,
+    regenerate: bool = Query(False, description="Regenerate an existing completed summary"),
+):
+    """Download logs once, ask one LLM for root-cause summary only, and persist it."""
+    existing_result = await db.execute(
+        select(JobLogSummary).where(JobLogSummary.job_id == job_id)
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing and existing.status == "completed" and not regenerate:
+        return _serialize_job_log_summary(existing)
+    if existing and existing.status == "analyzing":
+        updated_at = existing.updated_at
+        if updated_at and updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        # Browser timeouts or container restarts can strand this marker.
+        # Keep a short concurrency guard, then permit an explicit retry.
+        if updated_at and datetime.now(UTC) - updated_at < timedelta(minutes=5):
+            return _serialize_job_log_summary(existing)
+
+    job_result = await db.execute(select(CIJob).where(CIJob.job_id == job_id))
+    job = job_result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    if job.conclusion == "success":
+        raise HTTPException(status_code=400, detail="成功 Job 不需要根因摘要")
+
+    record = existing or JobLogSummary(job_id=job.job_id, run_id=job.run_id)
+    record.status = "analyzing"
+    record.error_message = None
+    if not existing:
+        db.add(record)
+    await db.commit()
+    await db.refresh(record)
+
+    try:
+        from infrastructure.clients.github_client import GitHubClient
+        from infrastructure.clients.llm_client import LLMClient
+        from infrastructure.persistence.models.daily_summary import LLMProviderConfig
+
+        if not settings.GITHUB_TOKEN:
+            raise RuntimeError("GitHub Token 未配置")
+        async with GitHubClient(
+            token=settings.GITHUB_TOKEN,
+            owner=settings.GITHUB_OWNER,
+            repo=settings.GITHUB_REPO,
+        ) as client:
+            log_text = await client.get_job_logs(job.job_id)
+        if not log_text:
+            raise RuntimeError("GitHub 日志不可用或已过期")
+        excerpt = _build_log_root_cause_context(log_text)
+
+        config_result = await db.execute(
+            select(LLMProviderConfig).where(LLMProviderConfig.is_active).limit(1)
+        )
+        config = config_result.scalar_one_or_none()
+        if not config:
+            raise RuntimeError("没有已激活的模型提供商")
+
+        step_stage = _failure_stage(_json_list(job.steps_data))
+        llm_result = await LLMClient().generate(
+            provider=config.provider,
+            model=config.default_model,
+            api_key=config.decrypted_api_key,
+            api_base=config.api_base_url,
+            system_prompt=(
+                "你是 CI 日志关键阶段定位器。只依据日志和 step 元数据，按时间顺序定位故障边界。"
+                "忽略 artifact 上传、清理动作、文件缺失 warning 等失败后的二次噪声。"
+                "`Stream logs` 是正常的日志收集/展示阶段；进入该阶段或 step 名称本身绝不是异常，禁止将其写成失败原因。"
+                "如果日志包含 aisbench 的 performance/accuracy verification failed，应把该验收判定、实际值、baseline 和 threshold 作为最高优先级直接错误。"
+                "不要提出修复方案，不执行工具，不分析代码，不虚构。输出必须使用以下格式：\n"
+                "关键阶段定位：\n"
+                "- 进入阶段：[时间/日志行] 开始发生阻塞或异常的阶段\n"
+                "- 首次异常：[时间/日志行] 最早的关键异常\n"
+                "- 最终失败：[时间/日志行] 导致 Job 失败的错误\n"
+                "根因摘要：用 1-2 句说明直接原因；证据不足时明确写出。"
+            ),
+            user_prompt=(
+                f"Workflow: {job.workflow_name}\nJob: {job.job_name}\n"
+                f"Conclusion: {job.conclusion}\n"
+                f"失败 Step 元数据：{json.dumps({'first_failed_step': step_stage['first_failed_step']}, ensure_ascii=False)}\n\n"
+                f"按因果优先级选取的日志证据（保留原始行号和时间）：\n{excerpt}"
+            ),
+            temperature=0.1,
+            max_tokens=500,
+        )
+        record.status = "completed"
+        record.summary = llm_result.content.strip()
+        record.log_excerpt = excerpt
+        record.llm_provider = config.provider
+        record.llm_model = config.default_model
+        record.prompt_tokens = llm_result.prompt_tokens
+        record.completion_tokens = llm_result.completion_tokens
+        record.generation_time_seconds = llm_result.generation_time
+        record.error_message = None
+    except Exception as exc:
+        logger.warning("Lightweight log summary failed for job %s: %s", job_id, exc)
+        record.status = "failed"
+        record.error_message = str(exc)[:500]
+    await db.commit()
+    await db.refresh(record)
+    return _serialize_job_log_summary(record)
+    r"""
+    Legacy duplicate comparison body retained temporarily as inert text after
+    restoring compare_ci_jobs above. Remove after the second-version rollout.
+    version_differences = []
+    for label, aliases in version_aliases.items():
+        start_value = _find_metadata_value(start["metadata"], aliases)
+        end_value = _find_metadata_value(end["metadata"], aliases)
+        version_differences.append({
+            "field": label,
+            "start": start_value,
+            "end": end_value,
+            "changed": start_value != end_value if start_value is not None and end_value is not None else None,
+            "availability": "available" if start_value is not None and end_value is not None else "unknown",
+            "source": "ci_results.data / ci_jobs.data",
+        })
+
+    config_fields = {
+        "hardware": (start["hardware"], end["hardware"]),
+        "runner": (start["runner_name"], end["runner_name"]),
+        "runner_labels": (start["runner_labels"], end["runner_labels"]),
+        "branch": (start["branch"], end["branch"]),
+        "event": (start["event"], end["event"]),
+    }
+    configuration_differences = [
+        {"field": field, "start": values[0], "end": values[1], "changed": values[0] != values[1], "source": "ci_jobs / ci_results"}
+        for field, values in config_fields.items()
+    ]
+
+    compare_url = None
+    compared_commits: list[dict[str, Any]] = []
+    compare_error = None
+    workflow_config_result = await db.execute(
+        select(WorkflowConfig.workflow_file).where(
+            WorkflowConfig.workflow_name == start_job.workflow_name
+        )
+    )
+    workflow_file = workflow_config_result.scalar_one_or_none()
+    referenced_yaml_names = {
+        name.lower() for name in re.findall(
+            r"[A-Za-z0-9_.-]+\.ya?ml", start_job.job_name or "", flags=re.IGNORECASE
+        )
+    }
+    if workflow_file:
+        referenced_yaml_names.add(workflow_file.split("/")[-1].lower())
+    if start.get("workflow_head_sha") and end.get("workflow_head_sha"):
+        compare_url = (
+            f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/compare/"
+            f"{start['workflow_head_sha']}...{end['workflow_head_sha']}"
+        )
+        if settings.GITHUB_TOKEN:
+            try:
+                from infrastructure.clients.github_client import GitHubClient
+
+                async with GitHubClient(
+                    token=settings.GITHUB_TOKEN,
+                    owner=settings.GITHUB_OWNER,
+                    repo=settings.GITHUB_REPO,
+                ) as client:
+                    compare = await client.get_compare_commits(
+                        start["workflow_head_sha"], end["workflow_head_sha"]
+                    )
+                    for commit in compare.get("commits", []):
+                        message = commit.get("commit", {}).get("message", "")
+                        title = message.splitlines()[0] if message else ""
+                        pr_match = re.search(r"\(#(\d+)\)", title) or re.search(
+                            r"(?:PR\s*)?#(\d+)", title, flags=re.IGNORECASE
+                        )
+                        if not pr_match:
+                            continue
+                        pr_number = int(pr_match.group(1))
+                        title_lower = title.lower()
+                        # File lookups are reserved for likely CI/test changes;
+                        # final inclusion still requires an exact referenced YAML hit.
+                        if not any(word in title_lower for word in (
+                            "test", "ci", "nightly", "workflow", "config", "multi-node"
+                        )):
+                            continue
+                        files = await client.get_pr_files(
+                            settings.GITHUB_OWNER, settings.GITHUB_REPO, pr_number
+                        )
+                        changed_paths = [
+                            item.get("filename", "") for item in files if item.get("filename")
+                        ]
+                        matched_paths = [
+                            path for path in changed_paths
+                            if path.split("/")[-1].lower() in referenced_yaml_names
+                        ]
+                        if not matched_paths:
+                            continue
+                        sha = commit.get("sha", "")
+                        compared_commits.append({
+                            "number": pr_number,
+                            "sha": sha,
+                            "title": title,
+                            "author": (commit.get("author") or {}).get("login")
+                                or commit.get("commit", {}).get("author", {}).get("name"),
+                            "url": f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}/pull/{pr_number}",
+                            "commit_url": commit.get("html_url"),
+                            "matched_files": matched_paths,
+                        })
+            except Exception as exc:
+                logger.warning("Failed to compare selected CI boundary SHAs: %s", exc)
+                compare_error = str(exc)
+        else:
+            compare_error = "GitHub Token 未配置"
+
+    return {
+        "start": {key: value for key, value in start.items() if key not in {"metadata", "steps"}},
+        "end": {key: value for key, value in end.items() if key not in {"metadata", "steps"}},
+        "pr_changes": {
+            "source": "GitHub compare commit range + exact referenced YAML file intersection",
+            "precision": "job_file_intersection",
+            "compare_url": compare_url,
+            "error": compare_error,
+            "items": compared_commits,
+        },
+        "version_differences": version_differences,
+        "failure_stage_difference": {
+            "start": _failure_stage(start["steps"]),
+            "end": _failure_stage(end["steps"]),
+        },
+        "test_difference": {
+            "status": "unknown",
+            "summary": "当前仅确认两端 Job 名相同；尚无完整 Case/测试集合快照，不能宣称无 Test 差异。",
+            "source": "workflow_name + job_name identity",
+        },
+        "configuration_differences": configuration_differences,
+        "warnings": [
+            "Workflow head SHA 不一定是实际被测 vllm-ascend SHA。",
+            "这里只展示 Start/End SHA 范围内、且直接修改当前 Job 引用 YAML/Workflow 文件的 PR。",
+        ],
+    }
+    """
 
 
 @router.get("/jobs/{job_id}", response_model=CIJobDetailResponse)

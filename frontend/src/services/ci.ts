@@ -1,4 +1,5 @@
 import api from './api'
+import { longTimeoutApiClient } from './api'
 
 // ============ Types ============
 
@@ -37,6 +38,10 @@ export interface CIJob {
   runner_labels?: string[]
   steps_summary?: StepSummary[]
   steps_data?: StepSummary[]
+  vllm_ascend_commit?: string | null
+  vllm_ascend_commit_date?: string | null
+  vllm_ascend_commit_message?: string | null
+  version_evidence_status?: string | null
   created_at: string
   github_job_url?: string
 }
@@ -46,6 +51,75 @@ export interface StepSummary {
   status: string
   conclusion: string | null
   number: number
+}
+
+export interface ComparisonField {
+  field: string
+  start: unknown
+  end: unknown
+  changed: boolean | null
+  availability?: 'available' | 'unknown'
+  source: string
+}
+
+export interface FailureStageEvidence {
+  last_successful_step: string | null
+  first_failed_step: string | null
+  direct_error: string | null
+  source: string
+}
+
+export interface JobFailureSummary {
+  summary: string | null
+  failed_step: string | null
+  source: 'github_log' | 'steps' | 'success'
+  reason?: string | null
+}
+
+export interface JobLogRootCause {
+  job_id: number
+  run_id: number
+  status: 'analyzing' | 'completed' | 'failed'
+  summary: string | null
+  log_excerpt: string | null
+  llm_provider: string | null
+  llm_model: string | null
+  generation_time_seconds: number | null
+  error_message: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface CIJobComparison {
+  start: { started_at: string | null; conclusion: string | null; duration_seconds: number | null; vllm_ascend_commit?: string | null; vllm_ascend_commit_date?: string | null; vllm_ascend_commit_message?: string | null; version_evidence_status?: string | null }
+  end: { started_at: string | null; conclusion: string | null; duration_seconds: number | null; vllm_ascend_commit?: string | null; vllm_ascend_commit_date?: string | null; vllm_ascend_commit_message?: string | null; version_evidence_status?: string | null }
+  pr_changes: {
+    source: string
+    precision: 'candidate_only' | 'commit_range' | 'job_file_intersection'
+    compare_url: string | null
+    error?: string | null
+    items: Array<{
+      number: number | null
+      sha?: string
+      title: string
+      author: string | null
+      url: string | null
+      commit_url?: string | null
+      matched_files?: string[]
+      merged_at?: string | null
+      net_status?: 'effective' | 'fully_reverted' | 'revert_commit'
+    }>
+    effective_prs?: CIJobComparison['pr_changes']['items']
+    reverted_prs?: CIJobComparison['pr_changes']['items']
+    revert_prs?: CIJobComparison['pr_changes']['items']
+    revert_commits?: Array<{ sha: string; target_sha: string | null; revert_pr?: number | null; reverted_pr: number; title: string; url?: string; original_in_window?: boolean; revert_in_window?: boolean; cancellation_status?: 'cancelled' | 'not_cancelled' }>
+    partial?: boolean
+  }
+  version_differences: ComparisonField[]
+  failure_stage_difference: { start: FailureStageEvidence; end: FailureStageEvidence }
+  test_difference: { status: 'unknown' | 'available'; summary: string; source: string }
+  configuration_differences: ComparisonField[]
+  warnings: string[]
 }
 
 export interface CIStats {
@@ -175,6 +249,37 @@ export const getJobs = async (params?: {
   limit?: number
 }): Promise<CIJob[]> => {
   const response = await api.get<CIJob[]>('/ci/jobs', { params })
+  return response.data
+}
+
+export const getJobComparison = async (startJobId: number, endJobId: number): Promise<CIJobComparison> => {
+  const response = await api.get<CIJobComparison>('/ci/job-comparison', {
+    params: { start_job_id: startJobId, end_job_id: endJobId },
+  })
+  return response.data
+}
+
+export const refreshRunVersionSnapshot = async (runId: number) => {
+  const response = await api.post(`/ci/runs/${runId}/version-snapshot/refresh`)
+  return response.data
+}
+
+export const getJobFailureSummary = async (jobId: number): Promise<JobFailureSummary> => {
+  const response = await api.get<JobFailureSummary>(`/ci/jobs/${jobId}/failure-summary`)
+  return response.data
+}
+
+export const getJobLogRootCause = async (jobId: number): Promise<JobLogRootCause | null> => {
+  const response = await api.get<JobLogRootCause | null>(`/ci/jobs/${jobId}/log-root-cause`)
+  return response.data
+}
+
+export const createJobLogRootCause = async (jobId: number, regenerate = false): Promise<JobLogRootCause> => {
+  const response = await longTimeoutApiClient.post<JobLogRootCause>(
+    `/ci/jobs/${jobId}/log-root-cause`,
+    undefined,
+    { params: { regenerate } },
+  )
   return response.data
 }
 

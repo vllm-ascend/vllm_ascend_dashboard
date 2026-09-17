@@ -3,15 +3,15 @@ set -e
 
 echo "Starting vLLM Ascend Dashboard backend..."
 
-# Fix permissions on mounted volumes
+# Fix permissions on mounted volumes before dropping privileges.
 chown -R appuser:appuser /app/data /app/logs
 chmod -R 755 /app/data /app/logs
-# LiteLLM 配置文件也需要可写
+# A single-file bind mount must remain writable by the application user.
 [ -f /app/litellm_config.yaml ] && chmod 666 /app/litellm_config.yaml
 
 echo "Permissions fixed, starting application..."
 
-# 支持通过 docker-compose command 切换角色
+# Allow docker-compose to select another process role via command.
 if [[ -n "${1:-}" ]]; then
     echo "Starting with command: $*"
     exec su appuser -c "cd /app && PYTHONPATH=/app exec $*"

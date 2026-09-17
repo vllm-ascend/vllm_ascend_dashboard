@@ -34,6 +34,11 @@ from infrastructure.persistence.models import (
     WorkflowConfig,
 )
 from infrastructure.tasks.sync_progress import get_sync_progress, reset_sync_progress
+from tooling.ci_version_snapshot import (
+    PARSER_VERSION,
+    get_version_snapshot,
+    parse_ci_version_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -738,6 +743,10 @@ class CICollector:
                 needs_update = True
 
             # 更新原始数据
+            previous_data = json.loads(existing.data) if existing.data else {}
+            if isinstance(previous_data, dict) and previous_data.get("dashboard_evidence"):
+                run = dict(run)
+                run["dashboard_evidence"] = previous_data["dashboard_evidence"]
             existing.data = json.dumps(run)
             needs_update = True
 
@@ -877,12 +886,56 @@ class CICollector:
             # context and before an asynchronous analysis can be enqueued.
             await self._materialize_failure_run_artifacts(run_id, jobs)
 
+            # A single completed Job containing the Stream logs probe supplies
+            # the actual checkout for the run. Failure here is intentionally
+            # non-fatal so ordinary CI collection can still complete.
+            await self._collect_run_version_snapshot(run_id, jobs)
+
             # 注意：不在这里 commit，由外层统一 commit
             return saved_count
 
         except Exception as e:
             logger.error(f"Failed to collect jobs for run {run_id}: {e}", exc_info=True)
             raise  # 抛出异常，由外层处理回滚
+
+    async def _collect_run_version_snapshot(
+        self, run_id: int, jobs: list[dict[str, Any]], *, force: bool = False
+    ) -> dict[str, Any] | None:
+        result = await self.db.execute(select(CIResult).where(CIResult.run_id == run_id))
+        run = result.scalar_one_or_none()
+        if not run:
+            return None
+        existing = get_version_snapshot(run.data)
+        if not force and existing.get("status") == "complete" and existing.get("parser_version") == PARSER_VERSION:
+            return existing
+
+        candidates = [
+            job for job in jobs
+            if job.get("status") == "completed" and any(
+                "stream logs" in str(step.get("name", "")).lower()
+                for step in (job.get("steps") or [])
+            )
+        ]
+        for job in candidates:
+            try:
+                logs = await self.github.get_job_logs(int(job["id"]))
+                snapshot = parse_ci_version_snapshot(logs, source_job_id=int(job["id"]))
+                if not snapshot:
+                    continue
+                snapshot["collected_at"] = datetime.now(UTC).isoformat()
+                payload = json.loads(run.data) if run.data else {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                payload.setdefault("dashboard_evidence", {})["version_snapshot"] = snapshot
+                run.data = json.dumps(payload)
+                logger.info("Collected version snapshot for run %s from job %s", run_id, job["id"])
+                return snapshot
+            except Exception as exc:
+                logger.warning(
+                    "Version snapshot probe failed for run %s job %s: %s",
+                    run_id, job.get("id"), exc,
+                )
+        return None
 
     async def _create_ci_job(
         self,
