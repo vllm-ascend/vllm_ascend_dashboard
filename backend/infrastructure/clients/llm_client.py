@@ -309,6 +309,9 @@ class QwenClient(BaseLLMClient):
 # 提供商对应的客户端类
 PROVIDER_CLIENTS = {
     "openai": OpenAIClient,
+    # DeepSeek exposes an OpenAI-compatible API. Keep the provider name for
+    # configuration/model routing, while reusing the same transport client.
+    "deepseek": OpenAIClient,
     "anthropic": AnthropicClient,
     "qwen": QwenClient,
     "zhipu": OpenAIClient,
@@ -320,7 +323,7 @@ def create_client(provider: str, api_key: str, api_base: str | None = None) -> B
     创建 LLM 客户端实例
 
     Args:
-        provider: 提供商名称 (openai/anthropic/qwen)
+        provider: 提供商名称 (openai/deepseek/anthropic/qwen/zhipu)
         api_key: API Key
         api_base: API 基础 URL（可选）
 
@@ -352,7 +355,7 @@ class LLMClient:
         调用大模型生成内容
 
         Args:
-            provider: LLM 提供商 (openai/anthropic/qwen)
+            provider: LLM 提供商 (openai/deepseek/anthropic/qwen/zhipu)
             model: 模型名称
             api_key: API Key
             api_base: API 基础 URL（可选）
