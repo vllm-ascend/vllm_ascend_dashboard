@@ -52,6 +52,8 @@ backend/app.db
 backend/*.db
 backend/logs/
 backend/.env
+backend/.pytest-*/
+backend/.uv-cache-*/
 
 # Frontend specific
 frontend/node_modules/
@@ -204,3 +206,6 @@ docs/failure-analysis-agent-design.md
 
 # plan
 工作与计划/
+
+# dataset_backup
+backups/

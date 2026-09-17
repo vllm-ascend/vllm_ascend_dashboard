@@ -15,7 +15,10 @@ from contracts.schemas import (
     JobOwnerUpdate,
     JobStats,
 )
-from infrastructure.persistence.models import CIJob, JobOwner, WorkflowConfig
+from infrastructure.persistence.models import CIJob, CIResult, JobOwner, WorkflowConfig
+from infrastructure.persistence.run_attempts import extract_run_attempt, is_current_run_attempt
+from tooling.ci_version_snapshot import get_version_snapshot
+from tooling.official_ci_scope import build_official_ci_filter
 
 router = APIRouter()
 
@@ -126,9 +129,13 @@ async def list_job_runs(
     job_name: str = Query(..., description="Job 名称"),
     limit: int = Query(100, ge=1, le=500, description="最多返回多少条记录"),
     days: int | None = Query(None, ge=1, le=365, description="最近多少天的数据，不传则返回全部"),
+    nightly_only: bool = Query(False, description="仅返回 Workflow 夜间统计窗口内的运行"),
+    official_only: bool = Query(False, description="Only dashboard-configured official runs"),
 ):
     """获取指定 job 的所有运行记录（默认返回全部数据）"""
-    stmt = select(CIJob).where(
+    stmt = select(CIJob, CIResult).outerjoin(
+        CIResult, CIResult.run_id == CIJob.run_id
+    ).where(
         CIJob.workflow_name == workflow_name,
         CIJob.job_name == job_name,
     )
@@ -138,15 +145,43 @@ async def list_job_runs(
         start_date = datetime.now(UTC) - timedelta(days=days)
         stmt = stmt.where(CIJob.started_at >= start_date)
 
+    if official_only:
+        config_result = await db.execute(select(WorkflowConfig).where(
+            WorkflowConfig.enabled,
+            WorkflowConfig.workflow_name == workflow_name,
+        ))
+        stmt = stmt.where(build_official_ci_filter(CIResult, config_result.scalars().all()))
+
+    if nightly_only:
+        window_result = await db.execute(
+            select(
+                WorkflowConfig.stats_start_hour,
+                WorkflowConfig.stats_end_hour,
+            ).where(WorkflowConfig.workflow_name == workflow_name)
+        )
+        window = window_result.first()
+        start_hour = window[0] if window and window[0] is not None else 20
+        end_hour = window[1] if window and window[1] is not None else 8
+        # Equal bounds historically meant "all day" in the statistics filter,
+        # which is not useful for the history boundary picker. Treat it as an
+        # unconfigured window and use the conservative nightly fallback.
+        if start_hour == end_hour:
+            start_hour, end_hour = 20, 8
+        from tooling.ci_filters import build_workflow_time_filter
+        stmt = stmt.where(build_workflow_time_filter(CIJob, [(workflow_name, start_hour, end_hour)]))
+
     stmt = stmt.order_by(
         CIJob.started_at.desc()
     ).limit(limit)
 
     result = await db.execute(stmt)
-    jobs = result.scalars().all()
+    jobs = result.all()
 
     response = []
-    for job in jobs:
+    for job, run in jobs:
+        if run and not is_current_run_attempt(job.data, extract_run_attempt(run.data)):
+            continue
+        snapshot = get_version_snapshot(run.data if run else None)
         # 解析 steps_summary 和 runner_labels
         steps_summary = []
         if job.steps_data:
@@ -177,6 +212,10 @@ async def list_job_runs(
             duration_seconds=job.duration_seconds,
             runner_labels=runner_labels,
             steps_summary=steps_summary,
+            vllm_ascend_commit=snapshot.get("vllm_ascend_commit"),
+            vllm_ascend_commit_date=snapshot.get("vllm_ascend_commit_date"),
+            vllm_ascend_commit_message=snapshot.get("vllm_ascend_commit_message"),
+            version_evidence_status=snapshot.get("status") or "unknown",
             created_at=job.created_at,
         ))
 

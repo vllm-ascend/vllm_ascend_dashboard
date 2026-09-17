@@ -82,6 +82,28 @@ INDEX_REPLACEMENTS = [
 
 # 整表新建（CREATE TABLE IF NOT EXISTS）：仅在建表迁移缺失时补齐。
 CREATE_TABLE_MIGRATIONS = [
+    """
+    CREATE TABLE IF NOT EXISTS `job_log_summaries` (
+      `id` INT NOT NULL AUTO_INCREMENT,
+      `job_id` BIGINT NOT NULL,
+      `run_id` BIGINT NOT NULL,
+      `summary` TEXT NULL,
+      `log_excerpt` LONGTEXT NULL,
+      `status` VARCHAR(20) NOT NULL DEFAULT 'pending',
+      `llm_provider` VARCHAR(50) NULL,
+      `llm_model` VARCHAR(100) NULL,
+      `prompt_tokens` INT NULL,
+      `completion_tokens` INT NULL,
+      `generation_time_seconds` FLOAT NULL,
+      `error_message` VARCHAR(500) NULL,
+      `created_at` TIMESTAMP NULL DEFAULT NULL,
+      `updated_at` TIMESTAMP NULL DEFAULT NULL,
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `uq_job_log_summaries_job_id` (`job_id`),
+      KEY `ix_job_log_summaries_run_id` (`run_id`),
+      KEY `ix_job_log_summaries_status` (`status`)
+    ) ENGINE=InnoDB
+    """,
     # 当前模型 FO 映射。仅用于生成未来 Nightly 快照，不回写历史物化记录。
     """
     CREATE TABLE IF NOT EXISTS `model_fo_mappings` (

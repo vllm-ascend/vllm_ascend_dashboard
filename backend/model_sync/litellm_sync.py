@@ -108,6 +108,21 @@ class LiteLLMSync:
     def available(self) -> bool:
         return bool(self.litellm_url)
 
+    @staticmethod
+    def _write_config(config_path: Path, content: str) -> None:
+        """Write atomically where possible and support single-file bind mounts."""
+        temporary_path = config_path.with_suffix(
+            f"{config_path.suffix}.{uuid4().hex}.tmp"
+        )
+        try:
+            temporary_path.write_text(content, encoding="utf-8")
+            temporary_path.replace(config_path)
+        except OSError:
+            # A Docker single-file bind mount can allow writes to the mounted
+            # file while forbidding sibling creation/replacement in /app.
+            temporary_path.unlink(missing_ok=True)
+            config_path.write_text(content, encoding="utf-8")
+
     async def health_check(self) -> bool:
         if not self.available:
             return False
@@ -162,13 +177,7 @@ class LiteLLMSync:
         config_path = Path(_CONFIG_FILE)
         config_path.parent.mkdir(parents=True, exist_ok=True)
         previous_content = config_path.read_text(encoding="utf-8") if config_path.exists() else None
-        # Keep the temporary file in the same directory: ``replace`` is then
-        # atomic and never crosses a mount boundary (the runtime config is a
-        # bind mount in production).  A unique name also avoids two admin
-        # requests clobbering each other's staged content.
-        temporary_path = config_path.with_suffix(f"{config_path.suffix}.{uuid4().hex}.tmp")
-        temporary_path.write_text(content, encoding="utf-8")
-        temporary_path.replace(config_path)
+        self._write_config(config_path, content)
         logger.info("LiteLLM config written to %s (%d models)", _CONFIG_FILE, len(model_list))
 
         try:
@@ -180,11 +189,7 @@ class LiteLLMSync:
             if previous_content is None:
                 config_path.unlink(missing_ok=True)
             else:
-                rollback_path = config_path.with_suffix(
-                    f"{config_path.suffix}.{uuid4().hex}.rollback"
-                )
-                rollback_path.write_text(previous_content, encoding="utf-8")
-                rollback_path.replace(config_path)
+                self._write_config(config_path, previous_content)
             raise
 
         logger.info("LiteLLM sync: %d providers configured", len(model_list))

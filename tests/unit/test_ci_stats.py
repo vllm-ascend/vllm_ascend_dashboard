@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -5,8 +6,115 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.dialects import mysql
 
-from api.v1.ci import get_ci_stats, list_runs
+from api.v1.ci import (
+    _build_log_root_cause_context,
+    _extract_log_error_summary,
+    _extract_merged_pr_number,
+    _extract_revert_target,
+    _fetch_pr_details_bounded,
+    _merged_within_commit_boundary,
+    get_ci_stats,
+    list_runs,
+)
 from contracts.schemas import CIStats
+
+
+@pytest.mark.asyncio
+async def test_pr_detail_fetch_uses_bounded_concurrency_and_preserves_order():
+    class FakeClient:
+        def __init__(self):
+            self.active = 0
+            self.peak = 0
+
+        async def get_pr_detail(self, owner, repo, number):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return {"number": number, "merged_at": "2026-09-17T00:00:00Z"}
+
+    client = FakeClient()
+    results = await _fetch_pr_details_bounded(
+        client, "owner", "repo", list(range(1, 10)), max_concurrency=4
+    )
+
+    assert client.peak == 4
+    assert [number for number, _, _ in results] == list(range(1, 10))
+    assert all(error is None for _, _, error in results)
+
+
+def test_pr_merge_time_is_constrained_by_version_commit_boundary():
+    start = "2026-09-11T17:34:55+08:00"
+    end = "2026-09-14T21:26:49+08:00"
+
+    assert not _merged_within_commit_boundary("2026-09-08T09:59:00Z", start, end)
+    assert _merged_within_commit_boundary("2026-09-12T02:00:00Z", start, end)
+    assert not _merged_within_commit_boundary("2026-09-15T02:00:00Z", start, end)
+
+
+def test_pr_merge_time_uses_available_single_sided_boundary():
+    assert not _merged_within_commit_boundary(
+        "2026-09-08T09:59:00Z", "2026-09-11T17:34:55+08:00", None
+    )
+    assert _merged_within_commit_boundary(
+        "2026-09-12T09:59:00Z", "2026-09-11T17:34:55+08:00", None
+    )
+
+
+def test_revert_title_uses_final_number_as_current_pr():
+    title = '[Revert] Revert "Feature" (#15908) (#16409)'
+    assert _extract_merged_pr_number(title) == 16409
+
+
+def test_revert_target_supports_generated_revert_pr_message():
+    message = (
+        '[Revert] Revert "Feature" (#15908) (#16409)\n\n'
+        'Revert of PR #15908 (merged onto `main`).\n'
+        'Original PR: #15908\n'
+        'Merge commit: `daa644121e1142821777e3ba60a49ab6dd354920`'
+    )
+    target_pr, target_sha = _extract_revert_target(
+        message,
+        16409,
+        {"daa644121e1142821777e3ba60a49ab6dd354920": 15908},
+    )
+    assert target_pr == 15908
+    assert target_sha == "daa644121e1142821777e3ba60a49ab6dd354920"
+
+
+def test_log_context_preserves_aisbench_verdict_over_generic_noise():
+    noise = "\n".join(f"[ERROR] generic orchestration error {index}" for index in range(40))
+    performance = (
+        "[2026-09-10 22:26:09] [ERROR] The following aisbench case failed: "
+        "{'case_type': 'performance', 'case_name': 'perf'}, reason is Performance "
+        "verification failed. The current Output Token Throughput is 186.3474 token/s, "
+        "which is not greater than or equal to 0.97 * baseline 347.4475."
+    )
+    accuracy = (
+        "Accuracy verification failed. The accuracy of /datasets/aime2025 is 0.0, "
+        "which is not within 10 relative to baseline 93.33."
+    )
+
+    excerpt = _build_log_root_cause_context(
+        "Waiting for all pods to become Running and Ready\nStream logs\n"
+        + noise + "\n" + performance + "\n" + accuracy,
+        max_chars=1800,
+    )
+
+    assert "aisbench 验收失败判定" in excerpt
+    assert "Output Token Throughput is 186.3474" in excerpt
+    assert "accuracy of /datasets/aime2025 is 0.0" in excerpt
+
+
+def test_compact_error_prefers_aisbench_verdict_to_generic_exception():
+    log = (
+        "AssertionError: wrapper failed\n"
+        "[ERROR] The following aisbench case failed, reason is Performance verification failed. "
+        "The current Output Token Throughput is 186.3474 token/s.\n"
+        "RuntimeError: command failed\n"
+    )
+
+    assert "Performance verification failed" in (_extract_log_error_summary(log) or "")
 
 
 class _RowsResult:

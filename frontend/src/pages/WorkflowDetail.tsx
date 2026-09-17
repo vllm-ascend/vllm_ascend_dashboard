@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Table, Tag, Button, Space, Typography, Descriptions, Divider, Alert, Tooltip, Switch, message } from 'antd'
 import { useState } from 'react'
 import {
@@ -10,6 +10,7 @@ import {
   EyeOutlined,
   FileSearchOutlined,
   RobotOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons'
 import { useJobsByRun, useRuns } from '../hooks/useCI'
 import { useJobOwners } from '../hooks/useJobOwners'
@@ -23,6 +24,7 @@ import relativeTime from 'dayjs/plugin/relativeTime'
 import 'dayjs/locale/zh-cn'
 import { formatTimezone, fromTimezoneNow } from '../utils/timezone'
 import { renderStatusTag, renderConclusionTag, formatDuration, renderHardwareTag } from '../utils/ciRenderers'
+import { JobHistoryWorkspace } from '../components/JobHistoryWorkspace'
 
 dayjs.extend(duration)
 dayjs.extend(relativeTime)
@@ -33,6 +35,7 @@ const { Title, Text } = Typography
 function WorkflowDetail() {
   const { runId } = useParams<{ runId: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const runIdNum = runId ? parseInt(runId) : null
 
   const [conclusionFilter, setConclusionFilter] = useState<string[]>([])
@@ -40,6 +43,24 @@ function WorkflowDetail() {
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null)
   const [selectedAnalysis, setSelectedAnalysis] = useState<any>(null)
+  const historyJobIds = (() => {
+    const raw = searchParams.get('historyJobIds') || searchParams.get('historyJobId') || ''
+    return raw
+      .split(',')
+      .map(value => Number(value))
+      .filter(value => Number.isInteger(value) && value > 0)
+  })()
+
+  const toggleJobHistory = (jobId: number) => {
+    const next = new URLSearchParams(searchParams)
+    const selected = new Set(historyJobIds)
+    if (selected.has(jobId)) selected.delete(jobId)
+    else selected.add(jobId)
+    next.delete('historyJobId')
+    if (selected.size > 0) next.set('historyJobIds', [...selected].join(','))
+    else next.delete('historyJobIds')
+    setSearchParams(next, { replace: true })
+  }
 
   const { data: jobs, isLoading: jobsLoading, refetch: refetchJobs } = useJobsByRun(runIdNum)
   const { data: runs, refetch: refetchRuns } = useRuns({ limit: 100 })
@@ -224,13 +245,21 @@ function WorkflowDetail() {
     {
       title: '操作',
       key: 'action',
-      width: 160,
+      width: 260,
       render: (_: any, record: any) => {
         const isFailed = record.conclusion === 'failure' || record.conclusion === 'cancelled'
         return (
           <Space>
             <Button type="link" icon={<EyeOutlined />} onClick={() => navigate(`/ci/jobs/${record.job_id}`)} style={{ padding: 0 }}>
               详情
+            </Button>
+            <Button
+              type="link"
+              icon={<HistoryOutlined />}
+              onClick={() => toggleJobHistory(record.job_id)}
+              style={{ padding: 0 }}
+            >
+              {historyJobIds.includes(record.job_id) ? '收起历史' : '查看历史'}
             </Button>
             {isFailed && (
               analysisMap.get(record.job_id) ? (
@@ -498,6 +527,12 @@ function WorkflowDetail() {
             showSizeChanger: false,
           }}
           scroll={{ x: 'max-content' }}
+          expandable={{
+            expandedRowKeys: historyJobIds,
+            expandedRowRender: (record) => <JobHistoryWorkspace job={record} />,
+            rowExpandable: (record) => historyJobIds.includes(record.job_id),
+            showExpandColumn: false,
+          }}
           onChange={(_, filters) => {
             if (filters.conclusion) {
               const selected = filters.conclusion as string[]

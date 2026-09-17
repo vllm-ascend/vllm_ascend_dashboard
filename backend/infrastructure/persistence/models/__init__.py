@@ -471,6 +471,26 @@ class JobFailureAnalysis(Base):
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
+class JobLogSummary(Base):
+    """一次性生成并永久复用的 Job 日志根因摘要。"""
+    __tablename__ = "job_log_summaries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(BigInteger, nullable=False, unique=True, index=True)
+    run_id = Column(BigInteger, nullable=False, index=True)
+    summary = Column(Text)
+    log_excerpt = Column(Text)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    llm_provider = Column(String(50))
+    llm_model = Column(String(100))
+    prompt_tokens = Column(Integer)
+    completion_tokens = Column(Integer)
+    generation_time_seconds = Column(Float)
+    error_message = Column(String(500))
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC))
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
 class AlertConditionGroup(Base):
     """告警条件组表（组间 AND）"""
     __tablename__ = "alert_condition_groups"
