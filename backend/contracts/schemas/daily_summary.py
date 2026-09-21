@@ -8,7 +8,7 @@ class GenerateSummaryRequest(BaseModel):
     """生成总结请求"""
     project: str = Field(..., description="项目标识 (ascend/vllm)")
     date: str | None = Field(None, description="日期 (ISO format: YYYY-MM-DD), 默认为昨天")
-    llm_provider: str | None = Field(None, description="LLM 提供商 (openai/deepseek/anthropic/qwen/zhipu)")
+    llm_provider: str | None = Field(None, description="LLM 提供商 (openai/anthropic/qwen)")
     force_regenerate: bool = Field(False, description="是否强制重新生成")
 
 

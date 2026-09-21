@@ -111,7 +111,6 @@ export function JobHistoryWorkspace({ job, workflowName }: { job: CIJob; workflo
   const [summaryJobId, setSummaryJobId] = useState<number | null>(null)
   const [probingRunIds, setProbingRunIds] = useState<Set<number>>(new Set())
   const attemptedVersionRuns = useRef(new Set<number>())
-  const timelineViewportRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
   const storedSummary = useQuery({
     queryKey: ['job-log-root-cause', summaryJobId],
@@ -179,15 +178,6 @@ export function JobHistoryWorkspace({ job, workflowName }: { job: CIJob; workflo
   const start = data.find(item => item.job_id === startJobId)
   const end = data.find(item => item.job_id === endJobId)
   const timeline = [...data].sort((a, b) => new Date(a.started_at || 0).getTime() - new Date(b.started_at || 0).getTime())
-
-  useEffect(() => {
-    const viewport = timelineViewportRef.current
-    if (!viewport || timeline.length === 0) return
-    const frame = window.requestAnimationFrame(() => {
-      viewport.scrollLeft = viewport.scrollWidth
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [job.job_id, timeline.length])
   const intervalInvalid = Boolean(start?.started_at && end?.started_at && new Date(start.started_at) >= new Date(end.started_at))
   const canCompare = Boolean(startJobId && endJobId && !intervalInvalid)
   const comparison = useQuery({
@@ -300,11 +290,7 @@ export function JobHistoryWorkspace({ job, workflowName }: { job: CIJob; workflo
   const retainedRelationCount = revertRelations.length - cancelledRelationCount
 
   return (
-    <Card
-      size="small"
-      title={`Job 运行历史 · ${job.job_name}`}
-      style={{ margin: '8px 0', width: '100%', maxWidth: '100%', overflow: 'hidden' }}
-    >
+    <Card size="small" title={`Job 运行历史 · ${job.job_name}`} style={{ margin: '8px 0' }}>
       <Text type="secondary">以首页“今日 CI 详情”中的 Workflow/Job 集合作为范围，向历史回溯并展示每天对应的正式运行；不是只展示今天的 Run。选择较早记录为 Start、较新记录为 End。</Text>
       {(start || end) && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, margin: '10px 0' }}>
@@ -323,27 +309,8 @@ export function JobHistoryWorkspace({ job, workflowName }: { job: CIJob; workflo
       {isLoading ? <div style={{ padding: 40, textAlign: 'center' }}><Spin /></div> : timeline.length === 0 ? (
         <Empty description="暂无同名 Job 历史记录" />
       ) : (
-        <div
-          style={{
-            marginTop: 12,
-            border: '1px solid #d9d9d9',
-            borderRadius: 2,
-            background: '#fafafa',
-            padding: '8px 10px 4px',
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 2 }}>
-            <Text strong>运行时间链</Text>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              共 {timeline.length} 个节点，默认定位最新 10 个，可左右滚动查看
-            </Text>
-          </div>
-          <div
-            ref={timelineViewportRef}
-            style={{ width: '100%', maxWidth: 1980, overflowX: 'auto', overflowY: 'hidden', padding: '12px 4px 10px' }}
-          >
-            <div style={{ display: 'flex', width: 'max-content', position: 'relative', gap: 8 }}>
+        <div style={{ overflowX: 'auto', padding: '14px 4px 10px' }}>
+          <div style={{ display: 'flex', minWidth: 'max-content', position: 'relative', gap: 8 }}>
             <div style={{ position: 'absolute', left: 48, right: 48, top: 53, height: 1, background: '#8c8c8c' }} />
             {timeline.map(record => {
               const selectedAsStart = startJobId === record.job_id
@@ -362,7 +329,6 @@ export function JobHistoryWorkspace({ job, workflowName }: { job: CIJob; workflo
                 />
               )
             })}
-            </div>
           </div>
         </div>
       )}
