@@ -622,26 +622,16 @@ class CICollector:
             return False
 
         # 检查是否已存在
-        stmt = select(WorkflowConfig.workflow_name).where(
-            WorkflowConfig.workflow_file == workflow_file
-        )
-        result = await self.db.execute(stmt)
-        configured_workflow_name = result.scalar_one_or_none() or workflow_file
-
         stmt = select(CIResult).where(CIResult.run_id == run_id)
         result = await self.db.execute(stmt)
         existing = result.scalar_one_or_none()
 
         if existing:
             # 更新现有记录
-            return await self._update_ci_result(
-                existing, run, configured_workflow_name, hardware
-            )
+            return await self._update_ci_result(existing, run, hardware)
         else:
             # 创建新记录
-            return await self._create_ci_result(
-                run, configured_workflow_name, hardware
-            )
+            return await self._create_ci_result(run, workflow_file, hardware)
 
     async def _create_ci_result(
         self,
@@ -657,7 +647,7 @@ class CICollector:
             from infrastructure.persistence.models import WorkflowConfig
 
             stmt = select(WorkflowConfig.workflow_name).where(
-                WorkflowConfig.workflow_name == workflow_file
+                WorkflowConfig.workflow_file == workflow_file
             )
             result = await self.db.execute(stmt)
             config_workflow_name = result.scalar_one_or_none()
@@ -665,7 +655,7 @@ class CICollector:
             # 如果找不到配置，使用 GitHub API 返回的名称
             if config_workflow_name is None:
                 logger.warning(f"WorkflowConfig not found for {workflow_file}, using GitHub name")
-                config_workflow_name = workflow_file
+                config_workflow_name = run.get("name", workflow_file)
 
             ci_result = CIResult(
                 workflow_name=config_workflow_name,
@@ -696,17 +686,12 @@ class CICollector:
         self,
         existing: CIResult,
         run: dict[str, Any],
-        configured_workflow_name: str,
         hardware: str,
     ) -> bool:
         """更新现有 CI 结果记录"""
         try:
             # 只更新状态变化的字段
             needs_update = False
-
-            if existing.workflow_name != configured_workflow_name:
-                existing.workflow_name = configured_workflow_name
-                needs_update = True
 
             new_status = run.get("status", "unknown")
             if existing.status != new_status:
@@ -852,13 +837,11 @@ class CICollector:
                 logger.warning(f"No jobs found for run {run_id}")
                 return 0
 
-            # WorkflowConfig is the source of truth. Existing CIResult rows
-            # may still contain a legacy decorated GitHub display name until
-            # this forced refresh repairs them.
+            # CIResult is created from WorkflowConfig and therefore owns the
+            # stable dashboard identity for this run.  Do not use the
+            # workflow file name or GitHub's decorated Job display name below.
             result = await self.db.execute(
-                select(WorkflowConfig.workflow_name).where(
-                    WorkflowConfig.workflow_file == workflow_file
-                )
+                select(CIResult.workflow_name).where(CIResult.run_id == run_id)
             )
             configured_workflow_name = result.scalar_one_or_none() or workflow_file
 
