@@ -529,7 +529,9 @@ function WorkflowDetail() {
           scroll={{ x: 'max-content' }}
           expandable={{
             expandedRowKeys: historyJobIds,
-            expandedRowRender: (record) => <JobHistoryWorkspace job={record} />,
+            expandedRowRender: (record) => (
+              <JobHistoryWorkspace job={record} workflowName={currentRun?.workflow_name} />
+            ),
             rowExpandable: (record) => historyJobIds.includes(record.job_id),
             showExpandColumn: false,
           }}

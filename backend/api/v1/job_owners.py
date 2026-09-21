@@ -136,7 +136,10 @@ async def list_job_runs(
     stmt = select(CIJob, CIResult).outerjoin(
         CIResult, CIResult.run_id == CIJob.run_id
     ).where(
-        CIJob.workflow_name == workflow_name,
+        # CIJob.workflow_name historically mirrored GitHub's decorated display
+        # name (for example ``Nightly-A5 (PR) 14544``).  CIResult is the
+        # canonical workflow identity persisted from WorkflowConfig.
+        CIResult.workflow_name == workflow_name,
         CIJob.job_name == job_name,
     )
 
