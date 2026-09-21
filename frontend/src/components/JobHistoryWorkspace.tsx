@@ -105,7 +105,7 @@ function displayValue(value: unknown) {
   return String(value)
 }
 
-export function JobHistoryWorkspace({ job }: { job: CIJob }) {
+export function JobHistoryWorkspace({ job, workflowName }: { job: CIJob; workflowName?: string }) {
   const [startJobId, setStartJobId] = useState<number | null>(null)
   const [endJobId, setEndJobId] = useState<number | null>(null)
   const [summaryJobId, setSummaryJobId] = useState<number | null>(null)
@@ -130,10 +130,11 @@ export function JobHistoryWorkspace({ job }: { job: CIJob }) {
     },
     onError: (error: any) => message.error(error?.response?.data?.detail || '摘要生成失败'),
   })
+  const canonicalWorkflowName = workflowName || job.workflow_name
   const { data = [], isLoading, isError } = useQuery<CIJob[]>({
-    queryKey: ['inline-job-history', job.workflow_name, job.job_name],
+    queryKey: ['inline-job-history', canonicalWorkflowName, job.job_name],
     queryFn: async () => (await api.get<CIJob[]>('/job-owners/jobs/runs', {
-      params: { workflow_name: job.workflow_name, job_name: job.job_name, limit: 500, official_only: true },
+      params: { workflow_name: canonicalWorkflowName, job_name: job.job_name, limit: 500, official_only: true },
     })).data,
   })
 

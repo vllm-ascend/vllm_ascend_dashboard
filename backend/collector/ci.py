@@ -837,6 +837,14 @@ class CICollector:
                 logger.warning(f"No jobs found for run {run_id}")
                 return 0
 
+            # CIResult is created from WorkflowConfig and therefore owns the
+            # stable dashboard identity for this run.  Do not use the
+            # workflow file name or GitHub's decorated Job display name below.
+            result = await self.db.execute(
+                select(CIResult.workflow_name).where(CIResult.run_id == run_id)
+            )
+            configured_workflow_name = result.scalar_one_or_none() or workflow_file
+
             saved_count = 0
             new_count = 0
             update_count = 0
@@ -854,13 +862,21 @@ class CICollector:
 
                 if existing:
                     # 更新现有记录
-                    updated = await self._update_ci_job(existing, job, workflow_file, hardware, force_update_runner)
+                    updated = await self._update_ci_job(
+                        existing,
+                        job,
+                        configured_workflow_name,
+                        hardware,
+                        force_update_runner,
+                    )
                     if updated:
                         update_count += 1
                     saved_count += 1
                 else:
                     # 创建新记录
-                    created = await self._create_ci_job(job, run_id, workflow_file, hardware)
+                    created = await self._create_ci_job(
+                        job, run_id, configured_workflow_name, hardware
+                    )
                     if created:
                         new_count += 1
                         saved_count += 1
@@ -941,7 +957,7 @@ class CICollector:
         self,
         job: dict[str, Any],
         run_id: int,
-        workflow_file: str,
+        configured_workflow_name: str,
         hardware: str,
     ) -> bool:
         """创建新的 CI Job 记录"""
@@ -972,7 +988,12 @@ class CICollector:
             ci_job = CIJob(
                 job_id=job["id"],
                 run_id=run_id,
-                workflow_name=job.get("workflow_name", workflow_file),
+                # GitHub may decorate the Job workflow name with run context,
+                # e.g. "Nightly-A5 (PR) 14544".  The configured workflow
+                # identity is what downstream history/ownership queries use.
+                workflow_name=self._match_configured_workflow_name(
+                    job.get("workflow_name"), configured_workflow_name
+                ),
                 job_name=job.get("name", ""),
                 status=job.get("status", "unknown"),
                 conclusion=job.get("conclusion"),
@@ -995,11 +1016,45 @@ class CICollector:
             logger.error(f"Failed to create CI job: {e}")
             return False
 
+    @staticmethod
+    def _match_configured_workflow_name(
+        github_workflow_name: Any, configured_workflow_name: str,
+    ) -> str:
+        """Map a GitHub display name to its configured workflow identity.
+
+        GitHub's Job payload can append runtime context such as ``(PR) 14544``
+        or ``(scheduled)``.  A collector invocation is already scoped to one
+        configured workflow, so its configured name remains the safe canonical
+        value even when GitHub returns a decorated display name.
+        """
+        raw_name = str(github_workflow_name or "").strip()
+        canonical_name = configured_workflow_name.strip()
+        if not raw_name or raw_name.casefold() == canonical_name.casefold():
+            return canonical_name
+
+        suffix = raw_name[len(canonical_name):].lstrip() if raw_name.casefold().startswith(
+            canonical_name.casefold()
+        ) else ""
+        if suffix.startswith("("):
+            logger.info(
+                "Normalized GitHub workflow display name %r to configured name %r",
+                raw_name,
+                canonical_name,
+            )
+        else:
+            logger.warning(
+                "GitHub Job workflow name %r does not match configured workflow %r; "
+                "using configured name because collection is workflow-scoped",
+                raw_name,
+                canonical_name,
+            )
+        return canonical_name
+
     async def _update_ci_job(
         self,
         existing: CIJob,
         job: dict[str, Any],
-        workflow_file: str,
+        configured_workflow_name: str,
         hardware: str,
         force_update_runner: bool = False,
     ) -> bool:
@@ -1014,6 +1069,13 @@ class CICollector:
         """
         try:
             needs_update = False
+
+            canonical_workflow_name = self._match_configured_workflow_name(
+                job.get("workflow_name"), configured_workflow_name
+            )
+            if existing.workflow_name != canonical_workflow_name:
+                existing.workflow_name = canonical_workflow_name
+                needs_update = True
 
             # 更新状态
             new_status = job.get("status", "unknown")

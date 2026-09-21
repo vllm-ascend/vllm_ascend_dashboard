@@ -2004,12 +2004,17 @@ async def analyze_failed_job(
     ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Job conclusion is '{job.conclusion}', not a failed job")
 
+    run_result = await db.execute(select(CIResult.workflow_name).where(CIResult.run_id == job.run_id))
+    canonical_workflow_name = run_result.scalar_one_or_none() or job.workflow_name
+
     # 2. 检查已有记录
     existing_stmt = select(JobFailureAnalysis).where(
         JobFailureAnalysis.job_id == job_id
     ).order_by(JobFailureAnalysis.id.desc()).limit(1)
     existing_result = await db.execute(existing_stmt)
     existing = existing_result.scalar_one_or_none()
+    if existing and existing.workflow_name != canonical_workflow_name:
+        existing.workflow_name = canonical_workflow_name
     service = FailureAnalysisService()
 
     # 2a. 分析进行中 → 直接返回，让前端轮询（force 也不允许重复提交）
@@ -2022,7 +2027,7 @@ async def analyze_failed_job(
             db,
             job_id=job_id,
             run_id=job.run_id,
-            workflow_name=job.workflow_name,
+            workflow_name=canonical_workflow_name,
             job_name=job.job_name,
             problem_category=existing.problem_category,
         )
@@ -2053,7 +2058,7 @@ async def analyze_failed_job(
         placeholder = JobFailureAnalysis(
             job_id=job_id,
             run_id=job.run_id,
-            workflow_name=job.workflow_name,
+            workflow_name=canonical_workflow_name,
             job_name=job.job_name,
             failure_date=job.completed_at or datetime.now(UTC),
             failure_fingerprint=fingerprint,
