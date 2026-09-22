@@ -325,19 +325,6 @@ class FailureAnalysisService:
             return existing
 
         fingerprint = self.compute_failure_fingerprint(job)
-        try:
-            llm_config = await self._get_llm_config(db)
-        except Exception as exc:
-            # The API creates the placeholder before enqueueing this task.  If
-            # runtime configuration disappears before the Collector starts,
-            # close that placeholder instead of leaving it in analyzing.
-            if existing:
-                existing.analysis_status = "failed"
-                existing.analysis_phase = "failed"
-                existing.error_message = str(exc)
-                await db.commit()
-                return existing
-            raise
 
         # Fingerprint reuse is available only to explicit non-forced requests;
         # scheduler-originated work was normalized to force=True above.
@@ -417,9 +404,14 @@ class FailureAnalysisService:
 
         try:
             # Read runtime configuration and prepare the evidence inside the
-            # same failure boundary as the LLM call.  Previously
-            # ``_build_job_context`` ran before this ``try`` block, so a 404
-            # from GitHub left the placeholder permanently in ``analyzing``.
+            # same failure boundary as the LLM call.  This must happen after
+            # the durable row is created: scheduler-triggered work does not
+            # pass through the API placeholder path, and a missing provider
+            # must therefore become a visible ``failed`` analysis instead of
+            # disappearing as a dead queue task.
+            llm_config = await self._get_llm_config(db)
+            # ``_build_job_context`` also remains inside this boundary, so a
+            # 404 from GitHub cannot leave the row stuck in ``analyzing``.
             agent_config = await self._get_agent_config(db)
             runtime = str(agent_config.get("runtime", "claude_cli")).strip().lower()
             if runtime not in {"claude_cli", "custom_agent"}:
