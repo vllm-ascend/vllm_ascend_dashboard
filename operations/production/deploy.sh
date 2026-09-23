@@ -226,6 +226,11 @@ new_git="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)"
 if $FAST && [[ "$pre_git_full" != "$new_git_full" ]]; then
     database_changes="$(git -C "$PROJECT_ROOT" diff --name-only "$pre_git_full" "$new_git_full" -- \
         database/ backend/infrastructure/persistence/ operations/production/migrate.sh)"
+    # Local demo seed data is only invoked by operations/development/bootstrap.sh;
+    # production deploys never execute it. It therefore does not require a
+    # migration, while every other database or persistence change remains a
+    # hard blocker for --fast.
+    database_changes="$(printf '%s\n' "$database_changes" | grep -vx 'database/seed_local_demo.py' || true)"
     if [[ -n "$database_changes" ]]; then
         echo "[ERROR] fast mode detected database-related changes; rerun without --fast:" >&2
         echo "$database_changes" >&2

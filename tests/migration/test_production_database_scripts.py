@@ -29,6 +29,14 @@ def test_deploy_script_enforces_backup_migration_health_and_login_order():
     assert "sqlite" not in script.lower()
 
 
+def test_fast_deploy_only_allows_the_development_demo_seed_file():
+    script = (ROOT / "operations" / "production" / "deploy.sh").read_text(encoding="utf-8")
+
+    assert "grep -vx 'database/seed_local_demo.py'" in script
+    assert "backend/infrastructure/persistence/" in script
+    assert "operations/production/migrate.sh" in script
+
+
 def test_application_startup_does_not_alter_existing_schema():
     main_source = (ROOT / "backend" / "api" / "main.py").read_text(encoding="utf-8")
     assert "ALTER TABLE" not in main_source
