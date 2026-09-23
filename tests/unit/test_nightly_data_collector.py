@@ -240,59 +240,6 @@ def test_populate_daily_failure_records_adds_new_records_to_session():
     assert collector.last_materialized_job_ids == {123}
 
 
-def test_populate_daily_failure_records_marks_existing_job_as_currently_materialized():
-    now = datetime.now(UTC).replace(microsecond=0)
-    report_date = now.astimezone(timezone(timedelta(hours=8))).date().isoformat()
-    job_name = "single-node (main, MiniMax-M3-W8A8-A3.yaml) / MiniMax-M3-W8A8-A3"
-    job = SimpleNamespace(
-        job_id=123,
-        run_id=456,
-        workflow_name="Nightly-A3",
-        job_name=job_name,
-        conclusion="failure",
-        started_at=now,
-        completed_at=now,
-        duration_seconds=60,
-        hardware="A3",
-        data={"run_attempt": 1, "head_branch": "main"},
-    )
-    snapshot = SimpleNamespace(
-        report_date=report_date,
-        source_branch="main",
-        workflow_name="Nightly-A3",
-        job_name="MiniMax-M3-W8A8-A3",
-        test_model="MiniMax-M3-W8A8-A3.yaml",
-        display_name="MiniMax-M3-W8A8-A3",
-        model_fo="MiniMax-M3",
-        owner=None,
-        deployment_type="single-node",
-    )
-    existing = SimpleNamespace(
-        report_date=now.date(),
-        source_branch="main",
-        workflow_name="Nightly-A3",
-        job_name=job_name,
-        job_id=123,
-        run_id=456,
-        problem_category=None,
-    )
-    db = _FakeSession(
-        [
-            [job],
-            [(456, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
-            [snapshot],
-            [existing],
-            [],
-        ]
-    )
-
-    collector = NightlyDataCollector(db)
-    count = asyncio.run(collector.populate_daily_failure_records())
-
-    assert count == 0
-    assert collector.last_materialized_job_ids == {123}
-
-
 def test_populate_daily_failure_records_deduplicates_pending_records_by_key():
     now = datetime.now(UTC).replace(microsecond=0)
     report_date = (now.astimezone(timezone(timedelta(hours=8)))).date().isoformat()

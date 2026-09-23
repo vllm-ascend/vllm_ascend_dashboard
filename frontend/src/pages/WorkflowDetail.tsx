@@ -263,18 +263,8 @@ function WorkflowDetail() {
             </Button>
             {isFailed && (
               analysisMap.get(record.job_id) ? (
-                <Button
-                  type="link"
-                  danger={analysisMap.get(record.job_id)?.analysis_status === 'failed'}
-                  icon={<FileSearchOutlined />}
-                  onClick={() => handleViewAnalysis(record.job_id)}
-                  style={{ padding: 0 }}
-                >
-                  {analysisMap.get(record.job_id)?.analysis_status === 'failed'
-                    ? '分析失败'
-                    : analysisMap.get(record.job_id)?.analysis_status === 'analyzing'
-                      ? '分析中'
-                      : '分析报告'}
+                <Button type="link" icon={<FileSearchOutlined />} onClick={() => handleViewAnalysis(record.job_id)} style={{ padding: 0 }}>
+                  分析报告
                 </Button>
               ) : (
                 <Button

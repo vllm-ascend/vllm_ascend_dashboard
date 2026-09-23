@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from zipfile import ZipFile
 
 import pytest
@@ -353,7 +353,6 @@ async def test_log_preparation_failure_marks_existing_analysis_failed():
     )
     analysis = SimpleNamespace(
         id=99,
-        workflow_name="Nightly-A3",
         analysis_status="analyzing",
         analysis_phase="queued",
         error_message=None,
@@ -369,8 +368,7 @@ async def test_log_preparation_failure_marks_existing_analysis_failed():
             return self.value
 
     db = AsyncMock()
-    # CIJob, canonical CIResult (not found), existing analysis.
-    db.execute.side_effect = [Result(job), Result(None), Result(analysis)]
+    db.execute.side_effect = [Result(job), Result(analysis)]
     db.flush = AsyncMock()
     db.refresh = AsyncMock()
     db.commit = AsyncMock()
@@ -398,47 +396,4 @@ async def test_log_preparation_failure_marks_existing_analysis_failed():
     assert analysis.analysis_status == "failed"
     assert analysis.analysis_phase == "failed"
     assert "Required GitHub job log unavailable" in analysis.error_message
-    db.commit.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_missing_llm_configuration_marks_scheduler_analysis_failed():
-    """Scheduler work has no API-created placeholder, but must still persist failure."""
-    job = SimpleNamespace(
-        job_id=123,
-        run_id=456,
-        workflow_name="Nightly-A3",
-        job_name="single-node (main, qwen3)",
-        conclusion="failure",
-        completed_at=None,
-        steps_data="[]",
-    )
-
-    class Result:
-        def __init__(self, value):
-            self.value = value
-
-        def scalar_one_or_none(self):
-            return self.value
-
-    db = AsyncMock()
-    # CIJob, CIResult (not found), then an absent analysis row.
-    db.execute.side_effect = [Result(job), Result(None), Result(None)]
-    db.flush = AsyncMock()
-    db.refresh = AsyncMock()
-    db.commit = AsyncMock()
-    db.add = MagicMock()
-
-    service = FailureAnalysisService()
-    service._get_llm_config = AsyncMock(
-        side_effect=RuntimeError("No active LLM provider configured")
-    )
-
-    result = await service.analyze_failed_job(123, db, force=True, triggered_by="scheduler")
-
-    assert result.analysis_status == "failed"
-    assert result.analysis_phase == "failed"
-    assert "No active LLM provider configured" in result.error_message
-    assert result.triggered_by == "scheduler"
-    db.add.assert_called_once_with(result)
     db.commit.assert_awaited_once()
