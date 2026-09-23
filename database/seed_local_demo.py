@@ -291,7 +291,6 @@ async def seed_workflows(
     specs = [
         ("Nightly-A2", "schedule_nightly_test_a2.yaml", "A2", "schedule"),
         ("Nightly-A3", "schedule_nightly_test_a3.yaml", "A3", "schedule"),
-        ("Nightly-A3-560T", "schedule_nightly_test_a3_560t.yaml", "A3-560T", "workflow_dispatch"),
         ("PR-Validation", "pull_request_validation.yaml", "A3", "pull_request"),
     ]
     workflows: list[WorkflowConfig] = []
@@ -328,7 +327,6 @@ async def seed_ci(
     job_names = [
         "Qwen2.5-7B nightly benchmark",
         "DeepSeek-R1 compatibility suite",
-        "DeepSeek-R1 A3-560T regression",
         "Llama-3.1 serving regression",
     ]
     for day_offset in range(9, -1, -1):
@@ -425,7 +423,6 @@ async def seed_nightly_and_failures(
     nightly_jobs = [
         ("Nightly-A2", "Qwen2.5-7B nightly benchmark", "Qwen/Qwen2.5-7B-Instruct", "qwen2.5-7b", "A2"),
         ("Nightly-A3", "DeepSeek-R1 compatibility suite", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "deepseek-r1-distill-qwen-7b", "A3"),
-        ("Nightly-A3-560T", "DeepSeek-R1 A3-560T regression", "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "deepseek-r1-distill-qwen-7b", "A3-560T"),
         ("PR-Validation", "Llama-3.1 serving regression", "meta-llama/Llama-3.1-8B-Instruct", "llama3.1-8b", "A3"),
     ]
     for offset in range(4):
@@ -444,12 +441,7 @@ async def seed_nightly_and_failures(
                     "display_name": f"{model.split('/')[-1]} nightly",
                     "test_model": model,
                     "model_fo": fo,
-                    "owner": {
-                        "Nightly-A2": "alice",
-                        "Nightly-A3": "bob",
-                        "Nightly-A3-560T": "charlie",
-                        "PR-Validation": "diana",
-                    }[workflow_name],
+                    "owner": ["alice", "bob", "charlie"][index],
                     "deployment_type": "single-node",
                     "notes": f"{DEMO_PREFIX} nightly snapshot",
                     "enabled": True,
@@ -501,7 +493,6 @@ async def seed_nightly_and_failures(
     for workflow_name, job_name, owner in [
         ("Nightly-A2", "Qwen2.5-7B nightly benchmark", "Alice Zhang"),
         ("Nightly-A3", "DeepSeek-R1 compatibility suite", "Bob Li"),
-        ("Nightly-A3-560T", "DeepSeek-R1 A3-560T regression", "Charlie Wang"),
         ("PR-Validation", "Llama-3.1 serving regression", "Charlie Wang"),
     ]:
         await upsert(

@@ -343,12 +343,6 @@ class NightlyDataCollector:
                 if problem_category and existing.problem_category != problem_category:
                     existing.problem_category = problem_category
                     category_sync_count += 1
-                # This Job was part of the current materialization even
-                # though its durable daily record already existed. Keep it in
-                # the current-sync set so automatic analysis can enqueue a
-                # previously unanalysed failure after a forced refresh.
-                if job.job_id is not None:
-                    self.last_materialized_job_ids.add(job.job_id)
                 existing_keys.add(key)
                 continue
 

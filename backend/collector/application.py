@@ -37,9 +37,6 @@ async def main():
         node_id=node_id,
         capabilities=capabilities,
         db_session_factory=SessionLocal,
-        # Keep durable failure-analysis tasks bounded while allowing one CI
-        # sync to enqueue every newly discovered failure.
-        max_concurrent=2,
     )
     runner = CollectorRunner(worker)
     await runner.run()
