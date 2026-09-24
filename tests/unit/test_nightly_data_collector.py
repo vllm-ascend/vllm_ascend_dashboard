@@ -290,6 +290,66 @@ def test_populate_daily_failure_records_marks_existing_jobs_for_auto_analysis():
     assert collector.last_materialized_job_ids == {123}
 
 
+def test_populate_daily_failure_records_replaces_cancelled_with_failure():
+    now = datetime.now(UTC).replace(microsecond=0)
+    report_date = now.astimezone(timezone(timedelta(hours=8))).date().isoformat()
+    job_name = "single-node (main, MiniMax-M3-W8A8-A3.yaml) / MiniMax-M3-W8A8-A3"
+    job = SimpleNamespace(
+        job_id=124,
+        run_id=457,
+        workflow_name="Nightly-A3",
+        job_name=job_name,
+        conclusion="failure",
+        started_at=now,
+        completed_at=now,
+        duration_seconds=60,
+        hardware="A3",
+        data={"run_attempt": 1, "head_branch": "main"},
+    )
+    snapshot = SimpleNamespace(
+        report_date=report_date,
+        source_branch="main",
+        workflow_name="Nightly-A3",
+        job_name="MiniMax-M3-W8A8-A3",
+        test_model="MiniMax-M3-W8A8-A3.yaml",
+        display_name="MiniMax-M3-W8A8-A3",
+        model_fo="MiniMax-M3",
+        owner=None,
+        deployment_type="single-node",
+    )
+    existing = SimpleNamespace(
+        report_date=report_date,
+        source_branch="main",
+        workflow_name="Nightly-A3",
+        job_name=job_name,
+        job_id=123,
+        run_id=456,
+        conclusion="cancelled",
+        started_at=None,
+        completed_at=None,
+        duration_seconds=None,
+        hardware="A3",
+        problem_category=None,
+        github_job_url=None,
+    )
+    db = _FakeSession([
+        [job],
+        [(457, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
+        [snapshot],
+        [existing],
+        [],
+    ])
+
+    collector = NightlyDataCollector(db)
+    count = asyncio.run(collector.populate_daily_failure_records())
+
+    assert count == 0
+    assert existing.job_id == 124
+    assert existing.run_id == 457
+    assert existing.conclusion == "failure"
+    assert collector.last_materialized_job_ids == {124}
+
+
 def test_populate_daily_failure_records_deduplicates_pending_records_by_key():
     now = datetime.now(UTC).replace(microsecond=0)
     report_date = (now.astimezone(timezone(timedelta(hours=8)))).date().isoformat()

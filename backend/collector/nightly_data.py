@@ -335,8 +335,31 @@ class NightlyDataCollector:
                     (job.run_id, job.workflow_name, job.job_name)
                 )
             problem_category = analysis.problem_category if analysis else None
+            github_url = (
+                f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}"
+                f"/actions/runs/{job.run_id}/job/{job.job_id}"
+                if job.job_id
+                else None
+            )
 
             if existing is not None:
+                # Keep one daily row per configured test, but a completed test
+                # failure is more actionable than an earlier cancellation of
+                # the same test on the same reporting day.
+                if job.conclusion == "failure" and getattr(existing, "conclusion", None) != "failure":
+                    previous_job_id = existing.job_id
+                    existing.run_id = job.run_id
+                    existing.job_id = job.job_id
+                    existing.conclusion = job.conclusion
+                    existing.started_at = job.started_at
+                    existing.completed_at = job.completed_at
+                    existing.duration_seconds = job.duration_seconds
+                    existing.hardware = job.hardware
+                    existing.github_job_url = github_url
+                    if previous_job_id is not None:
+                        existing_by_job_id.pop(previous_job_id, None)
+                    if job.job_id is not None:
+                        existing_by_job_id[job.job_id] = existing
                 if str(existing.report_date) != report_date:
                     existing.report_date = date.fromisoformat(report_date)
                     corrected_count += 1
@@ -345,18 +368,12 @@ class NightlyDataCollector:
                     category_sync_count += 1
                 existing_keys.add(key)
                 # A forced refresh must be eligible for automatic analysis as
-                # well: its DailyFailureRecord already exists, but this job
-                # was still materialized by the current sync.
-                if job.job_id is not None:
+                # well, but only when this job is the record currently bound
+                # to the daily test case.
+                if job.job_id is not None and existing.job_id == job.job_id:
                     self.last_materialized_job_ids.add(job.job_id)
                 continue
 
-            github_url = (
-                f"https://github.com/{settings.GITHUB_OWNER}/{settings.GITHUB_REPO}"
-                f"/actions/runs/{job.run_id}/job/{job.job_id}"
-                if job.job_id
-                else None
-            )
             record = DailyFailureRecord(
                 report_date=report_date,
                 source_branch=branch,
