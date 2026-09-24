@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 
-from sqlalchemy import case, func, or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from collector.ci import CICollector
@@ -22,12 +22,6 @@ from infrastructure.persistence.models import CIJob, DailyFailureRecord, JobFail
 from .worker import CollectorWorker, TaskContext
 
 logger = logging.getLogger(__name__)
-
-# A single Collector can execute three tasks concurrently. Automatic failure
-# analysis is intentionally capped at two slots so sync work always retains
-# room on a small production host, even if a runtime setting is bad.
-AUTO_FAILURE_ANALYSIS_HARD_LIMIT = 2
-
 
 class CollectorRunner:
     """将具体采集逻辑绑定到 CollectorWorker。"""
@@ -195,7 +189,6 @@ class CollectorRunner:
                     auto_analysis = await self._enqueue_auto_failure_analysis(
                         db,
                         nightly_data.last_materialized_job_ids,
-                        max_items=int(getattr(settings, "CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC", 2)),
                     )
                     await db.commit()
                     logger.info(
@@ -225,7 +218,6 @@ class CollectorRunner:
             auto_analysis = await self._enqueue_auto_failure_analysis(
                 db,
                 nightly_data.last_materialized_job_ids,
-                max_items=int(getattr(settings, "CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC", 2)),
             )
             await db.commit()
         logger.info(
@@ -239,32 +231,26 @@ class CollectorRunner:
         self,
         db: AsyncSession,
         job_ids: set[int],
-        max_items: int = 2,
     ) -> dict[str, int]:
-        """Queue a bounded amount of analysis for failed Nightly jobs.
+        """Queue every failed Nightly job materialized by this sync.
 
         Analysis is deliberately enqueued as a durable Collector task rather
         than executed inline, so a slow LLM or missing job log cannot extend
         or fail the CI synchronization task. Records without an analysis row
         and legacy ``reused`` records are eligible for automatic work. The
-        bounded query is
-        ordered with the records materialized by this sync first, then older
-        pending records, so records beyond the limit are not lost and drain
-        on subsequent syncs. Automatic work is forced so every newly
+        Automatic work is forced so every newly
         materialized job gets a real analysis; the cross-job failure
         fingerprint cache is reserved for explicit non-forced requests.
         """
         from infrastructure.tasks.task_manager import TaskManager
 
         if not getattr(settings, "CI_AUTO_FAILURE_ANALYSIS_ENABLED", True):
-            return {"selected": 0, "queued": 0, "skipped": 0, "limit": 0, "active": 0}
-
-        max_items = min(AUTO_FAILURE_ANALYSIS_HARD_LIMIT, max(0, int(max_items)))
-        if max_items == 0:
-            return {"selected": 0, "queued": 0, "skipped": 0, "limit": 0, "active": 0}
+            return {"selected": 0, "queued": 0, "skipped": 0, "active": 0}
 
         failure_conclusions = ("failure", "timed_out", "startup_failure", "cancelled")
         new_job_ids = {int(job_id) for job_id in job_ids if job_id is not None}
+        if not new_job_ids:
+            return {"selected": 0, "queued": 0, "skipped": 0, "active": 0}
 
         # A queued failure-analysis task has no JobFailureAnalysis row until
         # the Collector starts it. Count and exclude those tasks explicitly;
@@ -284,23 +270,14 @@ class CollectorRunner:
             for (job_id,) in active_task_rows
             if job_id is not None and str(job_id).strip().isdigit()
         }
-        available_slots = max(0, max_items - len(active_task_rows))
-        if available_slots == 0:
-            return {
-                "selected": 0,
-                "queued": 0,
-                "skipped": 0,
-                "limit": max_items,
-                "active": len(active_task_rows),
-            }
-
         first_record_id = func.min(DailyFailureRecord.id)
+        latest_job_started_at = func.max(CIJob.started_at)
         candidate_query = (
             select(DailyFailureRecord.job_id)
             .join(CIJob, CIJob.job_id == DailyFailureRecord.job_id)
             .outerjoin(JobFailureAnalysis, JobFailureAnalysis.job_id == DailyFailureRecord.job_id)
             .where(
-                DailyFailureRecord.conclusion.in_(failure_conclusions),
+                CIJob.conclusion.in_(failure_conclusions),
                 DailyFailureRecord.job_id.isnot(None),
                 # A queued Collector task has no analysis row until it starts;
                 # TaskManager's stable dedupe key makes a repeated scan safe.
@@ -311,28 +288,23 @@ class CollectorRunner:
                     JobFailureAnalysis.id.is_(None),
                     JobFailureAnalysis.analysis_status == "reused",
                 ),
+                DailyFailureRecord.job_id.in_(new_job_ids),
             )
             .group_by(DailyFailureRecord.job_id)
+            .order_by(latest_job_started_at.desc(), first_record_id)
         )
         if active_job_ids:
             candidate_query = candidate_query.where(~DailyFailureRecord.job_id.in_(active_job_ids))
-        if new_job_ids:
-            priority = case((DailyFailureRecord.job_id.in_(new_job_ids), 0), else_=1)
-            candidate_query = candidate_query.order_by(priority, first_record_id)
-        else:
-            candidate_query = candidate_query.order_by(first_record_id)
-        candidate_query = candidate_query.limit(available_slots)
 
         records_result = await db.execute(candidate_query)
         selected_job_ids = list(dict.fromkeys(
             int(job_id) for (job_id,) in records_result.all() if job_id is not None
-        ))[:available_slots]
+        ))
         if not selected_job_ids:
             return {
                 "selected": 0,
                 "queued": 0,
                 "skipped": 0,
-                "limit": max_items,
                 "active": len(active_task_rows),
             }
 
@@ -362,7 +334,6 @@ class CollectorRunner:
             "selected": len(selected_job_ids),
             "queued": queued,
             "skipped": skipped,
-            "limit": max_items,
             "active": len(active_task_rows),
         }
 

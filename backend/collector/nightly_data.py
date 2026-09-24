@@ -344,6 +344,11 @@ class NightlyDataCollector:
                     existing.problem_category = problem_category
                     category_sync_count += 1
                 existing_keys.add(key)
+                # A forced refresh must be eligible for automatic analysis as
+                # well: its DailyFailureRecord already exists, but this job
+                # was still materialized by the current sync.
+                if job.job_id is not None:
+                    self.last_materialized_job_ids.add(job.job_id)
                 continue
 
             github_url = (

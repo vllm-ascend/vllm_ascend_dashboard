@@ -353,6 +353,7 @@ async def test_log_preparation_failure_marks_existing_analysis_failed():
     )
     analysis = SimpleNamespace(
         id=99,
+        workflow_name="Nightly-A3",
         analysis_status="analyzing",
         analysis_phase="queued",
         error_message=None,
@@ -368,7 +369,7 @@ async def test_log_preparation_failure_marks_existing_analysis_failed():
             return self.value
 
     db = AsyncMock()
-    db.execute.side_effect = [Result(job), Result(analysis)]
+    db.execute.side_effect = [Result(job), Result(None), Result(analysis)]
     db.flush = AsyncMock()
     db.refresh = AsyncMock()
     db.commit = AsyncMock()
