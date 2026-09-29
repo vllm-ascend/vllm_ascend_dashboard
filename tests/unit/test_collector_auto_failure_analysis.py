@@ -15,7 +15,7 @@ class _Result:
 
 
 @pytest.mark.asyncio
-async def test_auto_failure_analysis_respects_limit(monkeypatch):
+async def test_auto_failure_analysis_queues_all_failures_from_current_sync(monkeypatch):
     db = AsyncMock()
     db.execute.side_effect = [
         _Result([]),
@@ -30,18 +30,17 @@ async def test_auto_failure_analysis_respects_limit(monkeypatch):
     result = await CollectorRunner(SimpleNamespace())._enqueue_auto_failure_analysis(
         db,
         {101, 102, 103},
-        max_items=2,
     )
 
-    assert result == {"selected": 2, "queued": 2, "skipped": 0, "limit": 2, "active": 0}
-    assert create_task.await_count == 2
-    assert [call.args[2]["job_id"] for call in create_task.await_args_list] == [101, 102]
+    assert result == {"selected": 3, "queued": 3, "skipped": 0, "active": 0}
+    assert create_task.await_count == 3
+    assert [call.args[2]["job_id"] for call in create_task.await_args_list] == [101, 102, 103]
     assert all("force" not in call.args[2] for call in create_task.await_args_list)
-    assert [call.args[2]["triggered_by"] for call in create_task.await_args_list] == ["scheduler", "scheduler"]
+    assert [call.args[2]["triggered_by"] for call in create_task.await_args_list] == ["scheduler", "scheduler", "scheduler"]
 
 
 @pytest.mark.asyncio
-async def test_auto_failure_analysis_can_be_disabled(monkeypatch):
+async def test_auto_failure_analysis_skips_empty_sync(monkeypatch):
     db = AsyncMock()
     create_task = AsyncMock()
     monkeypatch.setattr(
@@ -51,11 +50,10 @@ async def test_auto_failure_analysis_can_be_disabled(monkeypatch):
 
     result = await CollectorRunner(SimpleNamespace())._enqueue_auto_failure_analysis(
         db,
-        {101},
-        max_items=0,
+        set(),
     )
 
-    assert result == {"selected": 0, "queued": 0, "skipped": 0, "limit": 0, "active": 0}
+    assert result == {"selected": 0, "queued": 0, "skipped": 0, "active": 0}
     create_task.assert_not_awaited()
 
 
@@ -72,28 +70,23 @@ async def test_auto_failure_analysis_switch_can_be_disabled(monkeypatch):
     result = await CollectorRunner(SimpleNamespace())._enqueue_auto_failure_analysis(
         db,
         {101},
-        max_items=2,
     )
 
-    assert result == {"selected": 0, "queued": 0, "skipped": 0, "limit": 0, "active": 0}
+    assert result == {"selected": 0, "queued": 0, "skipped": 0, "active": 0}
     create_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_auto_failure_analysis_does_not_fill_active_slots(monkeypatch):
+async def test_auto_failure_analysis_skips_jobs_with_active_tasks(monkeypatch):
     db = AsyncMock()
-    db.execute.return_value = _Result([("101",), ("102",)])
+    db.execute.side_effect = [_Result([("101",), ("102",)]), _Result([])]
     create_task = AsyncMock()
     monkeypatch.setattr(
         "infrastructure.tasks.task_manager.TaskManager.create_task",
         create_task,
     )
 
-    result = await CollectorRunner(SimpleNamespace())._enqueue_auto_failure_analysis(
-        db,
-        {103},
-        max_items=2,
-    )
+    result = await CollectorRunner(SimpleNamespace())._enqueue_auto_failure_analysis(db, {103})
 
-    assert result == {"selected": 0, "queued": 0, "skipped": 0, "limit": 2, "active": 2}
+    assert result == {"selected": 0, "queued": 0, "skipped": 0, "active": 2}
     create_task.assert_not_awaited()

@@ -42,7 +42,10 @@ CONFIG_PATH = ".github/workflows/configs/nightly_config.yaml"
 HARDWARE_WF = {
     "a2": "Nightly-A2",
     "a3": "Nightly-A3",
-    "a3-560t": "Nightly-A3",
+    # A3-560T uses an independent GitHub Actions workflow. Keep its parsed
+    # snapshots separate from ordinary A3 so configured workflow matching and
+    # test-board aggregation remain accurate.
+    "a3-560t": "Nightly-A3-560T",
     "a5": "Nightly-A5",
     "310p": "Nightly-310P",
 }

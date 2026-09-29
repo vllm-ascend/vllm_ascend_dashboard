@@ -74,18 +74,17 @@ class TestHealthCalculator:
         stmt = select(TestCase).where(TestCase.test_suite.isnot(None))
         result = await self.db.execute(stmt)
         cases = result.scalars().all()
-        suites: dict[str, list[TestCase]] = {}
+        # ``test_suite`` values are filenames and commonly contain underscores.
+        # Keep the grouping dimensions separate; splitting a synthesized string
+        # made ``schedule_nightly_test_a3.yaml`` parse ``test`` as card_count.
+        suites: dict[tuple[str, str, int], list[TestCase]] = {}
         for case in cases:
-            key = f"{case.test_suite}_{case.hardware or 'unknown'}_{case.card_count or 0}"
+            key = (case.test_suite, case.hardware or "unknown", case.card_count or 0)
             suites.setdefault(key, []).append(case)
 
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         count = 0
-        for key, suite_cases in suites.items():
-            parts = key.split("_")
-            suite_name = parts[0]
-            hardware = parts[1] if len(parts) > 1 else "unknown"
-            card_count = int(parts[2]) if len(parts) > 2 else None
+        for (suite_name, hardware, card_count), suite_cases in suites.items():
 
             total = len(suite_cases)
             passed = sum(1 for c in suite_cases if c.last_result == "passed")
