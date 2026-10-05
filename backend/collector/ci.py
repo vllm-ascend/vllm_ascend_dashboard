@@ -33,15 +33,20 @@ from infrastructure.persistence.models import (
     NightlyTestCase,
     WorkflowConfig,
 )
-from infrastructure.tasks.sync_progress import get_sync_progress, reset_sync_progress
+from infrastructure.tasks.sync_progress import SyncProgress, get_sync_progress, reset_sync_progress
 from tooling.ci_version_snapshot import (
     PARSER_VERSION,
     get_version_snapshot,
     parse_ci_version_snapshot,
     version_snapshot_step_name,
 )
+from tooling.workflow_rules import matches_workflow_policy
 
 logger = logging.getLogger(__name__)
+
+
+class CIWorkflowCollectionError(RuntimeError):
+    """Raised when a CI sync finishes with one or more workflows uncollected."""
 
 
 class CICollector:
@@ -59,6 +64,7 @@ class CICollector:
         github_client: GitHubClient,
         db_session: AsyncSession,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        sync_progress: SyncProgress | None = None,
     ):
         """
         初始化 CI 采集器
@@ -70,6 +76,7 @@ class CICollector:
         self.github = github_client
         self.db = db_session
         self.progress_callback = progress_callback
+        self.sync_progress = sync_progress
 
     @staticmethod
     def _evidence_root() -> Path:
@@ -104,36 +111,13 @@ class CICollector:
                     raise ValueError(f"Unsafe path in GitHub artifact: {member.filename}") from exc
             zf.extractall(destination)
 
-    @staticmethod
-    def _is_failed_run(jobs: list[dict[str, Any]]) -> bool:
-        """Whether a completed run has evidence that failure analysis may need."""
-        return any(
-            job.get("status") == "completed"
-            and job.get("conclusion") in {"failure", "timed_out", "cancelled", "startup_failure"}
-            for job in jobs
-        )
-
-    async def _materialize_failure_run_artifacts(
-        self, run_id: int, jobs: list[dict[str, Any]]
-    ) -> None:
-        """Download all artifacts for a failed run during CI sync.
-
-        Evidence is immutable per GitHub run and artifact id.  A later sync
-        retries only missing or invalid artifacts, so a partial download can
-        never mark a run as fully cached.
-        """
-        if not self._is_failed_run(jobs):
-            return
-
-        await self.materialize_run_artifacts(run_id)
-
     async def materialize_run_artifacts(self, run_id: int) -> None:
         """Cache immutable artifacts for one explicit workflow run.
 
-        CI sync calls this only for failed runs. Failure analysis may also call
-        it for the selected last-good run, so the comparison always uses two
-        run-scoped evidence directories rather than a current-run artifact by
-        accident.
+        Failure analysis calls this on demand for the current failed run and
+        the selected last-good run. Keeping artifact downloads out of CI sync
+        lets workflow/job metadata commit promptly while analysis remains able
+        to build two immutable, run-scoped evidence directories.
         """
 
         artifacts = await self.github.list_artifacts(run_id)
@@ -319,7 +303,11 @@ class CICollector:
             result = await self.db.execute(stmt)
             workflow_configs = result.scalars().all()
             workflow_files = [
-                (config.workflow_file, config.hardware, getattr(config, 'event', 'schedule') or None, getattr(config, 'actor', None))
+                (
+                    config.workflow_file, config.hardware, config.event or None,
+                    config.actor, config.stats_start_hour, config.stats_end_hour,
+                    config.materialize_name_regex,
+                )
                 for config in workflow_configs
             ]
             logger.info(
@@ -327,13 +315,11 @@ class CICollector:
                 len(workflow_files),
             )
         else:
-            # 兼容旧格式：转换为 (workflow_file, hardware, event, actor) 元组列表
-            workflow_files = [(wf, "A2", "schedule", None) for wf in workflow_files]
-
             # 即使调用方显式传入 workflow，也要应用相同的测试用例规则。
             # 这样手动同步、定时同步和历史调用路径不会产生不同的数据集。
-            test_workflow_files = select(WorkflowConfig.workflow_file).where(
+            test_workflow_files = select(WorkflowConfig).where(
                 WorkflowConfig.enabled,
+                WorkflowConfig.workflow_file.in_(workflow_files),
                 WorkflowConfig.workflow_name.in_(
                     select(NightlyTestCase.workflow_name).where(
                         NightlyTestCase.enabled,
@@ -341,12 +327,20 @@ class CICollector:
                 ),
             )
             result = await self.db.execute(test_workflow_files)
-            allowed_workflow_files = set(result.scalars().all())
+            configs_by_file = {
+                config.workflow_file: config for config in result.scalars().all()
+            }
             skipped_workflows = [
-                item[0] for item in workflow_files if item[0] not in allowed_workflow_files
+                name for name in workflow_files if name not in configs_by_file
             ]
             workflow_files = [
-                item for item in workflow_files if item[0] in allowed_workflow_files
+                (
+                    config.workflow_file, config.hardware, config.event or None,
+                    config.actor, config.stats_start_hour, config.stats_end_hour,
+                    config.materialize_name_regex,
+                )
+                for name in workflow_files
+                if (config := configs_by_file.get(name)) is not None
             ]
             if skipped_workflows:
                 logger.info(
@@ -356,8 +350,12 @@ class CICollector:
                 )
 
         # 初始化进度跟踪器
-        reset_sync_progress()
-        progress = get_sync_progress()
+        if self.sync_progress is None:
+            reset_sync_progress()
+            progress = get_sync_progress()
+        else:
+            progress = self.sync_progress
+            progress.total_workflows = len(workflow_files)
         # 如果还没有开始（API 层可能已经启动了），则启动
         if progress.status == "idle":
             progress.total_workflows = len(workflow_files)
@@ -377,6 +375,9 @@ class CICollector:
             workflow_file, hardware = wf_item[0], wf_item[1]
             event_filter = wf_item[2] if len(wf_item) > 2 else "schedule"
             actor_filter = wf_item[3] if len(wf_item) > 3 else None
+            start_hour = wf_item[4]
+            end_hour = wf_item[5]
+            name_regex = wf_item[6]
             try:
                 # 更新当前正在处理的 workflow
                 progress.current_workflow = workflow_file
@@ -395,6 +396,9 @@ class CICollector:
                     force_full_refresh=force_full_refresh,
                     event=event_filter,
                     actor=actor_filter,
+                    stats_start_hour=start_hour,
+                    stats_end_hour=end_hour,
+                    materialize_name_regex=name_regex,
                 )
                 total_collected += collected
 
@@ -405,7 +409,8 @@ class CICollector:
 
             except GitHubRateLimitError as e:
                 logger.error(f"Rate limit exceeded while fetching {workflow_file}: {e}")
-                progress.update_workflow_progress(workflow_file, 0, "failed")
+                progress.update_workflow_progress(workflow_file, 0, "failed", str(e))
+                progress.fail(f"Failed to collect {workflow_file}: {e}")
                 await self._persist_progress(progress)
                 try:
                     await self.db.rollback()
@@ -414,13 +419,14 @@ class CICollector:
                 raise
             except GitHubAuthenticationError as e:
                 logger.error(f"GitHub authentication failed while fetching {workflow_file}: {e}")
-                progress.update_workflow_progress(workflow_file, 0, "failed")
+                progress.update_workflow_progress(workflow_file, 0, "failed", str(e))
+                progress.fail(f"Failed to collect {workflow_file}: {e}")
                 await self._persist_progress(progress)
                 await self.db.rollback()
                 raise
             except GitHubAPIError as e:
                 logger.error(f"Failed to fetch workflow {workflow_file}: {e}")
-                progress.update_workflow_progress(workflow_file, 0, "failed")
+                progress.update_workflow_progress(workflow_file, 0, "failed", str(e))
                 await self._persist_progress(progress)
                 try:
                     await self.db.rollback()
@@ -429,13 +435,24 @@ class CICollector:
                 continue  # 继续尝试其他 workflow
             except Exception as e:
                 logger.error(f"Unexpected error processing {workflow_file}: {e}", exc_info=True)
-                progress.update_workflow_progress(workflow_file, 0, "failed")
+                progress.update_workflow_progress(workflow_file, 0, "failed", str(e))
                 await self._persist_progress(progress)
                 try:
                     await self.db.rollback()
                 except Exception as rollback_error:
                     logger.error(f"Failed to rollback database transaction: {rollback_error}")
                 continue
+
+        failed_workflows = [
+            name
+            for name, details in progress.workflow_details.items()
+            if details.get("status") == "failed"
+        ]
+        if failed_workflows:
+            message = "Failed workflows: " + ", ".join(failed_workflows)
+            progress.fail(message)
+            await self._persist_progress(progress)
+            raise CIWorkflowCollectionError(message)
 
         # 完成同步
         progress.complete()
@@ -453,6 +470,9 @@ class CICollector:
         force_full_refresh: bool = False,
         event: str | None = None,
         actor: str | None = None,
+        stats_start_hour: int | None = None,
+        stats_end_hour: int | None = None,
+        materialize_name_regex: str | None = None,
     ) -> int:
         """
         采集单个 workflow 的运行数据
@@ -530,6 +550,16 @@ class CICollector:
                     await self.db.commit()
                     return collected
 
+                if not matches_workflow_policy(
+                    created_at,
+                    str(run.get("name") or "").strip(),
+                    stats_start_hour,
+                    stats_end_hour,
+                    materialize_name_regex,
+                ):
+                    logger.debug("Run %s excluded by configured workflow conditions", run_id)
+                    continue
+
                 prefetched_jobs: list[dict[str, Any]] | None = None
                 if run.get("event") == "workflow_dispatch":
                     try:
@@ -556,14 +586,17 @@ class CICollector:
 
                 # 保存或更新记录
                 updated = await self._save_ci_result(run, workflow_file, hardware)
+                # Flush the parent before collecting children. A failed insert
+                # must abort this run instead of leaving Jobs without a
+                # persisted CIResult (or giving them a fallback workflow name).
+                await self.db.flush()
                 if updated:
                     collected += 1
                     updated_count += 1
                     # 实时更新已采集记录数
                     progress.update_collected_count(1)
                 elif not force_full_refresh:
-                    # 如果不是强制刷新，跳过已存在的记录
-                    logger.debug(f"Run {run_id} already exists, skipped")
+                    logger.debug(f"Run {run_id} exists and is unchanged")
                 else:
                     # 强制刷新模式下，即使已存在也要更新
                     logger.debug(f"Run {run_id} exists, but force refresh enabled")
@@ -615,12 +648,12 @@ class CICollector:
             workflow_file: workflow 文件名
 
         Returns:
-            是否新增或更新了记录
+            True if the parent was created or updated; False only if an
+            existing parent was unchanged. Save failures raise instead.
         """
         run_id = run.get("id")
         if not run_id:
-            logger.warning("Run ID not found, skipping")
-            return False
+            raise ValueError("Workflow run has no ID; cannot collect its Jobs")
 
         # 检查是否已存在
         stmt = select(CIResult).where(CIResult.run_id == run_id)
@@ -680,8 +713,8 @@ class CICollector:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to create CI result: {e}")
-            return False
+            logger.exception("Failed to create CI result for run %s", run.get("id"))
+            raise RuntimeError(f"Failed to create CI result for run {run.get('id')}") from e
 
     async def _update_ci_result(
         self,
@@ -758,8 +791,8 @@ class CICollector:
             return needs_update
 
         except Exception as e:
-            logger.error(f"Failed to update CI result: {e}")
-            return False
+            logger.exception("Failed to update CI result for run %s", run.get("id"))
+            raise RuntimeError(f"Failed to update CI result for run {run.get('id')}") from e
 
     def _calculate_duration(self, run: dict[str, Any]) -> int | None:
         """
@@ -839,12 +872,16 @@ class CICollector:
                 return 0
 
             # CIResult is created from WorkflowConfig and therefore owns the
-            # stable dashboard identity for this run.  Do not use the
+            # stable dashboard identity for this run. Do not use the
             # workflow file name or GitHub's decorated Job display name below.
             result = await self.db.execute(
                 select(CIResult.workflow_name).where(CIResult.run_id == run_id)
             )
-            configured_workflow_name = result.scalar_one_or_none() or workflow_file
+            configured_workflow_name = result.scalar_one_or_none()
+            if configured_workflow_name is None:
+                raise RuntimeError(
+                    f"Cannot collect Jobs for run {run_id}: parent CIResult is missing"
+                )
 
             saved_count = 0
             new_count = 0
@@ -897,11 +934,6 @@ class CICollector:
                 #         logger.error(f"Failed to fetch logs for job {job_id}: {e}")
 
             logger.info(f"Collected {saved_count} jobs for run {run_id} (new: {new_count}, updated: {update_count})")
-
-            # Artifacts are evidence, not a best-effort side effect of an LLM
-            # request.  Persist them now, while the CI sync still has the run
-            # context and before an asynchronous analysis can be enqueued.
-            await self._materialize_failure_run_artifacts(run_id, jobs)
 
             # A completed version-probe Job supplies the actual checkout for the
             # run. Failure here is intentionally non-fatal so ordinary CI
@@ -991,9 +1023,6 @@ class CICollector:
             ci_job = CIJob(
                 job_id=job["id"],
                 run_id=run_id,
-                # GitHub may decorate the Job workflow name with run context,
-                # e.g. "Nightly-A5 (PR) 14544".  The configured workflow
-                # identity is what downstream history/ownership queries use.
                 workflow_name=self._match_configured_workflow_name(
                     job.get("workflow_name"), configured_workflow_name
                 ),
@@ -1026,7 +1055,7 @@ class CICollector:
         """Map a GitHub display name to its configured workflow identity.
 
         GitHub's Job payload can append runtime context such as ``(PR) 14544``
-        or ``(scheduled)``.  A collector invocation is already scoped to one
+        or ``(scheduled)``. A collector invocation is already scoped to one
         configured workflow, so its configured name remains the safe canonical
         value even when GitHub returns a decorated display name.
         """

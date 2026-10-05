@@ -63,6 +63,8 @@ interface Workflow {
   display_order: number
   stats_start_hour?: number | null
   stats_end_hour?: number | null
+  materialize_name_regex?: string | null
+  auto_failure_analysis_enabled: boolean
   last_sync_at?: string | null
 }
 
@@ -379,6 +381,30 @@ function CIBoardConfig() {
       width: 80,
       render: (hardware: string) => (
         <Tag color={hardware === 'A2' ? 'green' : 'purple'}>{hardware}</Tag>
+      ),
+    },
+    {
+      title: '采集名称正则',
+      dataIndex: 'materialize_name_regex',
+      key: 'materialize_name_regex',
+      width: 200,
+      render: (value: string | null) => value || <Text type="secondary">不限制</Text>,
+    },
+    {
+      title: '自动失败分析',
+      dataIndex: 'auto_failure_analysis_enabled',
+      key: 'auto_failure_analysis_enabled',
+      width: 110,
+      render: (enabled: boolean, record: Workflow) => (
+        <Switch
+          checked={enabled}
+          checkedChildren="开启"
+          unCheckedChildren="关闭"
+          onChange={(checked) => updateWorkflowMutation.mutate({
+            id: record.id,
+            data: { auto_failure_analysis_enabled: checked },
+          })}
+        />
       ),
     },
     {
@@ -889,11 +915,29 @@ function CIBoardConfig() {
             <Input placeholder="留空=不过滤" />
           </Form.Item>
 
+          <Form.Item
+            name="auto_failure_analysis_enabled"
+            label="自动失败分析"
+            initialValue={true}
+            valuePropName="checked"
+            tooltip="仅控制此 Workflow 的失败 Job 是否由同步任务自动排队分析；不影响 CI 同步、失败追踪和手动分析。"
+          >
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+          </Form.Item>
+
+          <Form.Item
+            name="materialize_name_regex"
+            label="采集名称正则表达式"
+            tooltip="CI 同步入库前，匹配 GitHub 返回的实际 Workflow 名称；留空则不按名称过滤。页面仍只展示逻辑名称。"
+          >
+            <Input allowClear placeholder="例如：^Nightly-A3\s+\(scheduled\)$，留空=不过滤" />
+          </Form.Item>
+
           <Form.Item name="description" label="描述">
             <TextArea rows={3} placeholder="Workflow 描述信息" />
           </Form.Item>
 
-          <Form.Item label="统计时间窗口">
+          <Form.Item label="统计 / 物化时间窗口">
             <Space>
               <Form.Item
                 name="stats_start_hour"
@@ -922,7 +966,7 @@ function CIBoardConfig() {
               </Form.Item>
             </Space>
             <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-              仅统计此时间段内启动的流水线，留空则统计全部
+              统计及每日失败追踪物化仅纳入此时间段内启动的流水线；任一端留空则不按时段过滤
             </div>
           </Form.Item>
 

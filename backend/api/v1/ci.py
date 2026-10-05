@@ -683,8 +683,6 @@ async def trigger_sync(
     force_full_refresh: bool = Query(default=False),
 ):
     """Enqueue a durable CI sync task for a Collector worker."""
-    from uuid import uuid4
-
     from infrastructure.db.base import SessionLocal
     from infrastructure.tasks.task_manager import TaskManager
 
@@ -697,7 +695,7 @@ async def trigger_sync(
                 "max_runs": max_runs_per_workflow,
                 "force_full_refresh": force_full_refresh,
             },
-            f"ci_sync:manual:{uuid4()}",
+            "ci_sync:active",
             required_capability="python",
             priority=10,
         )
@@ -2203,11 +2201,11 @@ async def analyze_batch(
     from failure_analysis.failure_analysis import FailureAnalysisService
     service = FailureAnalysisService()
     try:
-        results = await service.analyze_batch(days_back=days_back, db=db)
+        queued_job_ids = await service.analyze_batch(days_back=days_back, db=db)
         return {
             "success": True,
-            "message": f"分析完成，共处理 {len(results)} 个失败Job",
-            "count": len(results),
+            "message": f"已排队 {len(queued_job_ids)} 个失败 Job，后台最多同时分析 3 个",
+            "count": len(queued_job_ids),
         }
     except Exception as e:
         logger.error(f"Failed to analyze batch: {e}")

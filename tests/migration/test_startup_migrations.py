@@ -18,12 +18,15 @@ def test_explicit_migration_contains_all_compatibility_columns():
         "user_login_logs",
         "job_failure_analysis",
         "ci_jobs",
+        "workflow_configs",
         "pull_requests",
         "test_cases",
         "daily_failure_records",
     }
     assert "lifetime_runs" in TABLE_COLUMN_MIGRATIONS["test_cases"]
     assert "author_avatar_base64" in TABLE_COLUMN_MIGRATIONS["pull_requests"]
+    assert "materialize_name_regex" in TABLE_COLUMN_MIGRATIONS["workflow_configs"]
+    assert "auto_failure_analysis_enabled" in TABLE_COLUMN_MIGRATIONS["workflow_configs"]
     # daily_failure_records: source_branch 缺失会导致 _populate_daily_failure_records
     # 写入报 1054 被静默吞掉，失败跟踪数据停滞。
     assert "source_branch" in TABLE_COLUMN_MIGRATIONS["daily_failure_records"]

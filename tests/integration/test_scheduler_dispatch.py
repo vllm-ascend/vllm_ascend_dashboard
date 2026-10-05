@@ -52,13 +52,23 @@ async def test_ci_schedule_enqueues_a_collector_task() -> None:
     scheduler = DataSyncScheduler()
     try:
         await scheduler._sync_ci_data_job()
+        await scheduler._sync_ci_data_job()
         async with SessionLocal() as db:
+            active_count = (
+                await db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM collection_tasks "
+                        "WHERE dedupe_key = 'ci_sync:active' "
+                        "AND status IN ('pending', 'running')"
+                    )
+                )
+            ).scalar_one()
             row = (
                 await db.execute(
                     text(
                         "SELECT task_type, task_params, status, required_capability "
                         "FROM collection_tasks "
-                        "WHERE dedupe_key LIKE 'ci_sync:scheduled:%' "
+                        "WHERE dedupe_key = 'ci_sync:active' "
                         "ORDER BY id DESC LIMIT 1"
                     )
                 )
@@ -66,6 +76,7 @@ async def test_ci_schedule_enqueues_a_collector_task() -> None:
 
         assert row.task_type == "ci_sync"
         assert row.status == "pending"
+        assert active_count == 1
         assert row.required_capability == "python"
         assert "days_back" in row.task_params
         assert "max_runs" in row.task_params

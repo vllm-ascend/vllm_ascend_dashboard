@@ -18,7 +18,7 @@ def _zip_payload() -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_failed_run_artifacts_are_run_scoped_and_incremental(tmp_path) -> None:
+async def test_on_demand_artifacts_are_run_scoped_and_incremental(tmp_path) -> None:
     payload = _zip_payload()
     digest = "sha256:" + hashlib.sha256(payload).hexdigest()
 
@@ -38,9 +38,8 @@ async def test_failed_run_artifacts_are_run_scoped_and_incremental(tmp_path) -> 
     settings.DATA_DIR = str(tmp_path)
     try:
         collector = CICollector(GitHub(), SimpleNamespace())
-        jobs = [{"status": "completed", "conclusion": "failure"}]
-        await collector._materialize_failure_run_artifacts(42, jobs)
-        await collector._materialize_failure_run_artifacts(42, jobs)
+        await collector.materialize_run_artifacts(42)
+        await collector.materialize_run_artifacts(42)
     finally:
         settings.DATA_DIR = old_data_dir
 

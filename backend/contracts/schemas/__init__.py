@@ -626,8 +626,13 @@ class WorkflowConfigBase(BaseModel):
     description: str | None = None
     enabled: bool = True
     display_order: int = 0
-    stats_start_hour: int | None = Field(None, description="统计时间窗口起始小时（0-23），None=不过滤")
-    stats_end_hour: int | None = Field(None, description="统计时间窗口结束小时（0-23），None=不过滤")
+    stats_start_hour: int | None = Field(None, description="统计和失败物化时间窗口起始小时（0-23），None=不过滤")
+    stats_end_hour: int | None = Field(None, description="统计和失败物化时间窗口结束小时（0-23），None=不过滤")
+    materialize_name_regex: str | None = Field(
+        None,
+        description="CI 采集时匹配 GitHub 原始 Workflow 名称的正则；仅决定是否入库，不用于页面展示",
+    )
+    auto_failure_analysis_enabled: bool = Field(True, description="是否自动分析该 Workflow 的失败 Job；不影响手动分析")
     last_sync_at: datetime | None = Field(None, description="上次同步时间")
 
 
@@ -648,6 +653,8 @@ class WorkflowConfigUpdate(BaseModel):
     display_order: int | None = None
     stats_start_hour: int | None = None
     stats_end_hour: int | None = None
+    materialize_name_regex: str | None = None
+    auto_failure_analysis_enabled: bool | None = None
 
 
 class WorkflowConfigResponse(WorkflowConfigBase):

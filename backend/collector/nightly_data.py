@@ -161,9 +161,10 @@ class NightlyDataCollector:
 
         # A Nightly workflow is one reporting batch.  Prefer its final
         # workflow timestamp so every job in a run crossing midnight lands
-        # on the same reporting day.  The job timestamp remains a fallback
-        # for partially collected workflow data.
+        # on the same reporting day. Only jobs belonging to a persisted
+        # Workflow run can enter the daily failure tracker.
         workflow_completed_at: dict[int, datetime | None] = {}
+        workflow_names: dict[int, str] = {}
         workflow_attempt: dict[int, int | None] = {}
         workflow_branch: dict[int, str | None] = {}
         workflow_event: dict[int, str | None] = {}
@@ -172,17 +173,24 @@ class NightlyDataCollector:
             workflow_result = await self.db.execute(
                 select(
                     CIResult.run_id,
+                    CIResult.workflow_name,
                     CIResult.completed_at,
                     CIResult.branch,
                     CIResult.data,
                     CIResult.event,
                 ).where(CIResult.run_id.in_(run_ids))
             )
-            for run_id, completed_at, branch, run_data, event in workflow_result.all():
+            for run_id, workflow_name, completed_at, branch, run_data, event in workflow_result.all():
+                workflow_names[run_id] = workflow_name
                 workflow_completed_at[run_id] = completed_at
                 workflow_branch[run_id] = branch
                 workflow_attempt[run_id] = extract_run_attempt(run_data)
                 workflow_event[run_id] = event
+
+        tracked_jobs = [
+            job for job in tracked_jobs
+            if workflow_names.get(job.run_id) == job.workflow_name
+        ]
 
         # A GitHub re-run keeps the same workflow run ID but creates a new set
         # of jobs. Only jobs from the final attempt are valid for the daily

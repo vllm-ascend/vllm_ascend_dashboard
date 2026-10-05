@@ -1155,6 +1155,9 @@ class FailureAnalysisService:
         )
 
     async def analyze_batch(self, days_back: int, db: AsyncSession):
+        """Queue eligible jobs instead of running analyses inside the API request."""
+        from infrastructure.tasks.task_manager import TaskManager
+
         cutoff = datetime.now(UTC) - timedelta(days=days_back)
         stmt = select(CIJob).where(
             and_(
@@ -1171,16 +1174,25 @@ class FailureAnalysisService:
         analysed_result = await db.execute(analysed_stmt)
         analysed_ids = set(analysed_result.scalars().all())
 
-        results = []
+        queued_job_ids = []
         for job in jobs:
             if job.job_id in analysed_ids:
                 continue
             try:
-                analysis = await self.analyze_failed_job(job.job_id, db)
-                results.append(analysis)
+                task_id = await TaskManager.create_task(
+                    db,
+                    "failure_analysis",
+                    {"job_id": job.job_id, "triggered_by": "manual"},
+                    f"failure_analysis:{job.job_id}",
+                    required_capability="python",
+                    priority=20,
+                )
+                if task_id is not None:
+                    queued_job_ids.append(job.job_id)
             except Exception as e:
-                logger.error(f"Batch analysis failed for job {job.job_id}: {e}")
-        return results
+                logger.error(f"Batch analysis queueing failed for job {job.job_id}: {e}")
+        await db.commit()
+        return queued_job_ids
 
     async def _build_job_context(
         self,
@@ -1229,7 +1241,14 @@ class FailureAnalysisService:
 
         # 预先下载日志并抽取真正被测源码 ref。对矩阵 job，workflow 可能来自 main，
         # 但容器里 checkout 的 vllm-ascend 可能是 releases/vX.Y.Z。
-        logs = await self._download_all_logs(job)
+        # Artifact archives are intentionally materialized here instead of in
+        # the CI collector. A slow or large GitHub artifact can therefore delay
+        # only this bounded analysis worker, never workflow/job synchronization.
+        logs = await self._download_all_logs(
+            job,
+            db,
+            materialize_artifacts=True,
+        )
         # Put the primary failure evidence before historical comparisons and
         # commit diffs. Those sections can be large enough to push a log placed
         # at the end of the prompt outside the model's effective context.
@@ -2678,11 +2697,11 @@ class FailureAnalysisService:
     ) -> dict[str, str | None]:
         """Download run-scoped evidence and return local paths.
 
-        Failed-run artifacts are normally cached during CI sync.  The selected
-        last-good run is different: its artifacts are downloaded here on
-        demand, after it has passed the strict same-test/branch match.  This
-        avoids downloading every successful Nightly while guaranteeing that a
-        comparison never has only the failing side's artifacts.
+        Artifacts are cached on demand when an analysis actually needs them.
+        The current failed run is materialized while its context is built; the
+        selected last-good run is materialized only after the strict
+        same-test/branch match. This keeps CI synchronization fast and avoids
+        downloading artifacts for runs that will never be analyzed.
         """
 
         import aiohttp
@@ -2796,7 +2815,10 @@ class FailureAnalysisService:
                     owner=settings.GITHUB_OWNER,
                     repo=settings.GITHUB_REPO,
                 )
-                await CICollector(evidence_client, db).materialize_run_artifacts(job.run_id)
+                try:
+                    await CICollector(evidence_client, db).materialize_run_artifacts(job.run_id)
+                finally:
+                    await evidence_client.close()
             except Exception as exc:
                 # Logs can still establish a useful comparison if GitHub has
                 # expired an artifact.  Preserve the reason in the evidence

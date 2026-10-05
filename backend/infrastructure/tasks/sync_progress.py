@@ -40,7 +40,8 @@ class SyncProgress:
         self,
         workflow_name: str,
         collected: int,
-        status: str = "completed"
+        status: str = "completed",
+        error: str | None = None,
     ):
         """
         更新单个 workflow 的进度
@@ -56,6 +57,8 @@ class SyncProgress:
             "status": status,
             "updated_at": datetime.now(UTC).isoformat(),
         }
+        if error:
+            self.workflow_details[workflow_name]["error"] = error
         if status == "completed":
             self.completed_workflows += 1
         logger.info(f"Workflow {workflow_name}: {collected} runs collected, status: {status}")

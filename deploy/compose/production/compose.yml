@@ -20,14 +20,21 @@ services:
     environment:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
       - STORE_MODEL_IN_DB=false
+      # Keep the mutable, DB-rendered router configuration in a shared named
+      # volume.  A file bind mount cannot be atomically replaced from inside
+      # a container because its parent directory belongs to the image.
+      - LITELLM_CONFIG_PATH=/app/runtime/litellm_config.yaml
+      - LITELLM_CONFIG_SEED_PATH=/app/litellm_seed.yaml
     entrypoint: []
     # The entrypoint watches the external runtime configuration.  It restarts
     # only LiteLLM when an administrator changes the active provider; backend,
     # scheduler and collector keep running.
     command: ["/bin/sh", "/app/litellm-entrypoint.sh"]
     volumes:
-      # Backend writes the same runtime file after provider changes.
-      - ${DASHBOARD_LITELLM_CONFIG_FILE:-../../config-templates/litellm_config.yaml}:/app/litellm_config.yaml
+      # Immutable external seed plus a writable runtime file shared with the
+      # backend.  The latter is derived from provider rows in MySQL.
+      - ${DASHBOARD_LITELLM_CONFIG_FILE:?set DASHBOARD_LITELLM_CONFIG_FILE to the external seed file}:/app/litellm_seed.yaml:ro
+      - litellm_runtime_config:/app/runtime
       - ./litellm-entrypoint.sh:/app/litellm-entrypoint.sh:ro
     expose:
       - "4000"
@@ -65,6 +72,7 @@ services:
       # LiteLLM gateway
       - LITELLM_PROXY_URL=http://litellm:4000
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-master-key-change-me}
+      - LITELLM_CONFIG_FILE=/app/runtime/litellm_config.yaml
       # Agent must only use the container-network LiteLLM gateway.
       - AGENT_SERVICE_ENABLED=false
       - AGENT_PROXY_ONLY=true
@@ -78,8 +86,8 @@ services:
       # Persistent data directory - survives container restarts
       # This includes /app/data/repos for git cache
       - backend_data:/app/data
-      # LiteLLM runtime config shared with the gateway container
-      - ${DASHBOARD_LITELLM_CONFIG_FILE:-../../config-templates/litellm_config.yaml}:/app/litellm_config.yaml
+      # Writable, shared runtime configuration rendered from the DB.
+      - litellm_runtime_config:/app/runtime
       # Log files
       - backend_logs:/app/logs
     # Do NOT expose backend port to public - only accessible via nginx proxy

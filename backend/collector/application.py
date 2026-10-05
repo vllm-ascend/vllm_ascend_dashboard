@@ -37,9 +37,10 @@ async def main():
         node_id=node_id,
         capabilities=capabilities,
         db_session_factory=SessionLocal,
-        # Keep two slots available for the durable failure-analysis queue.
-        # Sync tasks have higher priority and are never blocked by a long LLM run.
-        max_concurrent=2,
+        # Three analysis leases may run at once; keep a fourth worker slot for
+        # higher-priority synchronization tasks. The database claim enforces
+        # the analysis limit across all Collector processes.
+        max_concurrent=4,
     )
     runner = CollectorRunner(worker)
     await runner.run()

@@ -141,6 +141,30 @@ def test_report_date_treats_naive_database_timestamps_as_utc():
     assert NightlyDataCollector._report_date_for_job(job) == "2026-08-18"
 
 
+def test_materialization_excludes_job_without_matching_persisted_workflow():
+    now = datetime.now(UTC).replace(microsecond=0)
+    job = SimpleNamespace(
+        job_id=123,
+        run_id=456,
+        workflow_name="Nightly-A3",
+        job_name="single-node (main, model.yaml) / model",
+        conclusion="failure",
+        started_at=now,
+        completed_at=now,
+        duration_seconds=60,
+        hardware="A3",
+        data={"run_attempt": 1, "head_branch": "main"},
+    )
+    for workflow_rows in (
+        [],
+        [(456, "Nightly-A2", now, "main", {"run_attempt": 1}, "schedule")],
+    ):
+        db = _FakeSession([[job], workflow_rows, [], []])
+        count = asyncio.run(NightlyDataCollector(db).populate_daily_failure_records())
+        assert count == 0
+        assert db.added == []
+
+
 def test_source_branch_prefers_workflow_branch_over_display_name():
     job = SimpleNamespace(
         job_name="single-node (releases-v0.26.0rc, glm-4.7-w8a8) / glm-4.7-w8a8",
@@ -192,7 +216,7 @@ def test_source_branch_parses_display_name_only_for_legacy_data():
     assert NightlyDataCollector._source_branch_for_job(job) == "main"
 
 
-def test_populate_daily_failure_records_adds_new_records_to_session():
+def test_populate_daily_failure_records_uses_persisted_workflow_not_job_raw_name():
     now = datetime.now(UTC).replace(microsecond=0)
     report_date = (now.astimezone(timezone(timedelta(hours=8)))).date().isoformat()
     job_name = "single-node (main, MiniMax-M3-W8A8-A3.yaml) / MiniMax-M3-W8A8-A3"
@@ -206,7 +230,11 @@ def test_populate_daily_failure_records_adds_new_records_to_session():
         completed_at=now,
         duration_seconds=60,
         hardware="A3",
-        data={"run_attempt": 1, "head_branch": "main"},
+        data={
+            "run_attempt": 1,
+            "head_branch": "main",
+            "workflow_name": "Nightly-A3 (manual)",
+        },
     )
     snapshot = SimpleNamespace(
         report_date=report_date,
@@ -222,7 +250,7 @@ def test_populate_daily_failure_records_adds_new_records_to_session():
     db = _FakeSession(
         [
             [job],
-            [(456, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
+            [(456, "Nightly-A3", now, "main", {"run_attempt": 1}, "workflow_dispatch")],
             [snapshot],
             [],
             [],
@@ -277,7 +305,7 @@ def test_populate_daily_failure_records_marks_existing_jobs_for_auto_analysis():
     )
     db = _FakeSession([
         [job],
-        [(456, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
+        [(456, "Nightly-A3", now, "main", {"run_attempt": 1}, "workflow_dispatch")],
         [snapshot],
         [existing],
         [],
@@ -334,7 +362,7 @@ def test_populate_daily_failure_records_replaces_cancelled_with_failure():
     )
     db = _FakeSession([
         [job],
-        [(457, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
+        [(457, "Nightly-A3", now, "main", {"run_attempt": 1}, "workflow_dispatch")],
         [snapshot],
         [existing],
         [],
@@ -381,7 +409,7 @@ def test_populate_daily_failure_records_deduplicates_pending_records_by_key():
     db = _FakeSession(
         [
             [job, duplicate_job],
-            [(456, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
+            [(456, "Nightly-A3", now, "main", {"run_attempt": 1}, "workflow_dispatch")],
             [snapshot],
             [],
             [],
@@ -419,8 +447,10 @@ def test_populate_daily_failure_records_purges_legacy_pr_nightly_rows():
     db = _FakeSession(
         [
             [job],
-            [(31858609426, now, "main", {"run_attempt": 1}, "workflow_dispatch")],
+            [(31858609426, "Nightly-A3", now, "main", {"run_attempt": 1}, "workflow_dispatch")],
             ("rowcount", 7),
+            [],
+            [],
             [],
             [],
         ]

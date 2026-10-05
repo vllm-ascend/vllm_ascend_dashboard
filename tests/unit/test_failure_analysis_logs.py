@@ -183,6 +183,8 @@ async def test_claude_cli_context_prepares_last_good_evidence(monkeypatch):
 
     assert "Last-good 对比证据" in context
     assert "先读取本地索引中的最小必要证据" in context
+    assert service._download_all_logs.await_args.args[1] is not None
+    assert service._download_all_logs.await_args.kwargs["materialize_artifacts"] is True
     service._prepare_last_good_evidence.assert_awaited_once()
     service._fetch_job_annotations.assert_not_awaited()
     service._fetch_historical_run_comparison.assert_not_awaited()

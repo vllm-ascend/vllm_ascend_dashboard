@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from collector.ci import CICollector
@@ -17,7 +17,14 @@ from collector.pr_pipeline import PRPipelineCollector
 from infrastructure.clients.github_client import GitHubClient
 from infrastructure.core.config import settings
 from infrastructure.db.base import SessionLocal
-from infrastructure.persistence.models import CIJob, DailyFailureRecord, JobFailureAnalysis
+from infrastructure.persistence.models import (
+    CIJob,
+    CIResult,
+    DailyFailureRecord,
+    JobFailureAnalysis,
+    WorkflowConfig,
+)
+from infrastructure.tasks.sync_progress import SyncProgress
 
 from .worker import CollectorWorker, TaskContext
 
@@ -105,7 +112,10 @@ class CollectorRunner:
         logger.info("Executing task %d type=%s generation=%d", ctx.task_id, task_type, ctx.lease_generation)
 
         # 后台续约
-        renew_task = asyncio.create_task(self._renew_loop(ctx.task_id, ctx.lease_token, renew_fn))
+        executing_task = asyncio.current_task()
+        renew_task = asyncio.create_task(
+            self._renew_loop(ctx.task_id, ctx.lease_token, renew_fn, executing_task)
+        )
 
         try:
             if task_type == "ci_sync":
@@ -147,13 +157,19 @@ class CollectorRunner:
             except asyncio.CancelledError:
                 pass
 
-    async def _renew_loop(self, task_id: int, token: str, renew_fn):
+    async def _renew_loop(self, task_id: int, token: str, renew_fn, executing_task):
         """后台续约协程。"""
         while True:
             await asyncio.sleep(self.worker._renew_interval)
-            ok = await renew_fn(task_id, token)
+            try:
+                ok = await renew_fn(task_id, token)
+            except Exception:
+                logger.exception("Task %d lease renewal raised an error", task_id)
+                ok = False
             if not ok:
                 logger.warning("Task %d lease renewal failed", task_id)
+                if executing_task is not None and not executing_task.done():
+                    executing_task.cancel()
                 return
 
     async def _run_ci_sync(self, ctx: TaskContext, task_params: dict):
@@ -172,6 +188,7 @@ class CollectorRunner:
                     github,
                     db,
                     progress_callback=persist_progress,
+                    sync_progress=SyncProgress(),
                 )
                 collected = await collector.collect_workflow_runs(
                     days_back=int(task_params.get("days_back", settings.CI_SYNC_DAYS_BACK)),
@@ -275,6 +292,22 @@ class CollectorRunner:
         candidate_query = (
             select(DailyFailureRecord.job_id)
             .join(CIJob, CIJob.job_id == DailyFailureRecord.job_id)
+            .join(
+                CIResult,
+                and_(
+                    CIResult.run_id == CIJob.run_id,
+                    CIResult.run_id == DailyFailureRecord.run_id,
+                    CIResult.workflow_name == CIJob.workflow_name,
+                    CIResult.workflow_name == DailyFailureRecord.workflow_name,
+                ),
+            )
+            .join(
+                WorkflowConfig,
+                and_(
+                    WorkflowConfig.workflow_name == CIResult.workflow_name,
+                    WorkflowConfig.auto_failure_analysis_enabled.is_(True),
+                ),
+            )
             .outerjoin(JobFailureAnalysis, JobFailureAnalysis.job_id == DailyFailureRecord.job_id)
             .where(
                 CIJob.conclusion.in_(failure_conclusions),
@@ -368,6 +401,43 @@ class CollectorRunner:
         # their explicit force option for deliberate reruns.
         force = triggered_by == "scheduler" or bool(task_params.get("force", False))
         async with SessionLocal() as db:
+            if triggered_by == "scheduler":
+                if not settings.CI_AUTO_FAILURE_ANALYSIS_ENABLED:
+                    logger.info("Skipping automatic failure analysis for job %d while globally disabled", job_id)
+                    return
+                eligible = await db.scalar(
+                    select(CIJob.job_id)
+                    .join(
+                        CIResult,
+                        and_(
+                            CIResult.run_id == CIJob.run_id,
+                            CIResult.workflow_name == CIJob.workflow_name,
+                        ),
+                    )
+                    .join(
+                        DailyFailureRecord,
+                        and_(
+                            DailyFailureRecord.job_id == CIJob.job_id,
+                            DailyFailureRecord.run_id == CIResult.run_id,
+                            DailyFailureRecord.workflow_name == CIResult.workflow_name,
+                        ),
+                    )
+                    .join(
+                        WorkflowConfig,
+                        and_(
+                            WorkflowConfig.workflow_name == CIResult.workflow_name,
+                            WorkflowConfig.auto_failure_analysis_enabled.is_(True),
+                        ),
+                    )
+                    .where(
+                        CIJob.job_id == job_id,
+                        CIJob.conclusion.in_(("failure", "timed_out", "startup_failure", "cancelled")),
+                    )
+                    .limit(1)
+                )
+                if eligible is None:
+                    logger.info("Skipping automatic failure analysis for job %d without a linked persisted workflow", job_id)
+                    return
             await FailureAnalysisService().analyze_failed_job(
                 job_id=job_id,
                 db=db,

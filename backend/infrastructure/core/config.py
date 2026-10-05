@@ -78,10 +78,10 @@ class Settings(BaseSettings):
     CI_SYNC_MAX_RUNS_PER_WORKFLOW: int = 100  # 每个 workflow 最多采集多少条记录
     CI_SYNC_FORCE_FULL_REFRESH: bool = False  # 是否强制全量覆盖刷新
     # Failure analysis invokes log retrieval and an LLM. Keep automatic
-    # fan-out deliberately small on the production collector; deferred
-    # records remain queryable and are picked up by a later sync.
+    # Queueing is unbounded; this caps concurrently leased analysis tasks
+    # across all Collector processes.
     CI_AUTO_FAILURE_ANALYSIS_ENABLED: bool = True
-    CI_AUTO_FAILURE_ANALYSIS_MAX_PER_SYNC: int = 2
+    CI_AUTO_FAILURE_ANALYSIS_MAX_CONCURRENT: int = 3
     NIGHTLY_DATA_SYNC_INTERVAL_MINUTES: int = 120
     DATA_RETENTION_DAYS: int = 365
 

@@ -39,12 +39,21 @@
   "Qwen3.5-27B-w8a8-A3.yaml": "王瑞庆",
   "Qwen3.5-397B-A17B-W8A8-mtp-A3.yaml": "王蓓",
   "Qwen3.5-397B-A17B-w4a8-mtp-A2.yaml": "王蓓",
+  "Qwen3.6-27B-W8A8-310P-300I-DUO.yaml": "杨帅",
+  "Qwen3.6-35B-W8A8-310P-300I-DUO.yaml": "杨帅",
+  "Qwen3.6-35B-A3B-w8a8-310p-MTP.yaml": "杨帅",
   "Prefix-Cache-Qwen3-32B-Int8.yaml": "胡聪",
 
   "MiniMax-M2.5-w8a8-QuaRot-A2.yaml": "蔡庆木",
   "MiniMax-M2.5-w8a8-QuaRot-A3.yaml": "未知（陈家伟）",
   "MiniMax-M3-BF16-A3.yaml": "未知（陈家伟）",
   "MiniMax-M3-W8A8-A3.yaml": "未知（陈家伟）",
+
+  "Qwen3_6_27b_A5.yaml": "王蓓",
+  "DeepSeek_V31_Terminus_w4a8_w8a8_A5.yaml": "李镕凡",
+  "Qwen3_32b_w8a8_A5.yaml": "董钰彬",
+  "DeepSeek_V4_Flash_A5.yaml": "陈梦龙",
+  "Qwen3_235b_w8a8_A5.yaml": "董钰彬",
 
   "Hy3-preview.yaml": "未知（陈家伟）",
   "Kimi-K2-Thinking.yaml": "张甲康",

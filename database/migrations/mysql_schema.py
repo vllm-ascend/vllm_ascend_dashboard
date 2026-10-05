@@ -22,7 +22,7 @@ from infrastructure.db.base import SessionLocal, engine
 logger = logging.getLogger("mysql_schema_migration")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-MIGRATION_VERSION = "20260817_02_model_fo_mappings"
+MIGRATION_VERSION = "20260929_02_workflow_auto_failure_analysis"
 TABLE_COLUMN_MIGRATIONS = {
     "user_login_logs": {
         "ip_address_hashed": "VARCHAR(64) NULL",
@@ -42,6 +42,10 @@ TABLE_COLUMN_MIGRATIONS = {
         "notes": "TEXT NULL",
         "updated_by": "VARCHAR(50) NULL",
         "status_updated_at": "TIMESTAMP NULL",
+    },
+    "workflow_configs": {
+        "materialize_name_regex": "VARCHAR(500) NULL",
+        "auto_failure_analysis_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
     },
     "pull_requests": {
         "author_email": "VARCHAR(200) NULL",
@@ -220,7 +224,7 @@ async def migrate() -> None:
                 ON DUPLICATE KEY UPDATE description = VALUES(description)
             """), {
                 "version": MIGRATION_VERSION,
-                "description": "Move compatibility schema changes into an explicit MySQL migration",
+                "description": "Add workflow name matching and automatic failure analysis control",
             })
             await db.commit()
 

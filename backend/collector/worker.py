@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 from sqlalchemy import bindparam, text
 
+from infrastructure.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -204,12 +206,33 @@ class CollectorWorker:
     # ── 租约领取 ──
 
     async def _claim_task(self) -> TaskContext | None:
-        """使用 FOR UPDATE SKIP LOCKED 领取一个 pending 或 expired 任务。"""
+        """Claim a task, enforcing the global failure-analysis execution limit."""
         lease_token = str(uuid.uuid4())
-        async with self._session_factory() as db:
-            async with db.begin():
+        # MySQL advisory locks are connection-scoped, not transaction-scoped.
+        # Hold the same connection until the claim transaction has committed,
+        # otherwise two Collector processes could both observe a free slot.
+        engine = self._session_factory.kw["bind"]
+        lock_name = "vllm_dashboard:failure_analysis_claim"
+        async with engine.connect() as conn:
+            acquired = (await conn.execute(
+                text("SELECT GET_LOCK(:lock_name, 5)"), {"lock_name": lock_name}
+            )).scalar_one()
+            await conn.commit()
+            if acquired != 1:
+                logger.warning("Unable to acquire failure-analysis claim lock")
+                return None
+            try:
+                return await self._claim_task_under_lock(conn, lease_token)
+            finally:
+                await conn.execute(
+                    text("SELECT RELEASE_LOCK(:lock_name)"), {"lock_name": lock_name}
+                )
+                await conn.commit()
+
+    async def _claim_task_under_lock(self, conn, lease_token: str) -> TaskContext | None:
+        async with conn.begin():
                 # 清理超限过期任务（防永久卡在 running）
-                await db.execute(text("""
+                await conn.execute(text("""
                     UPDATE collection_tasks
                     SET status = 'dead', lease_owner = NULL, lease_token = NULL,
                         lease_expiry = NULL, last_error = 'lease expired after max failures'
@@ -221,7 +244,7 @@ class CollectorWorker:
                 # They are intentionally excluded by the claim predicate, so
                 # normalize them here instead of allowing an invisible queue
                 # of permanently stuck tasks to accumulate.
-                await db.execute(text("""
+                await conn.execute(text("""
                     UPDATE collection_tasks
                     SET status = 'dead', lease_owner = NULL, lease_token = NULL,
                         lease_expiry = NULL, next_retry_at = NULL,
@@ -230,7 +253,23 @@ class CollectorWorker:
                 """))
 
                 # 领取任务
-                result = await db.execute(
+                max_analyses = max(1, int(settings.CI_AUTO_FAILURE_ANALYSIS_MAX_CONCURRENT))
+                running = (await conn.execute(text("""
+                    SELECT COUNT(*) FROM collection_tasks
+                    WHERE task_type = 'failure_analysis'
+                      AND status = 'running'
+                      AND lease_expiry > NOW()
+                """))).scalar_one()
+                analysis_slot_available = running < max_analyses
+                running_ci_syncs = (await conn.execute(text("""
+                    SELECT COUNT(*) FROM collection_tasks
+                    WHERE task_type = 'ci_sync'
+                      AND status = 'running'
+                      AND lease_expiry > NOW()
+                """))).scalar_one()
+                ci_sync_slot_available = running_ci_syncs == 0
+
+                result = await conn.execute(
                     text("""
                         SELECT id FROM collection_tasks
                         WHERE (
@@ -241,18 +280,24 @@ class CollectorWorker:
                         AND (required_capability IS NULL
                              OR required_capability IN :capabilities)
                         AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+                        AND (task_type <> 'failure_analysis' OR :analysis_slot_available = 1)
+                        AND (task_type <> 'ci_sync' OR :ci_sync_slot_available = 1)
                         ORDER BY priority DESC, created_at
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED
                     """).bindparams(bindparam("capabilities", expanding=True)),
-                    {"capabilities": tuple(self.capabilities)},
+                    {
+                        "capabilities": tuple(self.capabilities),
+                        "analysis_slot_available": analysis_slot_available,
+                        "ci_sync_slot_available": ci_sync_slot_available,
+                    },
                 )
                 row = result.fetchone()
                 if not row:
                     return None
 
                 task_id = row[0]
-                await db.execute(
+                await conn.execute(
                     text("""
                         UPDATE collection_tasks
                         SET status = 'running',
@@ -276,7 +321,7 @@ class CollectorWorker:
                     },
                 )
 
-                gen_row = await db.execute(
+                gen_row = await conn.execute(
                     text("SELECT lease_generation FROM collection_tasks WHERE id = :id"),
                     {"id": task_id},
                 )
