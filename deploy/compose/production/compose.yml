@@ -278,6 +278,12 @@ volumes:
     name: ${DASHBOARD_BACKEND_LOG_VOLUME:-vllm_ascend_dashboard_backend_logs}
     external: true
 
+  # Shared writable LiteLLM runtime config rendered from provider rows.
+  # This is intentionally separate from backend_data so gateway restarts do
+  # not depend on a bind-mounted file in the application image.
+  litellm_runtime_config:
+    name: ${DASHBOARD_LITELLM_RUNTIME_VOLUME:-vllm_ascend_dashboard_litellm_runtime_config}
+
   # MySQL database data
   mysql_data:
     name: ${DASHBOARD_MYSQL_VOLUME:-vllm_ascend_dashboard_mysql_data}
