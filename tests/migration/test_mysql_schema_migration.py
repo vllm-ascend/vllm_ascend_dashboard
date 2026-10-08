@@ -1,4 +1,5 @@
 from database.migrations.mysql_schema import (
+    _FORWARDING_VIEW_SOURCE,
     CREATE_TABLE_MIGRATIONS,
     INDEX_MIGRATIONS,
     MIGRATION_VERSION,
