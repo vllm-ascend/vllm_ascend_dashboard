@@ -3,8 +3,7 @@ from database.migrations.mysql_schema import (
     CREATE_TABLE_MIGRATIONS,
     INDEX_MIGRATIONS,
     MIGRATION_VERSION,
-    TABLE_COLUMN_MIGRATIONS,
-    _FORWARDING_VIEW_SOURCE,
+    TABLE_COLUMN_MIGRATIONS
 )
 
 
