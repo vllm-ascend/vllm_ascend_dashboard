@@ -67,6 +67,11 @@ class ResourceDashboardService:
                 timeout=45,
             )
         except Exception as exc:
+            # Some infrastructure exceptions (notably Fernet InvalidToken)
+            # stringify to an empty value.  Keep a non-empty failure marker so
+            # callers never persist a failed collection as a valid zero-card
+            # snapshot.
+            error_message = str(exc) or type(exc).__name__
             summary = ClusterResourceSummary(
                 cluster_id=cluster.id,
                 cluster_name=cluster.name,
@@ -77,7 +82,7 @@ class ResourceDashboardService:
                     "namespaces": namespaces,
                     "label_selector": label_selector or cluster.default_label_selector,
                 },
-                error=str(exc),
+                error=error_message,
             )
             return summary, [], []
 

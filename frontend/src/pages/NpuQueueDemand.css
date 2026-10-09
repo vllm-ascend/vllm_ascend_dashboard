@@ -1,0 +1,135 @@
+.npu-demand-focus-row {
+  padding: 2px 6px 4px;
+}
+
+.npu-demand-pressure,
+.npu-demand-delay {
+  min-height: 184px;
+  padding: 4px 0 12px;
+}
+
+.npu-demand-focus-heading,
+.npu-demand-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.npu-demand-focus-heading {
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.npu-demand-focus-heading h3,
+.npu-demand-section-heading h2,
+.npu-demand-history-chart h3 {
+  margin: 0;
+  color: #1c2738;
+  font-weight: 600;
+}
+
+.npu-demand-focus-heading h3 { font-size: 17px; }
+.npu-demand-section-heading h2 { font-size: 18px; }
+
+.npu-demand-pressure-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.npu-demand-pressure-metrics div { display: grid; gap: 5px; }
+.npu-demand-pressure-metrics span { color: #7a8596; font-size: 13px; }
+.npu-demand-pressure-metrics strong {
+  color: #1d2a3d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -.03em;
+}
+.npu-demand-pressure-metrics em {
+  color: #667085;
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.npu-demand-pressure-metrics div:first-child strong { color: #cf1322; }
+.npu-demand-pressure-note { display: block; margin-top: 15px; color: #8a94a5; font-size: 12px; }
+
+.npu-demand-capacity-bar {
+  height: 14px;
+  overflow: hidden;
+  margin-bottom: 5px;
+  border: 1px solid #546071;
+  background: repeating-linear-gradient(-45deg, #f3f5f8, #f3f5f8 1px, #fff 1px, #fff 3px);
+}
+.npu-demand-capacity-bar span { display: block; height: 100%; background: repeating-linear-gradient(90deg, #171a20, #171a20 11px, #555e6c 11px, #555e6c 12px); }
+.npu-demand-capacity-label { display: flex; justify-content: space-between; color: #707b8d; font-size: 13px; }
+.npu-demand-capacity-label b { color: #1c2738; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.npu-demand-pressure .npu-demand-pressure-metrics { margin-top: 16px; }
+
+.npu-demand-delay-chart { height: 93px; }
+.npu-demand-delay-metrics { display: flex; gap: 22px; color: #667085; font-size: 13px; }
+.npu-demand-delay-metrics b { margin-left: 5px; color: #1d2a3d; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.npu-demand-pool-section,
+.npu-demand-trend-section {
+  border-top: 1px solid #e7ebf0;
+  padding: 23px 6px 4px;
+}
+
+.npu-demand-section-heading { margin-bottom: 18px; }
+.npu-demand-section-heading .ant-typography { font-size: 13px; }
+.npu-demand-pool-table .ant-table { background: transparent; }
+.npu-demand-pool-table .ant-table-thead > tr > th { background: #f7f9fc; color: #697586; font-size: 13px; font-weight: 500; }
+.npu-demand-pool-table .ant-table-tbody > tr > td { background: transparent; }
+.npu-demand-utilization { min-width: 190px; }
+.npu-demand-utilization .ant-progress { display: block; margin-bottom: 4px; }
+.npu-demand-utilization span { color: #667085; font-size: 12px; }
+.npu-demand-waiting-value { color: #cf1322; font-weight: 600; }
+
+.npu-demand-history-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 34px; }
+.npu-demand-history-chart { min-width: 0; padding: 2px 12px 0 0; }
+.npu-demand-history-chart + .npu-demand-history-chart { border-left: 1px solid #edf0f4; padding-left: 34px; padding-right: 0; }
+.npu-demand-history-chart h3 { font-size: 15px; margin-bottom: 2px; }
+
+.npu-demand-trend-section { padding-bottom: 10px; }
+
+.npu-demand-single-history { padding-top: 2px; }
+.npu-demand-single-history h3 { margin: 0 0 2px; color: #1c2738; font-size: 15px; font-weight: 600; }
+
+.npu-demand-task-section { border-top: 1px solid #e7ebf0; padding: 23px 6px 10px; }
+.npu-demand-queue-table .ant-table { background: transparent; }
+.npu-demand-queue-table .ant-table-thead > tr > th { background: #f7f9fc; color: #697586; font-size: 13px; font-weight: 500; }
+.npu-demand-queue-table .ant-table-tbody > tr > td { background: transparent; }
+.npu-demand-queue-filter { display: flex; gap: 10px; margin: -2px 0 14px; }
+.npu-demand-queue-filter .ant-select { width: 180px; }
+.npu-demand-cost-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 8px; }
+.npu-demand-cost-toggle { display: flex; align-items: center; gap: 24px; }
+.npu-demand-cost-toggle button { appearance: none; border: 0; outline: 0; background: transparent; color: #7c8798; cursor: pointer; font: inherit; font-size: 16px; font-weight: 500; line-height: 1.45; padding: 0; }
+.npu-demand-cost-toggle button.is-active { color: #263754; font-weight: 650; }
+.npu-demand-scope-dot { display: inline-block; width: 12px; height: 12px; box-sizing: border-box; margin: 0 8px 1px 0; border: 1.7px solid currentColor; border-radius: 50%; vertical-align: middle; }
+.npu-demand-cost-toggle button.is-active .npu-demand-scope-dot { background: currentColor; }
+.npu-demand-cost-toggle button:focus-visible .npu-demand-scope-dot { outline: 2px solid #b9c8ff; outline-offset: 3px; }
+.npu-demand-detail-grid { display: grid; grid-template-columns: 110px 1fr; gap: 12px 16px; }
+.npu-demand-diagnostics { color: #667085; font-size: 13px; }
+.npu-demand-diagnostics summary { cursor: pointer; }
+.npu-demand-diagnostics > .ant-btn { margin: 8px 0 0 10px; }
+.npu-demand-diagnostics pre { max-height: 360px; overflow: auto; margin: 10px 0 0; padding: 12px; border-radius: 8px; background: #f7f9fc; color: #334155; font-size: 12px; white-space: pre-wrap; }
+
+@media (max-width: 767px) {
+  .npu-demand-focus-row { padding: 0; }
+  .npu-demand-pressure,
+  .npu-demand-delay { min-height: auto; padding-bottom: 20px; }
+  .npu-demand-pressure-metrics { gap: 10px; }
+  .npu-demand-pressure-metrics strong { font-size: 20px; }
+  .npu-demand-delay-metrics { flex-wrap: wrap; gap: 8px 16px; }
+  .npu-demand-section-heading { align-items: flex-start; }
+  .npu-demand-section-heading > div { min-width: 0; }
+  .npu-demand-history-grid { grid-template-columns: 1fr; gap: 24px; }
+  .npu-demand-history-chart + .npu-demand-history-chart { border-left: 0; border-top: 1px solid #edf0f4; padding: 20px 0 0; }
+  .npu-demand-cost-toolbar { align-items: flex-start; flex-direction: column; }
+  .npu-demand-queue-filter { flex-wrap: wrap; }
+  .npu-demand-queue-filter .ant-select { flex: 1 1 160px; }
+}
