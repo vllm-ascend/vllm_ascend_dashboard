@@ -23,6 +23,8 @@ if not application_root.is_dir():
 sys.path.insert(0, str(application_root))
 
 from database.bootstrap import create_tables_with_latest_schema
+from database.migrations.ci_npu_facts import run as migrate_ci_npu_facts
+from database.migrations.model_fo_mapping_seed import run as migrate_model_fo_mapping_seed
 from database.migrations.mysql_schema import migrate as migrate_mysql_schema
 from database.migrations.npu_occupancy import run as migrate_npu_occupancy
 from database.migrations.process_runtime import run as migrate_process_runtime
@@ -47,10 +49,12 @@ async def migrate() -> None:
     await create_tables_with_latest_schema()
     users_before = await _user_count()
     await migrate_mysql_schema()
+    model_fo_result = await migrate_model_fo_mapping_seed()
     permission_result = await migrate_service_permissions()
     await migrate_phase_a()
     await migrate_process_runtime()
     await migrate_npu_occupancy()
+    await migrate_ci_npu_facts()
     test_board_result = await migrate_test_board_data()
     users_after = await _user_count()
     if users_after != users_before:
@@ -58,8 +62,9 @@ async def migrate() -> None:
             f"User count changed during migration: {users_before} -> {users_after}"
         )
     logger.info(
-        "Migration completed; users=%d permissions=%s test_board=%s",
+        "Migration completed; users=%d model_fo=%s permissions=%s test_board=%s",
         users_after,
+        model_fo_result,
         permission_result,
         test_board_result,
     )

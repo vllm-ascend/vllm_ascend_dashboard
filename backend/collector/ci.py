@@ -33,6 +33,7 @@ from infrastructure.persistence.models import (
     NightlyTestCase,
     WorkflowConfig,
 )
+from collector.npu_job_facts import record_sync_success, upsert_npu_job_fact
 from infrastructure.tasks.sync_progress import SyncProgress, get_sync_progress, reset_sync_progress
 from tooling.ci_version_snapshot import (
     PARSER_VERSION,
@@ -919,6 +920,8 @@ class CICollector:
                         new_count += 1
                         saved_count += 1
 
+                await self._sync_npu_job_fact(job, run_data, configured_workflow_name)
+
                 # 如果 job 失败且已完成，自动获取日志（已禁用，直接跳转到 GitHub 查看）
                 # job_conclusion = job.get("conclusion")
                 # job_status = job.get("status")
@@ -946,6 +949,30 @@ class CICollector:
         except Exception as e:
             logger.error(f"Failed to collect jobs for run {run_id}: {e}", exc_info=True)
             raise  # 抛出异常，由外层处理回滚
+
+    async def _sync_npu_job_fact(
+        self,
+        job: dict[str, Any],
+        run_data: dict[str, Any],
+        workflow_name: str,
+    ) -> None:
+        """Persist the analytical fact alongside the existing raw CI job."""
+        owner = str(getattr(self.github, "owner", ""))
+        repo = str(getattr(self.github, "repo", ""))
+        repository = f"{owner}/{repo}".strip("/") or "unknown/unknown"
+        fact = await upsert_npu_job_fact(
+            self.db,
+            job,
+            run_data,
+            repository=repository,
+            workflow_name=workflow_name,
+        )
+        await record_sync_success(
+            self.db,
+            repository=repository,
+            job_id=fact.job_id,
+            watermark=fact.source_updated_at,
+        )
 
     async def _collect_run_version_snapshot(
         self, run_id: int, jobs: list[dict[str, Any]], *, force: bool = False

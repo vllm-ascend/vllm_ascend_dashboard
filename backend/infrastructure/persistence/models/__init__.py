@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -38,6 +39,7 @@ __all__ = [
     "AppLog", "AnalysisMemory", "AnalysisEmbedding",
     "SchedulerHeartbeat",
     "NpuOccupancyRawEnv", "NpuOccupancySyncState",
+    "CINpuJobFact", "CINpuSyncState",
 ]
 
 
@@ -168,6 +170,58 @@ class CIJob(Base):
     status_updated_at = Column(TIMESTAMP)  # 状态最后更新时间
     created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), index=True)
     updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class CINpuJobFact(Base):
+    """Normalized, read-only CI NPU job fact keyed by the GitHub job id."""
+    __tablename__ = "ci_npu_job_facts"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    job_id = Column(BigInteger, nullable=False, unique=True)
+    run_id = Column(BigInteger, nullable=False, index=True)
+    repository = Column(String(255), nullable=False, index=True)
+    workflow_name = Column(String(255), nullable=True)
+    job_name = Column(String(500), nullable=True)
+    pr_number = Column(Integer, nullable=True, index=True)
+    run_url = Column(String(500), nullable=True)
+    job_url = Column(String(500), nullable=True)
+    queued_at = Column(TIMESTAMP, nullable=True, index=True)
+    queued_at_source = Column(String(64), nullable=False, default="missing")
+    started_at = Column(TIMESTAMP, nullable=True, index=True)
+    completed_at = Column(TIMESTAMP, nullable=True, index=True)
+    status = Column(String(32), nullable=True, index=True)
+    conclusion = Column(String(64), nullable=True)
+    runner_labels = Column(JSON, nullable=True)
+    rule_version = Column(String(64), nullable=False)
+    pool = Column(String(128), nullable=True, index=True)
+    accelerator_model = Column(String(64), nullable=True)
+    mapped_cards = Column(Integer, nullable=True)
+    mapping_status = Column(String(32), nullable=False, default="unmatched")
+    data_quality_status = Column(String(64), nullable=False, default="ok")
+    source_updated_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), nullable=False)
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC), nullable=False)
+
+    __table_args__ = (
+        Index("ix_ci_npu_facts_repository_queued", "repository", "queued_at"),
+        Index("ix_ci_npu_facts_pool_status", "pool", "status"),
+    )
+
+
+class CINpuSyncState(Base):
+    """Per-repository durable sync state for CI NPU fact collection."""
+    __tablename__ = "ci_npu_sync_state"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    repository = Column(String(255), nullable=False, unique=True)
+    status = Column(String(32), nullable=False, default="idle")
+    successful_watermark = Column(TIMESTAMP, nullable=True)
+    last_successful_sync = Column(TIMESTAMP, nullable=True)
+    last_job_id = Column(BigInteger, nullable=True)
+    active_task_id = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    rule_version = Column(String(64), nullable=True)
+    updated_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC), nullable=False)
 
 
 class DailyFailureRecord(Base):

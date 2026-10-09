@@ -53,6 +53,7 @@ import type {
   TopPodInfo,
 } from '../services/resourceMetrics'
 import NpuOccupancyTrend from './NpuOccupancyTrend'
+import NpuQueueDemand from './NpuQueueDemand'
 
 const { Title, Text } = Typography
 
@@ -1214,6 +1215,11 @@ function ResourceDashboard() {
             key: 'occupancy',
             label: 'NPU 卡占用趋势',
             children: <NpuOccupancyTrend />,
+          },
+          {
+            key: 'queue-demand',
+            label: 'NPU 排队与需求',
+            children: <NpuQueueDemand />,
           },
         ]}
       />

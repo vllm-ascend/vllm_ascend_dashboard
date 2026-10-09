@@ -64,10 +64,20 @@ class PersistedResourceMetricsService:
         if not clusters:
             return []
         cluster_ids = [cluster.id for cluster in clusters]
-        latest_npu = (
+        # A summary and its node rows must come from the same collection run.
+        # Selecting their latest timestamps independently previously combined a
+        # fresh zero-only summary with an older non-zero node snapshot.
+        latest_snapshot = (
             select(
                 ResourceNpuMetrics.cluster_id,
                 func.max(ResourceNpuMetrics.collected_at).label("collected_at"),
+            )
+            .join(
+                ResourceNodeMetrics,
+                and_(
+                    ResourceNodeMetrics.cluster_id == ResourceNpuMetrics.cluster_id,
+                    ResourceNodeMetrics.collected_at == ResourceNpuMetrics.collected_at,
+                ),
             )
             .where(ResourceNpuMetrics.cluster_id.in_(cluster_ids))
             .group_by(ResourceNpuMetrics.cluster_id)
@@ -76,33 +86,21 @@ class PersistedResourceMetricsService:
         npu_rows = (
             await db.execute(
                 select(ResourceNpuMetrics).join(
-                    latest_npu,
+                    latest_snapshot,
                     and_(
-                        ResourceNpuMetrics.cluster_id == latest_npu.c.cluster_id,
-                        ResourceNpuMetrics.collected_at == latest_npu.c.collected_at,
+                        ResourceNpuMetrics.cluster_id == latest_snapshot.c.cluster_id,
+                        ResourceNpuMetrics.collected_at == latest_snapshot.c.collected_at,
                     ),
                 )
             )
         ).scalars().all()
-
-        latest_nodes = (
-            select(
-                ResourceNodeMetrics.cluster_id,
-                ResourceNodeMetrics.node_name,
-                func.max(ResourceNodeMetrics.collected_at).label("collected_at"),
-            )
-            .where(ResourceNodeMetrics.cluster_id.in_(cluster_ids))
-            .group_by(ResourceNodeMetrics.cluster_id, ResourceNodeMetrics.node_name)
-            .subquery()
-        )
         node_rows = (
             await db.execute(
                 select(ResourceNodeMetrics).join(
-                    latest_nodes,
+                    latest_snapshot,
                     and_(
-                        ResourceNodeMetrics.cluster_id == latest_nodes.c.cluster_id,
-                        ResourceNodeMetrics.node_name == latest_nodes.c.node_name,
-                        ResourceNodeMetrics.collected_at == latest_nodes.c.collected_at,
+                        ResourceNodeMetrics.cluster_id == latest_snapshot.c.cluster_id,
+                        ResourceNodeMetrics.collected_at == latest_snapshot.c.collected_at,
                     ),
                 )
             )
@@ -160,6 +158,12 @@ class PersistedResourceMetricsService:
             node_total_memory = sum(row.memory_bytes_total or 0 for row in nodes)
             node_used_memory = sum(row.memory_bytes_used or 0 for row in nodes)
             node_available_memory = sum(row.memory_bytes_available or 0 for row in nodes)
+            # Node metrics are the physical-resource source of truth.  Using
+            # their sums keeps the cluster aggregate and displayed node rows
+            # on exactly one NPU accounting basis.
+            node_total_npu = sum(row.npu_total or 0 for row in nodes)
+            node_used_npu = sum(row.npu_used or 0 for row in nodes)
+            node_available_npu = sum(row.npu_available or 0 for row in nodes)
             summaries.append(
                 ClusterResourceSummary(
                     cluster_id=cluster.id,
@@ -167,17 +171,17 @@ class PersistedResourceMetricsService:
                     total=ResourceQuantity(
                         cpu_cores=node_total_cpu,
                         memory_bytes=node_total_memory,
-                        npu=npu.npu_total or 0,
+                        npu=node_total_npu,
                     ),
                     used=ResourceQuantity(
                         cpu_cores=node_used_cpu,
                         memory_bytes=node_used_memory,
-                        npu=npu.npu_used or 0,
+                        npu=node_used_npu,
                     ),
                     available=ResourceQuantity(
                         cpu_cores=node_available_cpu,
                         memory_bytes=node_available_memory,
-                        npu=npu.npu_available or 0,
+                        npu=node_available_npu,
                     ),
                     executing_pods_count=npu.executing_pods_count or 0,
                     node_resources=node_resources,

@@ -1,0 +1,21 @@
+{
+  "repository": "vllm-project/vllm-ascend",
+  "rule_version": "npu-ci-rules-v2-config-json",
+  "label_rules": [
+    {"match": "^linux-aarch64-310p-(\\d+)$", "type": "310P", "pool": "310P 池", "cards": "g1"},
+    {"match": "^linux-aarch64-a2b3-v-quarter", "type": "A2", "pool": "A2 vGPU 实验", "cards": 1},
+    {"match": "^linux-aarch64-a2b3-v-half", "type": "A2", "pool": "A2 vGPU 实验", "cards": 1},
+    {"match": "^linux-aarch64-910b-(\\d+)$", "type": "A2", "pool": "A2 Liqo 跨云", "cards": "g1"},
+    {"match": "^linux-aarch64-a2b3-(\\d+)$", "type": "A2", "pool": "A2 池", "cards": "g1"},
+    {"match": "^linux-aarch64-a3-800[it]-(\\d+)-(mind|aiframe|airframe)", "type": "A3", "pool": "A3 实验池", "cards": "g1"},
+    {"match": "^linux-aarch64-a3-800i-(\\d+)", "type": "A3", "pool": "A3 800I/T 共享池", "cards": "g1"},
+    {"match": "^linux-aarch64-a3-800t-(\\d+)", "type": "A3", "pool": "A3 800I/T 共享池", "cards": "g1"},
+    {"match": "^linux-aarch64-a3-(\\d+)-$", "type": "A3", "pool": "A3 新共享池", "cards": "g1"},
+    {"match": "^linux-aarch64-a3-(\\d+)-cn12", "type": "A3", "pool": "A3 实验池", "cards": "g1"},
+    {"match": "^linux-aarch64-a3-(\\d+)$", "type": "A3", "pool": "A3 旧池", "cards": "g1"},
+    {"match": "^linux-aarch64-a3b2-(\\d+)$", "type": "A3", "pool": "A3 实验池", "cards": "g1"},
+    {"match": "^liqo[-_]test", "type": "A3", "pool": "A3 Liqo 跨云", "cards": 4},
+    {"match": "^linux-aarch64-a5-(\\d+)$", "type": "A5", "pool": "A5 池", "cards": "g1"},
+    {"match": "cpu|ubuntu-latest|^self-|^linux-amd64|^linux-aarch64-cpu|^linux-arm64-cpu", "type": "CPU", "pool": "CPU", "cards": 0}
+  ]
+}
