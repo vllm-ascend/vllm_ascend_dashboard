@@ -5,11 +5,22 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from math import ceil
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.persistence.models import CINpuJobFact
+from npu_queue.snapshots import is_running, is_waiting, physical_running_counts, recent_snapshots
+
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _beijing_time(value: datetime) -> datetime:
+    """MySQL returns naive UTC timestamps; display dashboard times in Beijing time."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(BEIJING_TZ)
 
 
 def _minutes(start: datetime | None, end: datetime | None) -> float | None:
@@ -24,14 +35,6 @@ def _percentile(values: list[float], percentile: float) -> float | None:
     ordered = sorted(values)
     index = max(0, ceil(percentile * len(ordered)) - 1)
     return round(ordered[index], 1)
-
-
-def _is_waiting(fact: CINpuJobFact) -> bool:
-    return fact.status == "queued" or (fact.started_at == fact.queued_at and fact.completed_at is None)
-
-
-def _is_running(fact: CINpuJobFact) -> bool:
-    return fact.started_at is not None and fact.completed_at is None and not _is_waiting(fact)
 
 
 def _queue_minutes(fact: CINpuJobFact) -> float | None:
@@ -53,8 +56,8 @@ async def build_dashboard(db: AsyncSession) -> dict[str, Any]:
     all_running: list[CINpuJobFact] = []
     queue_samples: list[float] = []
     for name, rows in pools.items():
-        waiting = [row for row in rows if _is_waiting(row)]
-        running = [row for row in rows if _is_running(row)]
+        waiting = [row for row in rows if is_waiting(row)]
+        running = [row for row in rows if is_running(row)]
         samples = [value for row in rows if (value := _queue_minutes(row)) is not None and value >= 2]
         all_waiting.extend(waiting)
         all_running.extend(running)
@@ -80,17 +83,30 @@ async def build_dashboard(db: AsyncSession) -> dict[str, Any]:
         wait = _minutes(fact.queued_at, now) or 0
         queue_rows.append({
             "key": str(fact.job_id), "waitMinutes": round(wait), "run": f"#{fact.run_id}",
-            "title": fact.job_name or "", "job": fact.job_name or "", "pool": fact.pool or "未映射",
-            "cards": fact.mapped_cards or 0, "createdAt": fact.queued_at.isoformat() if fact.queued_at else "—",
+            "title": fact.job_name or "", "job": fact.job_name or "", "repository": fact.repository,
+            "pool": fact.pool or "未映射", "cards": fact.mapped_cards or 0,
+            "createdAt": _beijing_time(fact.queued_at).isoformat() if fact.queued_at else "—",
             "state": "short" if wait < 2 else "waiting",
         })
 
-    point = {
-        "timestamp": now.strftime("%H:%M"),
+    physical_running = await physical_running_counts(db)
+    current_point = {
+        "timestamp": _beijing_time(now).strftime("%H:%M"),
         "waitingCards": sum(row.mapped_cards or 0 for row in all_waiting),
-        "runningCards": sum(row.mapped_cards or 0 for row in all_running),
-        "waitingJobs": len(all_waiting), "runningJobs": len(all_running),
+        "runningCards": physical_running["runningCards"],
+        "waitingJobs": len(all_waiting), "runningJobs": physical_running["runningJobs"],
     }
+    snapshots = await recent_snapshots(db, now=now)
+    trend = [{
+        "timestamp": _beijing_time(snapshot.captured_at).strftime("%H:%M"),
+        "waitingCards": snapshot.waiting_cards,
+        "runningCards": snapshot.running_cards,
+        "waitingJobs": snapshot.waiting_jobs,
+        "runningJobs": snapshot.running_jobs,
+    } for snapshot in snapshots]
+    # Snapshots provide the 24h history; retain a live point between two runs.
+    if not trend or trend[-1] != current_point:
+        trend.append(current_point)
     daily_queue: dict[str, list[float]] = defaultdict(list)
     daily_usage: dict[str, dict[str, float]] = defaultdict(lambda: {"cardHours": 0, "jobs": 0, "failedCardHours": 0})
     pr_costs: dict[str, dict[str, Any]] = {}
@@ -120,7 +136,7 @@ async def build_dashboard(db: AsyncSession) -> dict[str, Any]:
     pr_cost_rows = [{**cost, "cardHours": round(cost["cardHours"], 2), "allCardHours": round(cost["allCardHours"], 2), "runs": len(cost["runs"]), "successfulRuns": len(cost["successfulRuns"])} for cost in pr_costs.values()]
     return {
         "generatedAt": now.isoformat(), "pools": sorted(pool_rows, key=lambda row: row["name"]),
-        "trend": [point], "dailyQueue": daily_queue_rows, "dailyUsage": daily_usage_rows, "queue": queue_rows,
+        "trend": trend, "dailyQueue": daily_queue_rows, "dailyUsage": daily_usage_rows, "queue": queue_rows,
         "prCosts": sorted(pr_cost_rows, key=lambda row: row["allCardHours"], reverse=True)[:15],
         "dataQuality": {"matched_jobs": len(matched), "unmatched_jobs": len(facts) - len(matched)},
     }

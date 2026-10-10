@@ -87,7 +87,9 @@
 .npu-demand-utilization { min-width: 190px; }
 .npu-demand-utilization .ant-progress { display: block; margin-bottom: 4px; }
 .npu-demand-utilization span { color: #667085; font-size: 12px; }
-.npu-demand-waiting-value { color: #cf1322; font-weight: 600; }
+.npu-demand-waiting-demand { margin-top: 10px; }
+.npu-demand-waiting-demand .ant-progress { margin-bottom: 4px; }
+.npu-demand-waiting-demand span { color: #b54708; }
 
 .npu-demand-history-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 34px; }
 .npu-demand-history-chart { min-width: 0; padding: 2px 12px 0 0; }
@@ -106,12 +108,17 @@
 .npu-demand-queue-filter { display: flex; gap: 10px; margin: -2px 0 14px; }
 .npu-demand-queue-filter .ant-select { width: 180px; }
 .npu-demand-cost-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 8px; }
-.npu-demand-cost-toggle { display: flex; align-items: center; gap: 24px; }
-.npu-demand-cost-toggle button { appearance: none; border: 0; outline: 0; background: transparent; color: #7c8798; cursor: pointer; font: inherit; font-size: 16px; font-weight: 500; line-height: 1.45; padding: 0; }
-.npu-demand-cost-toggle button.is-active { color: #263754; font-weight: 650; }
-.npu-demand-scope-dot { display: inline-block; width: 12px; height: 12px; box-sizing: border-box; margin: 0 8px 1px 0; border: 1.7px solid currentColor; border-radius: 50%; vertical-align: middle; }
+.npu-demand-cost-toggle { display: flex; align-items: center; gap: 20px; }
+.npu-demand-cost-toggle button { appearance: none; border: 0; outline: 0; background: transparent; color: #98a2b3; cursor: pointer; font: inherit; font-size: 14px; font-weight: 400; line-height: 1.45; padding: 0; }
+.npu-demand-cost-toggle button.npu-demand-scope-actual { color: #1677ff; }
+.npu-demand-cost-toggle button.npu-demand-scope-full { color: #722ed1; }
+.npu-demand-cost-toggle button:not(.is-active) { opacity: .48; }
+.npu-demand-cost-toggle button.is-active { font-weight: 500; opacity: 1; }
+.npu-demand-scope-dot { display: inline-block; width: 10px; height: 10px; box-sizing: border-box; margin: 0 6px 1px 0; border: 1.5px solid currentColor; border-radius: 50%; vertical-align: middle; }
 .npu-demand-cost-toggle button.is-active .npu-demand-scope-dot { background: currentColor; }
 .npu-demand-cost-toggle button:focus-visible .npu-demand-scope-dot { outline: 2px solid #b9c8ff; outline-offset: 3px; }
+.npu-demand-cost-view .recharts-label-list { display: none; }
+.npu-demand-cost-view::after { content: '按完整流水线消耗排序展示前 10 条；切换口径时保持同一批流水线，悬停条形查看精确数值。'; display: block; order: 2; margin-top: -4px; color: #98a2b3; font-size: 12px; }
 .npu-demand-detail-grid { display: grid; grid-template-columns: 110px 1fr; gap: 12px 16px; }
 .npu-demand-diagnostics { color: #667085; font-size: 13px; }
 .npu-demand-diagnostics summary { cursor: pointer; }

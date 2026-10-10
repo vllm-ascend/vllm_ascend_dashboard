@@ -17,7 +17,7 @@ export type QueuePool = {
 }
 
 export type QueueTrendPoint = { timestamp: string; waitingCards: number; runningCards: number; waitingJobs: number; runningJobs: number }
-export type QueueItem = { key: string; waitMinutes: number; run: string; title: string; job: string; pool: string; cards: number; createdAt: string; state: 'waiting' | 'short' }
+export type QueueItem = { key: string; waitMinutes: number; run: string; title: string; job: string; repository: string; pool: string; cards: number; createdAt: string; state: 'waiting' | 'short' }
 export type DailyQueuePoint = { date: string; p50: number | null; p90: number | null; samples: number; abandoned: number }
 export type DailyUsagePoint = { date: string; cardHours: number; jobs: number; failedCardHours: number; partial?: boolean }
 export type PrCost = { key: string; title: string; branch: string; cardHours: number; allCardHours: number; runs: number; successfulRuns: number }
