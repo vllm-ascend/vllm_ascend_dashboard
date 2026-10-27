@@ -112,6 +112,7 @@ class ReleaseWorkflowCollector:
         new_runs_for_tp: list[tuple[int, list[dict]]] = []
         
         # Determine sync window based on mode
+        since_dt = None  # used later for incremental dedup filtering
         if sync_mode == 'full':
             since_str = None  # no date filter — full sync
             days_back = 365   # max range for full history
