@@ -118,12 +118,18 @@ class ReleaseWorkflowCollector:
         elif sync_mode == 'range' and since_date:
             since_str = since_date
             if until_date:
-                days_back = max(1, (datetime.strptime(since_date, '%Y-%m-%d') - datetime.strptime(until_date, '%Y-%m-%d')).days) if since_date > until_date else max(1, (datetime.strptime(until_date, '%Y-%m-%d') - datetime.strptime(since_date, '%Y-%m-%d')).days)
+                since_naive = datetime.strptime(since_date, '%Y-%m-%d')
+                until_naive = datetime.strptime(until_date, '%Y-%m-%d')
+                days_back = max(1, abs((since_naive - until_naive).days))
             else:
-                days_back = max(1, (datetime.now(UTC) - datetime.strptime(since_date, '%Y-%m-%d')).days)
+                since_naive = datetime.strptime(since_date, '%Y-%m-%d')
+                now_utc = datetime.now(UTC).replace(tzinfo=None)
+                days_back = max(1, (now_utc - since_naive).days)
         elif sync_mode == 'incremental' and since_date:
             since_str = since_date
-            days_back = max(1, (datetime.now(UTC) - datetime.strptime(since_date, '%Y-%m-%d')).days)
+            since_naive = datetime.strptime(since_date, '%Y-%m-%d')
+            now_utc = datetime.now(UTC).replace(tzinfo=None)
+            days_back = max(1, (now_utc - since_naive).days)
         else:
             # Fallback: incremental from last_sync_at
             since_dt = workflow_config.last_sync_at

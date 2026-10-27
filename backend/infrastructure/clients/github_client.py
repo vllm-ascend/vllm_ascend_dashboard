@@ -225,6 +225,7 @@ class GitHubClient:
         branch: str | None = None,
         event: str | None = None,
         created: str | None = None,
+        until: str | None = None,
         per_page: int = 100,
         page: int = 1,
         days_back: int | None = None,
@@ -268,6 +269,8 @@ class GitHubClient:
             from datetime import datetime, timedelta
             days_ago = datetime.now(UTC) - timedelta(days=days_back)
             params["created"] = f">={days_ago.strftime('%Y-%m-%d')}"
+        if until:
+            params["until"] = until
 
         logger.info(f"Fetching workflow runs for {workflow_id_or_name} (page {page}, created={params.get('created')})")
 
