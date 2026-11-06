@@ -137,11 +137,11 @@ def parse_window(start: str | None, end: str | None) -> tuple[datetime, datetime
         return parsed.replace(tzinfo=SHANGHAI_TZ)
 
     if start and end:
-        return _to_utc(_parse(start, True)), _to_utc(_parse(end, False))
+        return _to_utc(_parse(start, is_start=True)), _to_utc(_parse(end, is_start=False))
     if start:
-        s = _parse(start, True)
+        s = _parse(start, is_start=True)
         return _to_utc(s), _to_utc(s + timedelta(hours=span_hours))
-    e = _parse(end, False)
+    e = _parse(end, is_start=False)
     return _to_utc(e - timedelta(hours=span_hours)), _to_utc(e)
 
 
@@ -265,25 +265,32 @@ def _format_problem_line(category: str | None, error_line: str | None) -> str:
 
 
 def _extract_first_failed_step(steps_data: str | None) -> str | None:
-    """从 CIJob.steps_data（JSON）中解析首个处于失败态的 step 名称。
+    """从 CIJob.steps_data（JSON）中解析首个处于失败态的 step 名称（兼容旧逻辑）。"""
+    steps = _extract_all_failed_steps(steps_data)
+    return steps[0] if steps else None
 
-    steps_data 可能是 list（GitHub Actions steps 序列化）或 dict。
-    step 元素可能含 status / conclusion / name 字段；失败态以 conclusion 为准
-    （failure / cancelled / timed_out），缺失时退化为 status == failure。
+
+def _extract_all_failed_steps(steps_data: str | None) -> list[str]:
+    """从 CIJob.steps_data 中解析所有处于失败态的 step 名称列表。
+
+    steps_data 可能是 list（GitHub Actions steps 序列化）或 dict with "steps" key。
+    失败态判定：conclusion in {failure, cancelled, timed_out, startup_failure}
+    或 status == "failure"。
     """
     if not steps_data:
-        return None
+        return []
     try:
         data = json.loads(steps_data)
     except (ValueError, TypeError):
-        return None
+        return []
     if isinstance(data, dict):
         steps = data.get("steps") or data.get("jobs") or []
     elif isinstance(data, list):
         steps = data
     else:
-        return None
+        return []
     failed_conclusions = {"failure", "cancelled", "timed_out", "startup_failure"}
+    out: list[str] = []
     for st in steps:
         if not isinstance(st, dict):
             continue
@@ -292,9 +299,28 @@ def _extract_first_failed_step(steps_data: str | None) -> str | None:
         if conclusion in failed_conclusions or status == "failure":
             name = st.get("name") or st.get("title") or st.get("id")
             if name:
-                # 截断过长名称
-                return str(name)[:80]
-    return None
+                out.append(str(name)[:100])
+    return out
+
+
+def _parse_model_and_yaml(test_model: str | None) -> tuple[str | None, str | None]:
+    """从 test_model 字段（如 'Qwen3.8-Flash-Next-w8a8-mxfp8-ntp-A5.yaml'）
+    拆分为 (model_name, test_yaml)。
+
+    - 如果包含 '.yaml' / '.yml' 后缀：model_name = 去后缀部分，test_yaml = 完整值
+    - 如果无后缀：model_name = 完整值，test_yaml = None
+    """
+    if not test_model:
+        return (None, None)
+    name = test_model.strip()
+    lower = name.lower()
+    if lower.endswith(".yaml"):
+        model = name[:-5]
+        return (model, name)
+    if lower.endswith(".yml"):
+        model = name[:-4]
+        return (model, name)
+    return (name, None)
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +667,16 @@ class CIDailyReportBuilder:
             report_date_display = f"{started_at} 00:00:00"
         else:
             report_date_display = kwargs.get("report_date") or ""
+        # 模型/测试内容拆分
+        model_name, test_yaml = _parse_model_and_yaml(kwargs.get("test_model"))
+        # 所有失败 steps
+        steps_data = None
+        job = kwargs.get("job")
+        if job is not None and hasattr(job, "steps_data"):
+            steps_data = job.steps_data
+        all_failed_steps = kwargs.get("failed_steps") or _extract_all_failed_steps(steps_data)
+        if not all_failed_steps and kwargs.get("failed_step"):
+            all_failed_steps = [kwargs["failed_step"]]
         return {
             "id": kwargs.get("id"),
             "report_date": kwargs.get("report_date"),
@@ -652,11 +688,14 @@ class CIDailyReportBuilder:
             "job_id": kwargs.get("job_id"),
             "display_name": kwargs.get("display_name"),
             "test_model": kwargs.get("test_model"),
+            "model_name": model_name,
+            "test_yaml": test_yaml,
             "model_fo": kwargs.get("model_fo"),
             "deployment_type": kwargs.get("deployment_type"),
             "hardware": kwargs.get("hardware") or "未知",
             "owner": kwargs.get("owner"),
             "failed_step": kwargs.get("failed_step"),
+            "failed_steps": all_failed_steps,
             "conclusion": kwargs.get("conclusion"),
             "conclusion_zh": format_conclusion_zh(kwargs.get("conclusion")),
             "started_at": format_beijing(started_at),
@@ -667,6 +706,7 @@ class CIDailyReportBuilder:
             "error_line": error_line,
             "problem_line": _format_problem_line(category, error_line),
             "raw_log_lines": kwargs.get("raw_log_lines"),
+            "error_brief": kwargs.get("error_brief"),
             # AI 分析状态：有分析记录时透出（供前端判断是否可点「AI分析」查看详情）
             "analysis_status": (
                 analysis.analysis_status if analysis else kwargs.get("analysis_status")
@@ -871,10 +911,12 @@ class CIDailyReportBuilder:
     async def collect_raw_logs(self, report: dict[str, Any]) -> dict[str, Any]:
         """对报告中的失败记录自动访问 GitHub 原始日志链接，拉取并解析报错线索。
 
-        - 仅对具备 job_id 且当前 error_line 缺失 / 未定界的失败项拉取（避免重复抓已解析的）。
+        - 对具备 job_id 且 (error_line 缺失 / 未定界 / AI 分析失败) 的失败项拉取。
+        - AI 分析失败（analysis_status='failed'）时自动降级：从 GitHub 日志提取完整
+          报错 + 精炼一句话（【根因】：【原始线索行】）。
         - 并发受 RAW_LOG_CONCURRENCY 限制，单条抓取网络失败不中断整体。
-        - 就地更新 report["failures"]，并把拉取到的线索行回写 error_line / raw_log_lines。
-        - 返回增强后的 report（同一对象）便于调用方继续渲染 PDF / Excel / JSON。
+        - 就地更新 report["failures"]，回写 error_line / raw_log_lines / error_brief。
+        - 返回增强后的 report（同一对象）。
         """
         import asyncio
 
@@ -882,8 +924,11 @@ class CIDailyReportBuilder:
         targets = [
             f for f in failures
             if f.get("job_id")
-            and (not (f.get("error_line") or "").strip()
-                 or (f.get("problem_category") in (None, "", "未定界")))
+            and (
+                not (f.get("error_line") or "").strip()
+                or (f.get("problem_category") in (None, "", "未定界"))
+                or f.get("analysis_status") == "failed"
+            )
         ]
         if not settings.GITHUB_TOKEN:
             logger.warning("GITHUB_TOKEN not configured; skip raw log collection")
@@ -930,7 +975,15 @@ class CIDailyReportBuilder:
             f["problem_line"] = _format_problem_line(
                 f.get("problem_category"), f.get("error_line")
             )
-            f["analysis_status"] = f.get("analysis_status") or "raw_log_collected"
+            # 精炼一句话：【根因】：【原始线索行】（AI 失败降级 / 无分析时提供）
+            category = (f.get("problem_category") or "未定界").strip()
+            clue = (f.get("error_line") or lines[0])[:120]
+            f["error_brief"] = f"【{category}】：{clue}"
+            # AI 分析失败时标记为降级（前端/报告用 raw_log 替代 AI 结果）
+            if f.get("analysis_status") == "failed":
+                f["analysis_status"] = "degraded"
+            elif not f.get("analysis_status"):
+                f["analysis_status"] = "raw_log_collected"
             collected += 1
 
         await asyncio.gather(*(_one(f) for f in targets))
