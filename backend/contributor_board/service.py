@@ -616,6 +616,103 @@ class ContributorBoardService:
             record_id=record_id,
         )
 
+    async def trigger_daily_backfill(
+        self, db, since_date: date | None = None, until_date: date | None = None,
+        repo_name: str | None = None,
+    ) -> ContributorSyncResponse:
+        """独立触发日度明细补录（不碰 contributor_profiles）。"""
+        running = (
+            await db.execute(
+                select(func.count(ContributorSyncRecord.id)).where(
+                    ContributorSyncRecord.status.in_(["running", "pending"])
+                )
+            )
+        ).scalar_one()
+        if int(running) > 0:
+            raise ValueError("已有同步任务正在运行，请等待完成或取消后再试")
+
+        now = datetime.now(UTC)
+        record = ContributorSyncRecord(
+            repo_name=repo_name,
+            sync_type="daily_backfill",
+            status="running",
+            since_date=since_date,
+            until_date=until_date,
+            progress_percent=0,
+            progress_message="日度明细补录已创建",
+            trigger_source="api",
+            started_at=now,
+        )
+        db.add(record)
+        await db.commit()
+        await db.refresh(record)
+        record_id = record.id
+
+        logger.info("Started daily backfill task record_id=%s repo=%s", record_id, repo_name)
+        asyncio.create_task(self._run_daily_backfill_task(record_id, since_date, until_date, repo_name))
+
+        return ContributorSyncResponse(
+            contributors_synced=0,
+            commits_classified=0,
+            build_plans_created=0,
+            errors=[],
+            duration_seconds=0,
+            synced_at=now,
+            record_id=record_id,
+        )
+
+    async def _run_daily_backfill_task(
+        self, record_id: int, since_date: date | None, until_date: date | None,
+        repo_name: str | None,
+    ) -> None:
+        from infrastructure.db.base import SessionLocal as AsyncSessionLocal
+
+        since_dt = None
+        until_dt = None
+        if since_date:
+            since_dt = datetime(since_date.year, since_date.month, since_date.day, tzinfo=UTC)
+        if until_date:
+            until_dt = datetime(until_date.year, until_date.month, until_date.day, tzinfo=UTC)
+
+        try:
+            from collector.contributor_sync import backfill_daily_data
+
+            async def _progress(pct: int, msg: str):
+                async with AsyncSessionLocal() as db:
+                    rec = await db.get(ContributorSyncRecord, record_id)
+                    if rec:
+                        rec.progress_percent = pct
+                        rec.progress_message = msg
+                        await db.commit()
+
+            result = await backfill_daily_data(
+                since_date=since_dt, until_date=until_dt,
+                repo_name=repo_name, progress_callback=_progress,
+            )
+            async with AsyncSessionLocal() as db:
+                rec = await db.get(ContributorSyncRecord, record_id)
+                if rec:
+                    rec.status = "completed" if not result.errors else "failed"
+                    rec.contributors_synced = 0
+                    rec.commits_classified = result.commits_classified
+                    rec.total_prs_scanned = result.total_prs_scanned
+                    rec.errors = result.errors or []
+                    rec.duration_seconds = result.duration_seconds
+                    rec.synced_at = result.synced_at
+                    rec.completed_at = datetime.now(UTC)
+                    rec.progress_percent = 100
+                    await db.commit()
+            logger.info("Daily backfill task %s finished", record_id)
+        except Exception as e:
+            logger.error("Daily backfill task %s failed: %s", record_id, e, exc_info=True)
+            async with AsyncSessionLocal() as db:
+                rec = await db.get(ContributorSyncRecord, record_id)
+                if rec:
+                    rec.status = "failed"
+                    rec.errors = [f"Daily backfill failed: {e}"]
+                    rec.completed_at = datetime.now(UTC)
+                    await db.commit()
+
     async def _run_sync_task(
         self, record_id: int, since_date: date | None, until_date: date | None,
         full_resync: bool, repo_name: str | None,
@@ -904,6 +1001,17 @@ class ContributorBoardService:
             )).scalars().first()
         )
 
+        # 批量拉取窗口内该贡献者的所有 DailyPR（一次查询替代 90+ 次）
+        pr_stmt_all = (
+            select(DailyPR.data_date, func.count(DailyPR.id))
+            .where(DailyPR.author == login)
+            .where(DailyPR.data_date >= ws)
+            .where(DailyPR.data_date <= we)
+            .group_by(DailyPR.data_date)
+        )
+        pr_rows = (await db.execute(pr_stmt_all)).all()
+        pr_by_day: dict[date, int] = {r[0]: int(r[1]) for r in pr_rows if r[0] is not None}
+
         # 生成连续日期序列
         all_days = [(ws + timedelta(days=i)) for i in range((we - ws).days + 1)]
 
@@ -923,13 +1031,7 @@ class ContributorBoardService:
             today_commits = len(day_commits)
             today_add = sum(c.additions or 0 for c in day_commits)
             today_del = sum(c.deletions or 0 for c in day_commits)
-
-            # merged PR 数：该贡献者当天创建的 PR（按 DailyPR.created_at 日期）
-            pr_stmt = select(func.count(DailyPR.id)).where(
-                DailyPR.author == login,
-                DailyPR.data_date == d,
-            )
-            today_pr = int((await db.execute(pr_stmt)).scalar_one() or 0)
+            today_pr = pr_by_day.get(d, 0)
 
             commit_points.append(CommitTrendPoint(
                 date=d.isoformat(),

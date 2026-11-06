@@ -141,9 +141,10 @@ import {
      type SyncSummary,
       getSyncStatus,
       getSyncHistory,
-      getSyncSummary,
-      cancelSync,
-      clearSyncData,
+       getSyncSummary,
+       cancelSync,
+       clearSyncData,
+       triggerDailyBackfill,
 } from '../services/contributorBoard'
 import { getLLMProviders, type LLMProvider } from '../services/dailySummary'
 import MarkdownRenderer from '../components/MarkdownRenderer'
@@ -2706,14 +2707,20 @@ function ContributorDetailPage() {
     if (!login) return
     setLoading(true)
     try {
-      const [detailData, policyData, trendData] = await Promise.all([
+      const [detailData, policyData, trendData, heatmapData, distData, timelineData] = await Promise.all([
         getContributorDetail(login, 30).catch(() => null),
         getContributorPolicy(login).catch(() => null),
         getExtendedTrend(login).catch(() => null),
+        getContributorHeatmap(login).catch(() => null),
+        getContributorDistribution(login).catch(() => null),
+        getContributorTimeline(login).catch(() => null),
       ])
       setDetail(detailData)
       setPolicy(policyData)
       setTrend(trendData)
+      if (heatmapData) setHeatmap(heatmapData)
+      if (distData) setDistribution(distData)
+      if (timelineData) setTimeline(timelineData)
     } catch {
       message.error('加载贡献者详情失败')
     } finally {
@@ -3069,14 +3076,14 @@ function ContributorDetailPage() {
       {/* ===== 贡献活动热力图 ===== */}
       <Card
         title="贡献活动热力图"
-        extra={<Button size="small" onClick={loadHeatmap} loading={heatmapLoading}>加载热力图</Button>}
+        extra={<Button size="small" onClick={loadHeatmap} loading={heatmapLoading}>刷新</Button>}
         style={{ marginTop: 16 }}
       >
         <div style={{ height: 260 }}>
           {heatmap?.heatmap_data && heatmap.heatmap_data.length > 0 ? (
             <ContributorHeatmapChart data={heatmap.heatmap_data} />
           ) : (
-            <Empty description="暂无热力图数据，请点击右上角加载" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            <Empty description="暂无热力图数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </div>
       </Card>
@@ -3086,7 +3093,7 @@ function ContributorDetailPage() {
         <Col span={12}>
           <Card
             title="模块贡献分布"
-            extra={<Button size="small" onClick={loadDistribution} loading={distLoading}>加载分布</Button>}
+            extra={<Button size="small" onClick={loadDistribution} loading={distLoading}>刷新</Button>}
           >
             <div style={{ height: 350 }}>
               {distribution?.modules && distribution.modules.length > 0 ? (
@@ -3119,7 +3126,7 @@ function ContributorDetailPage() {
       {/* ===== 贡献时间线 ===== */}
       <Card
         title="最近提交活动 (Timeline)"
-        extra={<Button size="small" onClick={loadTimeline} loading={timelineLoading}>加载时间线</Button>}
+        extra={<Button size="small" onClick={loadTimeline} loading={timelineLoading}>刷新</Button>}
         style={{ marginTop: 16 }}
       >
         {timeline?.commits && timeline.commits.length > 0 ? (
@@ -3297,6 +3304,60 @@ function ManualSyncPanel({ selectedRepo }: { selectedRepo?: string }) {
     })
   }
 
+  const [backfilling, setBackfilling] = useState(false)
+
+  const handleDailyBackfill = () => {
+    if (backfilling || isRunning) return
+    Modal.confirm({
+      title: '补录日度明细数据？',
+      icon: <WarningOutlined />,
+      content: (
+        <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+          <p style={{ margin: '0 0 8px' }}>仅重新拉取并写入日度 PR / commit 明细（热力图、模块分布、时间线、趋势的数据源），不会修改排行榜数据。</p>
+          <p style={{ margin: '0', color: '#fa8c16' }}>
+            注意：需要拉取约 2 × PR 数次 GitHub API，全量约 5 小时（受 5000/h 限额约束）。
+          </p>
+        </div>
+      ),
+      okText: '开始补录',
+      cancelText: '取消',
+      onOk: async () => {
+        setBackfilling(true)
+        try {
+          const res = await triggerDailyBackfill({
+            full_resync: syncMode === 'full',
+            since_date: syncMode === 'incremental' && singleDate ? singleDate.format('YYYY-MM-DD') : (syncMode === 'range' && dateRange ? dateRange[0].format('YYYY-MM-DD') : null),
+            until_date: syncMode === 'range' && dateRange ? dateRange[1].format('YYYY-MM-DD') : null,
+            repo_name: targetRepo || null,
+          })
+          message.success(`日度明细补录已启动，任务 ID: ${res.record_id}`)
+          setSyncLoading(true)
+          setCurrentRecord({ id: res.record_id, status: 'running', progress_percent: 5, progress_message: '日度明细补录中...' } as any)
+          pollTimerRef.current = setInterval(async () => {
+            try {
+              const s = await getSyncStatus(res.record_id)
+              setSyncProgress(s.progress_percent || 0)
+              setSyncProgressMsg(s.progress_message || '')
+              if (s.status !== 'running' && s.status !== 'pending') {
+                if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+                pollTimerRef.current = null
+                setSyncLoading(false)
+                setCurrentRecord(null)
+                message.success(s.status === 'completed' ? '日度明细补录完成' : `补录状态: ${s.status}`)
+                window.dispatchEvent(new Event('sync-history-refresh'))
+              }
+            } catch { /* ignore */ }
+          }, 5000)
+        } catch (err: unknown) {
+          const msg = typeof err === 'object' && err && 'detail' in err ? (err as { detail: string }).detail : '启动补录失败'
+          message.error(msg)
+        } finally {
+          setBackfilling(false)
+        }
+      },
+    })
+  }
+
   const [cancelling, setCancelling] = useState(false)
 
   const isRunning = currentRecord?.status === 'running' || currentRecord?.status === 'pending'
@@ -3378,6 +3439,14 @@ function ManualSyncPanel({ selectedRepo }: { selectedRepo?: string }) {
             onClick={handleClearData}
           >
             清除并重置
+          </Button>
+          <Button
+            icon={<ClockCircleOutlined />}
+            loading={backfilling}
+            disabled={isRunning}
+            onClick={handleDailyBackfill}
+          >
+            补录日度明细
           </Button>
           <Button
             type="primary"
