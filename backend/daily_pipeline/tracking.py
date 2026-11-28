@@ -208,7 +208,7 @@ class DailyTrackingService:
                 if (
                     stage_code not in STAGES
                     or stage_code == FAILURE_NOTIFICATION_STAGE and node.failure_id != f.id
-                    or stage_code != FAILURE_NOTIFICATION_STAGE and node.failure_id != owner_id
+                    or stage_code != FAILURE_NOTIFICATION_STAGE and node.failure_id not in (f.id, owner_id)
                 ):
                     continue
             name = STAGES[stage_code]

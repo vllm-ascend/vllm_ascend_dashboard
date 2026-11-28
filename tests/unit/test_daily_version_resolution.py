@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from daily_pipeline import shared_processing as sharing
 from daily_pipeline import version_resolution as module
 
 NOW = datetime(2026, 11, 19, 4)
@@ -19,6 +20,7 @@ def member(identity, flow_id=20, issue_id=7):
     return SimpleNamespace(
         id=identity,
         version_flow_id=flow_id,
+        shared_flow_owner_id=None,
         issue_id=issue_id,
         node_id=11,
         problem_category="version",
@@ -166,31 +168,71 @@ async def test_sharing_is_explicit_and_cannot_split_existing_group(monkeypatch):
     target = flow("waiting_resolution")
     first, second, unselected = member(1), member(2, None), member(3, 30)
     tracking, _ = setup(monkeypatch, target, [first, second])
+    issue = await tracking.db.get(module.Issue, 7)
+    tracking.db.scalar.side_effect = [issue, None]
+    tracking.db.scalars = AsyncMock(side_effect=[[first, second], [first, second], []])
+    second_flow = SimpleNamespace(id=30, status="waiting_resolution")
     monkeypatch.setattr(
-        module,
-        "lock_failures_and_flows",
-        AsyncMock(return_value=([first, second], {20: target})),
+        sharing, "lock_version_flows", AsyncMock(return_value={20: target, 30: second_flow})
     )
-    await module.share_version_flow(tracking.db, {1, 2}, 1)
-    assert [row.version_flow_id for row in (first, second, unselected)] == [20, 20, 30]
 
-    monkeypatch.setattr(
-        module,
-        "lock_failures_and_flows",
-        AsyncMock(
-            return_value=(
-                [first, unselected],
-                {20: target, 30: SimpleNamespace(id=30, status="waiting_resolution")},
-            )
-        ),
-    )
-    tracking.db.scalar.return_value = 2
-    with pytest.raises(ValueError, match="不能拆分"):
-        await module.share_version_flow(tracking.db, {1, 3}, 3)
+    await sharing.share_processing_flow(tracking.db, {1, 2}, 1, version_only=True)
+    assert [row.version_flow_id for row in (first, second, unselected)] == [20, 20, 30]
+    assert first.shared_flow_owner_id == second.shared_flow_owner_id == first.id
+
+    tracking.db.scalar.side_effect = None
+    tracking.db.scalar.return_value = issue
+    tracking.db.scalars.side_effect = [[first, unselected], [first, second, unselected]]
+    with pytest.raises(ValueError, match="所有成员"):
+        await sharing.share_processing_flow(tracking.db, {1, 3}, 3, version_only=True)
 
     unselected.issue_id = 9
+    tracking.db.scalars.side_effect = [[first, unselected]]
     with pytest.raises(ValueError, match="同一个 Issue"):
-        await module.share_version_flow(tracking.db, {1, 3}, 3)
+        await sharing.share_processing_flow(tracking.db, {1, 3}, 3, version_only=True)
+
+
+@pytest.mark.asyncio
+async def test_closed_issue_can_share_finished_flows(monkeypatch):
+    first, second = member(1, None), member(2, None)
+    first.problem_category = second.problem_category = "code"
+    first.processing_status, first.end_reason, first.ended_at = "ended", "issue_closed", NOW
+    second.processing_status, second.end_reason, second.ended_at = "resolved", None, NOW
+    historical_node = SimpleNamespace(id=22, status="completed")
+    db = SimpleNamespace(
+        scalar=AsyncMock(return_value=SimpleNamespace(state="closed", deleted_at=None)),
+        scalars=AsyncMock(side_effect=[[first, second], [first, second], [historical_node]]),
+        commit=AsyncMock(),
+    )
+    archive = AsyncMock()
+    monkeypatch.setattr(sharing, "archive_nodes", archive)
+
+    result = await sharing.share_processing_flow(db, {1, 2}, 1)
+    assert result == {"flowId": "1"}
+    assert first.shared_flow_owner_id == second.shared_flow_owner_id == 1
+    assert (first.processing_status, first.end_reason, first.ended_at) == ("ended", "issue_closed", NOW)
+    assert (second.processing_status, second.end_reason, second.ended_at) == ("resolved", None, NOW)
+    assert archive.await_args.args[1] == [historical_node]
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_active_case_can_reuse_a_resolved_flow(monkeypatch):
+    first, second = member(1, None), member(2, None)
+    first.problem_category, first.processing_status, first.ended_at = "code", "resolved", NOW
+    second.problem_category, second.processing_status, second.ended_at = None, "pending", None
+    db = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[SimpleNamespace(state="open", deleted_at=None), None]),
+        scalars=AsyncMock(side_effect=[[first, second], [first, second], []]),
+        commit=AsyncMock(),
+    )
+    reconcile = AsyncMock()
+    monkeypatch.setattr(sharing, "reconcile_case_availability", reconcile)
+
+    assert await sharing.share_processing_flow(db, {1, 2}, 1) == {"flowId": "1"}
+    assert second.shared_flow_owner_id == 1
+    assert (second.problem_category, second.processing_status, second.ended_at) == ("code", "resolved", NOW)
+    reconcile.assert_awaited_once_with(db)
 
 
 def test_only_configured_build_workflow_counts():

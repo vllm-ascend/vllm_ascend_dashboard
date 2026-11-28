@@ -33,7 +33,7 @@ from daily_pipeline.trigger_config import (
     save_trigger_config,
     trigger_config,
 )
-from daily_pipeline.version_resolution import share_version_flow, submit_version_action
+from daily_pipeline.version_resolution import submit_version_action
 from daily_pipeline.workflow_config import WorkflowSyncBusy, sync_daily_workflow
 from infrastructure.clients.daily_pipeline_scheduler import SchedulerUpdateError
 from infrastructure.core.github_audit import (
@@ -335,7 +335,7 @@ class ProcessingFlowShareInput(BaseModel):
 @router.post("/failed-cases/processing-flow/share")
 async def share_failed_case_processing_flow(body: ProcessingFlowShareInput, user: CurrentAdminUser, db: DbSession):
     try:
-        return await share_processing_flow(db, body.failureIds, body.targetFailureId)
+        return await share_processing_flow(db, body.failureIds, body.targetFailureId, operator=user.username)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -355,7 +355,9 @@ async def unshare_failed_case_processing_flow(failure_id: int, user: CurrentAdmi
 @router.post("/failed-cases/version-flow/share")
 async def share_failed_case_version_flow(body: ProcessingFlowShareInput, user: CurrentAdminUser, db: DbSession):
     try:
-        return await share_version_flow(db, body.failureIds, body.targetFailureId)
+        return await share_processing_flow(
+            db, body.failureIds, body.targetFailureId, operator=user.username, version_only=True
+        )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:

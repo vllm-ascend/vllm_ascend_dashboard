@@ -1,4 +1,4 @@
-"""Manage shared processing flows for failures under one open Issue."""
+"""Manage shared processing flows for failures under the same Issue."""
 
 from sqlalchemy import or_, select, update
 
@@ -10,6 +10,7 @@ from infrastructure.persistence.daily_pipeline_tracking import (
     ROLLBACK_STAGE_PREFIX,
     VERSION_BUILD_NOTICE,
     now,
+    reconcile_case_availability,
     transfer_shared_processing,
 )
 from infrastructure.persistence.models import DailyPipelineFailure as Failure
@@ -44,8 +45,8 @@ async def lock_share_members(db, identities):
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if issue is None or issue.state != "open" or issue.deleted_at is not None:
-        raise ValueError("关联 Issue 已结束")
+    if issue is None or issue.deleted_at is not None:
+        raise ValueError("关联 Issue 不存在或已删除")
     flows = await lock_version_flows(db, version_ids)
     members = {
         row.id: row
@@ -69,43 +70,41 @@ async def lock_share_members(db, identities):
         for identity, key in keys.items()
     ):
         raise ValueError("处理流程已变化，请刷新后重试")
-    if any(members[identity].processing_status not in ACTIVE for identity in identities):
-        raise ValueError("只能操作尚未结案的失败用例")
-    return members, flows
+    return issue, members, flows
 
 
-async def share_processing_flow(db, identities, target_id):
+async def share_processing_flow(db, identities, target_id, *, operator=None, version_only=False):
     if len(identities) < 2 or target_id not in identities:
         raise ValueError("请选择至少两个用例并指定要保留的流程")
-    members, flows = await lock_share_members(db, identities)
+    _, members, flows = await lock_share_members(db, identities)
+    if version_only and any(members[identity].problem_category != "version" for identity in identities):
+        raise ValueError("只能共用同一个 Issue 下的版本配套失败用例")
     target = members[target_id]
     target_key = flow_key(target)
     owner = members.get(process_owner(target))
-    if target.version_flow_id is not None and (
-        owner is None or owner.processing_status not in ACTIVE or flow_key(owner) != target_key
-    ):
+    if target.version_flow_id is not None and (owner is None or flow_key(owner) != target_key):
         owner = target
-    if owner is None or owner.processing_status not in ACTIVE:
-        raise ValueError("要保留的流程已结束")
+    if owner is None:
+        raise ValueError("要保留的流程不存在")
 
     selected_keys = {flow_key(members[identity]) for identity in identities}
-    joined = [
-        row
-        for row in members.values()
-        if row.processing_status in ACTIVE and flow_key(row) in selected_keys
-    ]
+    joined = [row for row in members.values() if flow_key(row) in selected_keys]
+    active = [row for row in joined if row.processing_status in ACTIVE]
+    if active and owner.processing_status == "ended":
+        raise ValueError("要共用仍在处理的用例，请保留可继续处理或已解决的流程")
     replaced = [row for row in joined if flow_key(row) != target_key]
     if any(row.id not in identities for row in replaced):
         raise ValueError("请选中原共用流程的所有成员，或先对要移动的用例取消共用")
+    active_replaced = [row for row in replaced if row.processing_status in ACTIVE]
     if any(
         row.version_flow_id is not None
         and flows[row.version_flow_id].status != "waiting_resolution"
-        for row in replaced
+        for row in active_replaced
     ):
         raise ValueError("选中的其他流程已有处理进度，请选择保留已有进度的流程")
 
     retained_roots = {process_owner(row) for row in joined if flow_key(row) == target_key}
-    replaced_roots = {process_owner(row) for row in replaced} - retained_roots
+    replaced_roots = {process_owner(row) for row in active_replaced} - retained_roots
     if replaced_roots:
         progressed = await db.scalar(
             select(Node.id)
@@ -114,6 +113,7 @@ async def share_processing_flow(db, identities, target_id):
                 Node.stage_code.not_in(
                     (FAILURE_NOTIFICATION_STAGE, VERSION_BUILD_NOTICE, "classify")
                 ),
+                ~Node.stage_code.startswith(ROLLBACK_STAGE_PREFIX),
                 Node.status.not_in(("pending", "ended")),
             )
             .limit(1)
@@ -140,23 +140,60 @@ async def share_processing_flow(db, identities, target_id):
                 .values(status="ended", finished_at=point, updated_at=point, next_run_at=None)
             )
 
+    historical_roots = {process_owner(row) for row in replaced} - retained_roots - replaced_roots
+    if historical_roots:
+        historical_nodes = list(
+            await db.scalars(
+                select(Node)
+                .where(
+                    Node.failure_id.in_(historical_roots),
+                    Node.stage_code.not_in((FAILURE_NOTIFICATION_STAGE, VERSION_BUILD_NOTICE)),
+                    ~Node.stage_code.startswith(ROLLBACK_STAGE_PREFIX),
+                )
+                .order_by(Node.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        if historical_nodes:
+            await archive_nodes(
+                db,
+                historical_nodes,
+                "共用流程",
+                operator,
+                now(),
+                message="已共用其他用例的处理流程，原节点结果已归档",
+            )
+
     for row in joined:
         row.shared_flow_owner_id = owner.id
-    flow_id = owner.id
-    if owner.problem_category == "version":
-        flow_id = await attach_version_flow(db, joined, flows.get(owner.version_flow_id))
+    version_flow = flows.get(owner.version_flow_id) if owner.problem_category == "version" else None
+    # Historical members follow the timeline while keeping their own outcomes.
+    if owner.problem_category == "version" and active and (
+        version_flow is not None or owner.processing_status in ACTIVE
+    ):
+        flow_id = await attach_version_flow(db, active, version_flow)
+        for row in joined:
+            row.version_flow_id = flow_id
+            row.problem_category = owner.problem_category
     else:
+        flow_id = version_flow.id if version_flow is not None else None
         for row in joined:
             row.problem_category = owner.problem_category
-            row.version_flow_id = None
+            row.version_flow_id = flow_id
+        for row in active:
             row.processing_status, row.ended_at = owner.processing_status, owner.ended_at
+        if active and owner.processing_status == "resolved":
+            await reconcile_case_availability(db)
     await db.commit()
-    return {"flowId": str(flow_id)}
+    return {"flowId": str(flow_id if flow_id is not None else owner.id)}
 
 
 async def unshare_processing_flow(db, failure_id, operator):
-    members, _ = await lock_share_members(db, {failure_id})
+    issue, members, _ = await lock_share_members(db, {failure_id})
     failure = members[failure_id]
+    if issue.state != "open" or failure.processing_status not in ACTIVE:
+        raise ValueError("只能取消仍在处理的失败用例的共用流程")
     peers = [
         row
         for row in members.values()

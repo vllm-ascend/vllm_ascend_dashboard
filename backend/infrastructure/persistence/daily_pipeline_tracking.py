@@ -321,12 +321,25 @@ async def resume_issue_failures(db, issue):
     for failure in failures:
         if failure.end_reason == "superseded":
             continue
+        owner_id = getattr(failure, "shared_flow_owner_id", None)
+        shared_member = owner_id is not None and owner_id != failure.id
+        if shared_member:
+            owner = await db.get(Failure, owner_id)
+            if owner.processing_status == "resolved":
+                failure.processing_status = "resolved"
+                failure.ended_at = owner.ended_at or failure.ended_at
+                failure.end_reason = failure.resume_state = None
+                continue
+            if owner.processing_status == "ended" and owner.end_reason != "issue_closed":
+                continue
         saved = failure.resume_state or {}
         nodes = list(await db.scalars(select(Node).where(Node.failure_id == failure.id).order_by(Node.id).with_for_update().execution_options(populate_existing=True)))
         node_states = {item["id"]: item for item in saved.get("nodes", [])}
         execution_states = {item["id"]: item for item in saved.get("executions", [])}
         for node in nodes:
-            if node.stage_code.startswith(ROLLBACK_STAGE_PREFIX):
+            if node.stage_code.startswith(ROLLBACK_STAGE_PREFIX) or (
+                shared_member and node.stage_code != FAILURE_NOTIFICATION_STAGE
+            ):
                 continue
             previous = node_states.get(node.id)
             if previous:

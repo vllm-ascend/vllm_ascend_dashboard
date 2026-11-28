@@ -113,7 +113,7 @@ function ProcessingFlow({ flow, allowManual = false, loading = false }: { flow: 
     </ol>
     </div>
     {!!flow.archivedStages?.length && <details className="daily-processing-rollback-history">
-      <summary>回退记录（{flow.archivedStages.length}）</summary>
+      <summary>历史节点（{flow.archivedStages.length}）</summary>
       <Space wrap>
         {flow.archivedStages.map((stage) => <Button key={stage.id} type="link" size="small"
           onClick={() => setSelectedId(stage.id)}>

@@ -161,40 +161,6 @@ async def lock_failures_and_flows(db, identities):
     return rows, flows
 
 
-async def share_version_flow(db, identities, target_id):
-    if len(identities) < 2 or target_id not in identities:
-        raise ValueError("请选择至少两个用例并指定要保留的流程")
-    rows, flows = await lock_failures_and_flows(db, identities)
-    issue_ids = {row.issue_id for row in rows}
-    if (
-        len(issue_ids) != 1
-        or None in issue_ids
-        or any(
-            row.problem_category != "version" or row.processing_status not in ACTIVE for row in rows
-        )
-    ):
-        raise ValueError("只能共用同一个 Issue 下尚未结案的版本配套失败用例")
-    issue = await db.get(Issue, rows[0].issue_id)
-    if issue is None or issue.state != "open" or issue.deleted_at is not None:
-        raise ValueError("关联 Issue 已结束")
-    target = next(row for row in rows if row.id == target_id)
-    flow = flows.get(target.version_flow_id)
-    for source_id, source_flow in flows.items():
-        if source_id == target.version_flow_id:
-            continue
-        if source_flow.status != "waiting_resolution":
-            raise ValueError("选中的其他流程已有处理进度，请选择保留已有进度的流程")
-        selected_count = sum(row.version_flow_id == source_id for row in rows)
-        member_count = await db.scalar(
-            select(func.count()).select_from(Failure).where(Failure.version_flow_id == source_id)
-        )
-        if member_count != selected_count:
-            raise ValueError("共用流程不能拆分，请选中该流程的所有成员或选择保留该流程")
-    flow_id = await attach_version_flow(db, rows, flow)
-    await db.commit()
-    return {"flowId": str(flow_id)}
-
-
 async def attach_version_flow(db, rows, flow):
     if flow is None:
         flow = new_flow(db)
